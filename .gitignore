@@ -1,0 +1,34 @@
+# Secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime
+runtime/
+logs/
+reports/private/
+ledger/private/
+*.sqlite
+*.db
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Trading private data
+account_snapshots/
+private_trade_history/
+okx_keys*/
