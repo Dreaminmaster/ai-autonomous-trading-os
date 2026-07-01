@@ -1,0 +1,6 @@
+{
+  "mode": "paper",
+  "allowed_symbols": ["BTC-USDT", "ETH-USDT"],
+  "position_limits": {"max_position_pct_per_trade": 1.0},
+  "ai_output_limits": {"min_confidence_for_trade": 0.6}
+}
