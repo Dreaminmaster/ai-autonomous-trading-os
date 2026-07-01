@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dreaminmaster/ai-autonomous-trading-os/schemas/trade_review.schema.json",
+  "title": "TradeReview",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "trade_id",
+    "outcome",
+    "pnl_pct",
+    "thesis_quality",
+    "execution_quality",
+    "risk_quality",
+    "lesson",
+    "recommended_action"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "trade_review.v1" },
+    "trade_id": { "type": "string" },
+    "strategy_ids": { "type": "array", "items": { "type": "string" } },
+    "outcome": { "type": "string", "enum": ["win", "loss", "breakeven", "open", "invalid"] },
+    "pnl_pct": { "type": "number" },
+    "regime": { "type": "string" },
+    "thesis_quality": { "type": "number", "minimum": 0, "maximum": 1 },
+    "execution_quality": { "type": "number", "minimum": 0, "maximum": 1 },
+    "risk_quality": { "type": "number", "minimum": 0, "maximum": 1 },
+    "lesson": { "type": "string", "minLength": 5, "maxLength": 2000 },
+    "recommended_action": {
+      "type": "string",
+      "enum": ["keep_strategy", "increase_weight", "decrease_weight", "pause_strategy", "investigate", "no_change"]
+    },
+    "strategy_weight_delta_suggestion": { "type": "number", "minimum": -1, "maximum": 1 },
+    "metadata": { "type": "object", "additionalProperties": true }
+  }
+}
