@@ -1,0 +1,46 @@
+# Example only. Do not put API keys here.
+# Actual keys should be read from environment variables or local secret storage.
+
+default_provider: anges
+
+providers:
+  anges:
+    enabled: true
+    type: openai_compatible
+    base_url_env: ANGES_BASE_URL
+    api_key_env: ANGES_API_KEY
+    default_model_env: ANGES_MODEL
+    role: cheap_default
+
+  deepseek_flash:
+    enabled: false
+    type: openai_compatible
+    base_url: "https://api.deepseek.com"
+    api_key_env: DEEPSEEK_API_KEY
+    model: "deepseek-v4-flash"
+    role: fast_analysis
+
+  deepseek_pro:
+    enabled: false
+    type: openai_compatible
+    base_url: "https://api.deepseek.com"
+    api_key_env: DEEPSEEK_API_KEY
+    model: "deepseek-v4-pro"
+    role: high_quality_reasoning
+
+manual_selection:
+  enabled: true
+  examples:
+    - "this task use deepseek pro"
+    - "use deepseek flash for this"
+    - "switch back to anges"
+
+fallback_policy:
+  simple_tasks:
+    allow_fallback: true
+    fallback_order:
+      - anges
+      - deepseek_flash
+  high_risk_trading_decisions:
+    allow_fallback: false
+    unavailable_behavior: HOLD
