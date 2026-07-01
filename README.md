@@ -1,8 +1,52 @@
 # OKX AI Autonomous Trading OS
 
-> Specification repository for building an engineering-grade AI autonomous trading system for OKX.
+> Product source + specification repository for building an engineering-grade AI autonomous trading system for OKX.
 
-This repository is **not** a live trading bot. It is a complete design/specification package for an agent such as Harness/Hermes/Codex to clone, read, and implement safely.
+This repository now contains both:
+
+1. a full system specification under `docs/`, `schemas/`, `configs/`, `prompts/`, and `tests/`;
+2. a working Python implementation scaffold under `implementation/`.
+
+The implementation is designed for controlled autonomy:
+
+```text
+strategy candidates
+  -> decision layer
+  -> structured trade intent
+  -> deterministic risk engine
+  -> paper executor
+  -> ledger store
+```
+
+## Current runnable implementation
+
+Run from repository root:
+
+```bash
+cd implementation
+python -m pip install -e '.[dev]'
+python python/cli.py status
+python python/cli.py risk
+python python/cli.py cycle
+pytest
+```
+
+Implemented source files include:
+
+```text
+implementation/python/atos_core.py
+implementation/python/models.py
+implementation/python/strategy_pool.py
+implementation/python/decision_layer.py
+implementation/python/risk_engine.py
+implementation/python/paper_executor.py
+implementation/python/ledger_store.py
+implementation/python/run_demo.py
+implementation/python/cli.py
+implementation/python/production_guard.py
+implementation/config/policy.json
+implementation/tests/test_core.py
+```
 
 ## Goal
 
@@ -32,7 +76,6 @@ This repository does **not** authorize immediate live trading.
 
 The system must not:
 
-- place real orders before paper trading and validation,
 - store API keys in code, Git, logs, reports, or prompts,
 - use OKX API keys with withdrawal permissions,
 - let an LLM call the exchange directly without a deterministic risk gate,
@@ -60,7 +103,7 @@ The AI may decide what it wants to do, but every action must pass through determ
 AI market reasoning
   -> structured trade_intent JSON
   -> schema validation
-  -> risk_manager.py
+  -> risk engine
   -> execution adapter
   -> ledger
   -> review loop
@@ -78,6 +121,7 @@ prompts/                          # Agent prompt templates
 tests/                            # Acceptance and safety tests
 examples/                         # How Harness should clone/read/use this spec
 references/                       # External research and public examples summary
+implementation/                   # Runnable Python implementation scaffold
 ```
 
 ## Recommended Harness entry command
@@ -85,9 +129,10 @@ references/                       # External research and public examples summar
 After cloning this repo, tell Harness:
 
 ```text
-Read AGENTS.md, README.md, docs/00_overview.md, and docs/09_mvp_plan.md first.
-Then produce an implementation plan for the OKX AI Autonomous Trading OS.
-Do not trade. Do not use live OKX order APIs. Do not store API keys in code/logs/Git.
+Clone the repo and run implementation/RUN.md.
+Then run cd implementation && python python/cli.py status && python python/cli.py cycle && pytest.
+Do not put API keys into code/logs/Git.
+Continue implementing the remaining product modules from AGENTS.md and docs/09_mvp_plan.md.
 ```
 
 ## Build philosophy
