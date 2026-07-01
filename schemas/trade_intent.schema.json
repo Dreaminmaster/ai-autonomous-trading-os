@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dreaminmaster/ai-autonomous-trading-os/schemas/trade_intent.schema.json",
+  "title": "TradeIntent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "action",
+    "symbol",
+    "market_type",
+    "confidence",
+    "thesis",
+    "evidence",
+    "selected_strategy_ids",
+    "position_size_pct",
+    "stop_loss_pct",
+    "take_profit_pct",
+    "max_holding_minutes",
+    "invalidation_conditions",
+    "risk_notes"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "trade_intent.v1" },
+    "action": { "type": "string", "enum": ["BUY", "SELL", "REDUCE", "CLOSE", "HOLD"] },
+    "symbol": { "type": "string", "pattern": "^[A-Z0-9]+-[A-Z0-9]+$" },
+    "market_type": { "type": "string", "enum": ["spot", "paper_spot"] },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "thesis": { "type": "string", "minLength": 10, "maxLength": 2000 },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 3, "maxLength": 500 }
+    },
+    "selected_strategy_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "position_size_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+    "stop_loss_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+    "take_profit_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+    "max_holding_minutes": { "type": "integer", "minimum": 0, "maximum": 43200 },
+    "invalidation_conditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 3, "maxLength": 500 }
+    },
+    "risk_notes": { "type": "string", "minLength": 3, "maxLength": 1000 },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}
