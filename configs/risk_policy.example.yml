@@ -1,0 +1,53 @@
+# Example only. Do not put secrets here.
+mode: paper
+
+allowed_market_types:
+  - paper_spot
+  - spot
+
+allowed_symbols:
+  - BTC-USDT
+  - ETH-USDT
+
+forbidden_actions:
+  withdrawals: true
+  transfers: true
+  auto_leverage: true
+  futures_swaps_options: true
+
+position_limits:
+  max_position_pct_per_trade: 1.0
+  max_total_exposure_pct: 10.0
+  max_symbol_exposure_pct: 3.0
+  max_notional_per_trade_usdt: 50.0
+
+loss_limits:
+  max_daily_realized_loss_pct: 2.0
+  max_daily_unrealized_loss_pct: 2.5
+  max_total_drawdown_pct: 5.0
+  max_rolling_7d_drawdown_pct: 6.0
+  max_consecutive_losses: 3
+
+frequency_limits:
+  max_trades_per_hour: 3
+  max_trades_per_day: 10
+  min_minutes_between_same_symbol_trades: 30
+
+execution_limits:
+  max_spread_bps: 15
+  max_estimated_slippage_bps: 20
+  min_orderbook_depth_usdt: 100000
+  max_market_data_age_seconds: 10
+
+ai_output_limits:
+  min_confidence_for_trade: 0.60
+  require_thesis: true
+  require_evidence: true
+  require_stop_loss: true
+  require_take_profit: true
+  require_invalidation_conditions: true
+
+kill_switch:
+  enabled: true
+  flag_path: "./runtime/KILL_SWITCH"
+  manual_reset_required: true
