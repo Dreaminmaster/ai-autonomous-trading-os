@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dreaminmaster/ai-autonomous-trading-os/schemas/risk_decision.schema.json",
+  "title": "RiskDecision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "decision", "reasons", "risk_score", "checks"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "risk_decision.v1" },
+    "decision": { "type": "string", "enum": ["APPROVED", "REJECTED", "MODIFIED", "PAUSED", "KILL_SWITCH_ACTIVE"] },
+    "reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "risk_score": { "type": "number", "minimum": 0, "maximum": 1 },
+    "checks": {
+      "type": "object",
+      "additionalProperties": { "type": ["boolean", "string", "number", "null"] }
+    },
+    "modified_trade_intent": {
+      "type": ["object", "null"]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}
