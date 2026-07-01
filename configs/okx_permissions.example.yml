@@ -1,0 +1,53 @@
+# Example OKX permission policy. Do not store real keys here.
+
+phases:
+  design:
+    okx_private_key_required: false
+    allowed_permissions: []
+
+  backtest:
+    okx_private_key_required: false
+    allowed_permissions: []
+
+  paper:
+    okx_private_key_required: false
+    allowed_permissions: []
+
+  shadow:
+    okx_private_key_required: true
+    allowed_permissions:
+      - read
+    forbidden_permissions:
+      - trade
+      - withdraw
+      - transfer
+
+  live_tiny_spot:
+    okx_private_key_required: true
+    account_type: sub_account
+    allowed_permissions:
+      - read
+      - trade
+    forbidden_permissions:
+      - withdraw
+      - transfer
+      - margin
+      - futures
+      - swaps
+      - options
+    ip_whitelist_required: true
+    max_capital_usdt: 100
+    requires_explicit_human_approval: true
+
+key_storage:
+  allowed:
+    - environment_variables
+    - local_dotenv_outside_git
+    - os_keychain
+  forbidden:
+    - source_code
+    - github
+    - logs
+    - reports
+    - prompts
+    - screenshots
