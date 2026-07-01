@@ -1,0 +1,12 @@
+[project]
+name = "ai-autonomous-trading-os-implementation"
+version = "0.1.0"
+description = "Implementation package for AI autonomous trading OS"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
