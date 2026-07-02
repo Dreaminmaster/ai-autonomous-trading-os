@@ -112,6 +112,13 @@ jobs:
               print(f'OK: {p}')
           print('Pair format validated.')
           " 2>&1 | tee pair_format_check.log
+      - name: Strategy Fix Round 1
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 60
+        run: |
+          cd implementation
+          python3 scripts/ci_strategy_fix_round1.py
       - name: Generate validation summary
         if: always()
         run: |

@@ -272,14 +272,21 @@ class AISupervisedStrategy(IStrategy):
                     logger.warning(f"Failed to load ATOS_POLICY={policy_path}: {e}, using default policy")
             self._initialized = True
 
+        # ── Experiment config ──────────────────────────────────
+        exp = self.atos_policy.get("experiment", {})
+        self._exp_strategy_weights = exp.get("strategy_weights", {})
+        self._exp_disabled_strategies = set(exp.get("disabled_strategies", []))
+        self._exp_max_holding_minutes = exp.get("max_holding_minutes", 1200)
+        self._exp_take_profit_pct = exp.get("take_profit_pct", 2.0)
+        self._exp_early_exit_loss_pct = exp.get("early_exit_loss_pct", None)
+        self._exp_early_exit_after_minutes = exp.get("early_exit_after_minutes", None)
+
         # FRESH RiskEngine every populate_entry_trend call
-        # This avoids false lookahead bias from shared risk state
         if ATOS_AVAILABLE:
             self._risk_engine = RiskEngine(self.atos_policy)
         else:
             self._risk_engine = None
 
-        # Ledger: only in live/dry-run (skip in backtest lookahead to reduce side effects)
         is_lookahead = os.environ.get("ATOS_LOOKAHEAD_MODE", "") == "1"
         if ATOS_AVAILABLE and not is_lookahead:
             if self._ledger is None:
@@ -287,7 +294,7 @@ class AISupervisedStrategy(IStrategy):
         else:
             self._ledger = None
 
-        logger.info(f"ATOS init: provider={self.atos_provider}, risk_engine=fresh, lookahead_mode={is_lookahead}")
+        logger.info(f"ATOS init: provider={self.atos_provider}, experiment={bool(exp)}, lookahead={is_lookahead}")
 
     def _get_policy(self) -> dict:
         """Merge runtime config with static policy."""
@@ -671,24 +678,38 @@ class AISupervisedStrategy(IStrategy):
         current_profit: float,
         **kwargs,
     ) -> str | None:
-        """Custom exit logic: take-profit, max holding time."""
+        """Custom exit logic: take-profit, max holding time, early exit.
+        Parameters read from ATOS_POLICY.experiment (or defaults)."""
         if not self.atos_enabled:
             return None
 
         try:
-            if current_profit > 0.02:
+            # Resolve experiment config (set in _init_atos)
+            take_profit = getattr(self, "_exp_take_profit_pct", 2.0)
+            max_hold_min = getattr(self, "_exp_max_holding_minutes", 1200)
+            early_loss = getattr(self, "_exp_early_exit_loss_pct", None)
+            early_after = getattr(self, "_exp_early_exit_after_minutes", None)
+
+            # Take-profit
+            if current_profit * 100 >= take_profit:
                 return "atos_take_profit"
 
+            # Compute holding age
             from datetime import datetime, timezone
-            # Use Freqtrade's current_time (historical candle time in backtest),
-            # NOT datetime.now() which uses wall-clock and breaks backtest time semantics.
             if hasattr(current_time, 'timestamp'):
                 now_ts = current_time.timestamp()
             else:
                 now_ts = trade.open_date_utc.replace(tzinfo=timezone.utc).timestamp()
             open_ts = trade.open_date_utc.replace(tzinfo=timezone.utc).timestamp()
             age_minutes = (now_ts - open_ts) / 60
-            if age_minutes > 1200:  # 20 hours
+
+            # Early exit: loss threshold
+            if early_loss is not None and early_after is not None:
+                if current_profit * 100 <= early_loss and age_minutes >= early_after:
+                    return "atos_early_exit_loss"
+
+            # Max holding time
+            if age_minutes > max_hold_min:
                 return "atos_max_holding_time"
         except Exception as e:
             logger.error(f"custom_exit error for {pair}: {e}", exc_info=True)
