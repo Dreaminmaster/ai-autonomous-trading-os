@@ -134,6 +134,8 @@ jobs:
       - name: Run backtest
         if: always()
         continue-on-error: true
+        env:
+          ATOS_POLICY: config/policy.validation.json
         run: |
           cd implementation
           freqtrade backtesting \
@@ -151,6 +153,8 @@ jobs:
       - name: Run lookahead analysis
         if: always()
         continue-on-error: true
+        env:
+          ATOS_POLICY: config/policy.validation.json
         run: |
           cd implementation
           freqtrade lookahead-analysis \

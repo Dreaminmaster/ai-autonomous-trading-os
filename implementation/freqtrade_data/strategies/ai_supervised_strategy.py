@@ -258,6 +258,17 @@ class AISupervisedStrategy(IStrategy):
         if self._initialized:
             return
 
+        # Load policy: env var ATOS_POLICY overrides defaults for CI/validation
+        import os, json
+        policy_path = os.environ.get("ATOS_POLICY", "")
+        if policy_path and Path(policy_path).exists():
+            try:
+                loaded = json.loads(Path(policy_path).read_text())
+                self.atos_policy = loaded
+                logger.info(f"ATOS policy loaded from ATOS_POLICY={policy_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load ATOS_POLICY={policy_path}: {e}, using default policy")
+
         if ATOS_AVAILABLE:
             try:
                 self._provider_manager = ProviderManager(self.atos_provider)
