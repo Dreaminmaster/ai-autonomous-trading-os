@@ -2,71 +2,40 @@ name: Freqtrade Validation
 
 on:
   push:
-    paths:
-      - 'implementation/**'
-      - '.github/workflows/freqtrade-validation.yml'
+    paths: ['implementation/**', '.github/workflows/freqtrade-validation.yml']
   pull_request:
-    paths:
-      - 'implementation/**'
+    paths: ['implementation/**']
   workflow_dispatch:
 
 jobs:
-  # ── ATOS Core Tests (fast, no Freqtrade) ──────────────────────────
   atos-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
+        with: {python-version: '3.11'}
       - name: Install ATOS
         run: |
           cd implementation
           python -m pip install --upgrade pip
           python -m pip install -e '.[dev]'
-
       - name: Run pytest
-        id: pytest
         run: |
           cd implementation
           python -m pytest -v --tb=long 2>&1 | tee pytest.log
-          echo "PASSED=$(grep -c 'PASSED' pytest.log || echo 0)" >> $GITHUB_OUTPUT
-
       - name: Secret leakage scan
         run: |
           cd implementation
           bash scripts/validate_no_secrets.sh 2>&1 | tee no_secret_scan.log
-
       - name: CLI smoke test
         run: |
           cd implementation
-          python -m atos.cli status
-          python -m atos.cli risk
-          python -m atos.cli cycle
-          python -m atos.cli review
-          python -m atos.cli_ext evaluate
-
-      - name: Walk-forward + research report
+          python -m atos.cli status; python -m atos.cli risk; python -m atos.cli cycle
+          python -m atos.cli review; python -m atos.cli_ext evaluate
+      - name: Walk-forward report
         run: |
-          cd implementation
-          mkdir -p freqtrade_data/backtest_results
-          python -c "
-          import json
-          from pathlib import Path
-          from atos.evaluator import Evaluator
-          pnl = [0.15,-0.05,0.22,-0.08,0.31,0.12,-0.15,0.18,-0.04,0.27,
-                 -0.09,0.14,0.33,-0.12,0.19,-0.06,0.25,0.11,-0.18,0.29]
-          ev = Evaluator()
-          wf = ev.walk_forward(pnl, train=10, test=5)
-          mc = ev.monte_carlo(pnl, 200)
-          ov = ev.summarize(pnl)
-          report = {'overall':ov.to_dict(),'walk_forward':wf.to_dict(),'monte_carlo':mc.to_dict()}
-          print(json.dumps(report, indent=2))
-          Path('freqtrade_data/backtest_results/walk_forward_report.json').write_text(json.dumps(report,indent=2))
-          "
-
+          cd implementation && mkdir -p freqtrade_data/backtest_results
+          python3 scripts/ci_walk_forward.py
       - name: Upload ATOS artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -78,442 +47,111 @@ jobs:
             implementation/freqtrade_data/backtest_results/walk_forward_report.json
           retention-days: 14
 
-  # ── Freqtrade Integration (needs pip install freqtrade) ───────────
   freqtrade:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install system deps
+        with: {python-version: '3.11'}
+      - name: Install deps
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential libssl-dev
-
-      - name: Install ATOS + Freqtrade
-        timeout-minutes: 10
-        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq build-essential libssl-dev
           cd implementation
           python -m pip install --upgrade pip
           python -m pip install -e '.[dev,freqtrade]'
           python -c "import freqtrade; print('Freqtrade', freqtrade.__version__)"
-
       - name: Setup Freqtrade
         run: |
           cd implementation
           bash scripts/setup_freqtrade.sh
-          # Use validation policy (max_trades_per_day=50) for CI backtesting
           cp config/policy.validation.json config/policy.json
-
       - name: List strategies
         run: |
           cd implementation
           freqtrade list-strategies --strategy-path freqtrade_data/strategies 2>&1 | tee freqtrade_list_strategies.log
-          grep -q "AISupervisedStrategy" freqtrade_list_strategies.log && echo "✓ AISupervisedStrategy found" || echo "✗ AISupervisedStrategy NOT found"
-
-      - name: Download OKX data (minimal)
+          grep -q "AISupervisedStrategy" freqtrade_list_strategies.log && echo "AISupervisedStrategy found" || echo "AISupervisedStrategy NOT found"
+      - name: Download OKX data
         timeout-minutes: 15
         continue-on-error: true
         run: |
-          cd implementation
-          mkdir -p freqtrade_data/data/okx
-          freqtrade download-data \
-            --config freqtrade_data/config.dryrun.json \
-            --datadir freqtrade_data/data/okx \
-            --exchange okx \
-            --pairs BTC/USDT \
-            --timeframes 5m \
-            --timerange 20250101-20250701 \
-            --erase \
-            2>&1 | tee download_data.log
-          ls -la freqtrade_data/data/okx/ || echo "(no data dir — download may have failed)"
-
-      - name: Run backtest
+          cd implementation && mkdir -p freqtrade_data/data/okx
+          freqtrade download-data --config freqtrade_data/config.dryrun.json --datadir freqtrade_data/data/okx --exchange okx --pairs BTC/USDT --timeframes 5m --timerange 20250101-20250701 2>&1 | tee download_data.log
+          ls freqtrade_data/data/okx/ || echo "(no data)"
+      - name: Main backtest
         if: always()
         continue-on-error: true
-        env:
-          ATOS_POLICY: config/policy.validation.json
+        env: {ATOS_POLICY: config/policy.validation.json}
         run: |
           cd implementation
-          freqtrade backtesting \
-            --config freqtrade_data/config.dryrun.json \
-            --strategy AISupervisedStrategy \
-            --strategy-path freqtrade_data/strategies \
-            --datadir freqtrade_data/data/okx \
-            --timerange 20250101-20250701 \
-            --timeframe 5m \
-            --export trades \
-            --export-filename freqtrade_data/backtest_results/backtest_result.json \
-            2>&1 | tee backtest.log
-          echo "Backtest exit code: $?"
-
-      - name: Run lookahead analysis
+          freqtrade backtesting --config freqtrade_data/config.dryrun.json --strategy AISupervisedStrategy --strategy-path freqtrade_data/strategies --datadir freqtrade_data/data/okx --timerange 20250101-20250701 --timeframe 5m 2>&1 | tee backtest.log
+      - name: Lookahead analysis
         if: always()
         continue-on-error: true
-        env:
-          ATOS_POLICY: config/policy.validation.json
-          ATOS_LOOKAHEAD_MODE: "1"
+        env: {ATOS_POLICY: config/policy.validation.json, ATOS_LOOKAHEAD_MODE: "1"}
         run: |
           cd implementation
-          freqtrade lookahead-analysis \
-            --config freqtrade_data/config.dryrun.json \
-            --strategy AISupervisedStrategy \
-            --strategy-path freqtrade_data/strategies \
-            --timerange 20250101-20250701 \
-            2>&1 | tee lookahead_analysis.log
-          echo "Lookahead exit code: $?"
-
-      # ═══════════════════════════════════════════════════════════
-      # P1: Multi-period backtest (REAL runs, no estimates)
-      # ═══════════════════════════════════════════════════════════
-      - name: Multi-period backtest
+          freqtrade lookahead-analysis --config freqtrade_data/config.dryrun.json --strategy AISupervisedStrategy --strategy-path freqtrade_data/strategies --timerange 20250101-20250701 2>&1 | tee lookahead_analysis.log
+      - name: Multi-period + baseline + multi-pair + attribution
         if: always()
         continue-on-error: true
+        env: {ATOS_POLICY: config/policy.validation.json}
         run: |
-          cd implementation
-          mkdir -p validation_reports
-          echo "# Multi-Period Backtest" > validation_reports/multi_period_backtest.md
-          echo "" >> validation_reports/multi_period_backtest.md
-          echo "**Commit:** $(git -C .. rev-parse --short HEAD)" >> validation_reports/multi_period_backtest.md
-          echo "" >> validation_reports/multi_period_backtest.md
-          echo "| Period | Trades | Winrate | Profit % | Max DD % | Profit Factor | Data Status |" >> validation_reports/multi_period_backtest.md
-          echo "|--------|--------|---------|----------|----------|---------------|-------------|" >> validation_reports/multi_period_backtest.md
-
-          PERIODS=("20250101-20250401" "20250401-20250701" "20250101-20250701")
-          for i in "${!PERIODS[@]}"; do
-            PERIOD="${PERIODS[$i]}"
-            echo "=== Multi-period: $PERIOD ==="
-            LOG="freqtrade_data/backtest_results/mp_${i}.log"
-            freqtrade backtesting \
-              --config freqtrade_data/config.dryrun.json \
-              --strategy AISupervisedStrategy \
-              --strategy-path freqtrade_data/strategies \
-              --datadir freqtrade_data/data/okx \
-              --timerange "$PERIOD" \
-              --timeframe 5m \
-              2>&1 > "$LOG" || true
-            python3 -c "
-text = open('$LOG').read()
-found = False
-for line in text.split('\n'):
-    if 'AISupervisedStrategy' in line and '│' in line and not 'TOTAL' in line[:20]:
-        parts = [p.strip() for p in line.split('│')]
-        if len(parts) >= 7 and parts[2].strip().isdigit():
-            trades = parts[2].strip()
-            tot = parts[5].strip()
-            dd = parts[8].strip() if len(parts) > 8 else '-'
-            with open('validation_reports/multi_period_backtest.md', 'a') as f:
-                f.write(f'| $PERIOD | {trades} | - | {tot} | {dd} | - | REAL_RUN |\n')
-            found = True
-            break
-if not found:
-    with open('validation_reports/multi_period_backtest.md', 'a') as f:
-        f.write(f'| $PERIOD | - | - | - | - | - | FAILED (no trades) |\n')
-" 2>/dev/null || echo "| $PERIOD | - | - | - | - | - | FAILED |" >> validation_reports/multi_period_backtest.md
-          done
-          cat validation_reports/multi_period_backtest.md
-
-      # ═══════════════════════════════════════════════════════════
-      # P2: Baseline comparison (AISupervised, SMA, RSI, SampleStrategy)
-      # ═══════════════════════════════════════════════════════════
-      - name: Baseline comparison backtests
+          cd implementation && mkdir -p validation_reports
+          python3 scripts/ci_multi_period.py
+          python3 scripts/ci_baselines.py
+          python3 scripts/ci_multipair_attribution.py
+      - name: Validate pair format
         if: always()
-        continue-on-error: true
         run: |
           cd implementation
-          mkdir -p validation_reports
-          echo "# Baseline Comparison" > validation_reports/baseline_comparison.md
-          echo "" >> validation_reports/baseline_comparison.md
-          echo "**Timerange:** 20250101-20250701 | **Pair:** BTC/USDT 5m" >> validation_reports/baseline_comparison.md
-          echo "" >> validation_reports/baseline_comparison.md
-          echo "| Strategy | Trades | Winrate | Profit % | Max DD % | Data Status |" >> validation_reports/baseline_comparison.md
-          echo "|----------|--------|---------|----------|----------|-------------|" >> validation_reports/baseline_comparison.md
-
-          STRATS=("AISupervisedStrategy" "SmaCrossover" "RsiMeanReversion" "SampleStrategy")
-          for j in "${!STRATS[@]}"; do
-            STRAT="${STRATS[$j]}"
-            echo "=== Baseline: $STRAT ==="
-            LOG="freqtrade_data/backtest_results/bl_${j}.log"
-            freqtrade backtesting \
-              --config freqtrade_data/config.dryrun.json \
-              --strategy "$STRAT" \
-              --strategy-path freqtrade_data/strategies \
-              --datadir freqtrade_data/data/okx \
-              --timerange 20250101-20250701 \
-              --timeframe 5m \
-              2>&1 > "$LOG" || true
-            python3 -c "
-text = open('$LOG').read().replace('\$STRAT', '${STRAT}')
-found = False
-for line in text.split('\n'):
-    if '\${STRAT}' in line and '│' in line:
-        parts = [p.strip() for p in line.split('│')]
-        if len(parts) >= 7 and (parts[2].strip().isdigit() or parts[2].strip() == '0'):
-            trades = parts[2].strip()
-            tot = parts[5].strip()
-            dd = parts[8].strip() if len(parts) > 8 else '-'
-            with open('validation_reports/baseline_comparison.md', 'a') as f:
-                f.write(f'| \${STRAT} | {trades} | - | {tot} | {dd} | REAL_RUN |\n')
-            found = True
-            break
-if not found:
-    with open('validation_reports/baseline_comparison.md', 'a') as f:
-        f.write(f'| \${STRAT} | - | - | - | - | FAILED (no parse) |\n')
-" 2>/dev/null || echo "| $STRAT | - | - | - | - | FAILED |" >> validation_reports/baseline_comparison.md
-          done
-
-          # Buy & Hold from data
           python3 -c "
-from pathlib import Path
-import pandas as pd
-for f in sorted(Path('freqtrade_data/data/okx').rglob('*.feather')):
-    if 'BTC' in str(f) and '5m' in str(f):
-        df = pd.read_feather(f)
-        if 'close' in df.columns and len(df) > 0:
-            first = float(df['close'].iloc[0])
-            last = float(df['close'].iloc[-1])
-            pct = (last - first) / first * 100
-            with open('validation_reports/baseline_comparison.md', 'a') as out:
-                out.write(f'| Buy & Hold BTC | 1 | - | {pct:.2f}% | {abs(pct):.2f}% | REAL_RUN |\n')
-            import sys; sys.exit(0)
-" 2>/dev/null || echo "| Buy & Hold BTC | 1 | - | NOT_RUN | NOT_RUN | FAILED |" >> validation_reports/baseline_comparison.md
-          echo "" >> validation_reports/baseline_comparison.md
-          echo "**Verdict:** See above." >> validation_reports/baseline_comparison.md
-          cat validation_reports/baseline_comparison.md
-
-      # ═══════════════════════════════════════════════════════════
-      # P3: Multi-pair — download ETH + SOL and run backtest
-      # ═══════════════════════════════════════════════════════════
-      - name: Multi-pair backtest
-        if: always()
-        continue-on-error: true
-        run: |
-          cd implementation
-          mkdir -p validation_reports
-          echo "# Multi-Pair Backtest" > validation_reports/multi_pair_backtest.md
-          echo "" >> validation_reports/multi_pair_backtest.md
-          echo "**Timerange:** 20250101-20250701 | **Timeframe:** 5m spot" >> validation_reports/multi_pair_backtest.md
-          echo "" >> validation_reports/multi_pair_backtest.md
-          echo "| Pair | Download | Trades | Profit % | Max DD % | Data Status |" >> validation_reports/multi_pair_backtest.md
-          echo "|------|----------|--------|----------|----------|-------------|" >> validation_reports/multi_pair_backtest.md
-
-          # BTC already done above
-          python3 -c "
-text = open('freqtrade_data/backtest_results/bl_0.log').read()
-for line in text.split('\n'):
-    if 'AISupervisedStrategy' in line and '│' in line:
-        parts = [p.strip() for p in line.split('│')]
-        if len(parts) >= 7 and parts[2].strip().isdigit():
-            with open('validation_reports/multi_pair_backtest.md', 'a') as f:
-                f.write(f'| BTC/USDT | DONE | {parts[2].strip()} | {parts[5].strip()} | {parts[8].strip() if len(parts)>8 else \"-\"} | REAL_RUN |\n')
-            break
-" 2>/dev/null || echo "| BTC/USDT | DONE | - | - | - | (see baseline) |" >> validation_reports/multi_pair_backtest.md
-
-          PAIRS=("ETH/USDT" "SOL/USDT")
-          for PAIR in "${PAIRS[@]}"; do
-            echo "=== Downloading $PAIR ==="
-            DL_LOG="freqtrade_data/backtest_results/dl_${PAIR//\//_}.log"
-            freqtrade download-data \
-              --config freqtrade_data/config.dryrun.json \
-              --datadir freqtrade_data/data/okx \
-              --exchange okx \
-              --pairs "$PAIR" \
-              --timeframes 5m \
-              --timerange 20250101-20250701 \
-              2>&1 > "$DL_LOG" || true
-
-            if grep -qE "Downloaded data|Downloading.*100%" "$DL_LOG" 2>/dev/null; then
-              echo "=== Backtesting $PAIR ==="
-              BT_LOG="freqtrade_data/backtest_results/bt_${PAIR//\//_}.log"
-              freqtrade backtesting \
-                --config freqtrade_data/config.dryrun.json \
-                --strategy AISupervisedStrategy \
-                --strategy-path freqtrade_data/strategies \
-                --datadir freqtrade_data/data/okx \
-                --timerange 20250101-20250701 \
-                --timeframe 5m \
-                --pairs "$PAIR" \
-                2>&1 > "$BT_LOG" || true
-              python3 -c "
-text = open('$BT_LOG').read()
-for line in text.split('\n'):
-    if 'AISupervisedStrategy' in line and '│' in line:
-        parts = [p.strip() for p in line.split('│')]
-        if len(parts) >= 7 and parts[2].strip().isdigit():
-            with open('validation_reports/multi_pair_backtest.md', 'a') as f:
-                f.write(f'| $PAIR | SUCCESS | {parts[2].strip()} | {parts[5].strip()} | {parts[8].strip() if len(parts)>8 else \"-\"} | REAL_RUN |\n')
-            break
-" 2>/dev/null || echo "| $PAIR | SUCCESS | - | - | - | FAILED (bt parse) |" >> validation_reports/multi_pair_backtest.md
-            else
-              ERR=$(tail -3 "$DL_LOG" 2>/dev/null | head -1 || echo "unknown")
-              echo "| $PAIR | FAILED | - | - | - | FAILED: ${ERR:0:80} |" >> validation_reports/multi_pair_backtest.md
-            fi
-          done
-          cat validation_reports/multi_pair_backtest.md
-
-      # ═══════════════════════════════════════════════════════════
-      # P4: Strategy attribution — extract from backtest log
-      # ═══════════════════════════════════════════════════════════
-      - name: Strategy attribution report
-        if: always()
-        continue-on-error: true
-        run: |
-          cd implementation
-          mkdir -p validation_reports
-          echo "# Strategy Attribution" > validation_reports/strategy_attribution.md
-          echo "" >> validation_reports/strategy_attribution.md
-          echo "**Commit:** $(git -C .. rev-parse --short HEAD)" >> validation_reports/strategy_attribution.md
-          echo "" >> validation_reports/strategy_attribution.md
-          echo "## Entry Tag Distribution" >> validation_reports/strategy_attribution.md
-          echo "" >> validation_reports/strategy_attribution.md
-          echo '```' >> validation_reports/strategy_attribution.md
-          grep -E "atos_trend|atos_breakout|atos_mean|atos_hold" backtest.log | grep "│" | grep -v "TOTAL\|MIXED" | head -20 >> validation_reports/strategy_attribution.md 2>/dev/null || echo "(not found)" >> validation_reports/strategy_attribution.md
-          echo '```' >> validation_reports/strategy_attribution.md
-          echo "" >> validation_reports/strategy_attribution.md
-          echo "## Exit Reason Distribution" >> validation_reports/strategy_attribution.md
-          echo "" >> validation_reports/strategy_attribution.md
-          echo '```' >> validation_reports/strategy_attribution.md
-          grep -E "take_profit|max_holding|stop_loss|force_exit|rsi_overbought" backtest.log | grep "│" | grep -v "TOTAL\|MIXED\|EXIT REASON" | head -20 >> validation_reports/strategy_attribution.md 2>/dev/null || echo "(not found)" >> validation_reports/strategy_attribution.md
-          echo '```' >> validation_reports/strategy_attribution.md
-          echo "" >> validation_reports/strategy_attribution.md
-          echo "## ATOS Signal Diagnostics" >> validation_reports/strategy_attribution.md
-          echo "" >> validation_reports/strategy_attribution.md
-          echo '```' >> validation_reports/strategy_attribution.md
-          grep "ATOS_SIGNAL_DIAGNOSTICS" backtest.log 2>/dev/null | head -1 >> validation_reports/strategy_attribution.md || echo "(not found)" >> validation_reports/strategy_attribution.md
-          echo '```' >> validation_reports/strategy_attribution.md
-          cat validation_reports/strategy_attribution.md
-      - name: Validate pair format (spot)
-        if: always()
-        run: |
-          cd implementation
-          echo "=== Validating pair format for spot mode ==="
-          python -c "
-          import json
-          with open('freqtrade_data/config.dryrun.json') as f:
-              cfg = json.load(f)
-          mode = cfg.get('trading_mode', '')
-          pairs = cfg.get('exchange', {}).get('pair_whitelist', [])
-          print(f'trading_mode: {mode}')
-          print(f'pair_whitelist: {pairs}')
-          if mode == 'spot':
-              for p in pairs:
-                  if ':USDT' in p or ':USD' in p:
-                      print(f'ERROR: spot mode should not use futures format: {p}')
-                      exit(1)
-                  print(f'  OK: {p} (spot format)')
-          else:
-              print(f'  Mode is {mode}, pair format check skipped')
+          import json; cfg = json.load(open('freqtrade_data/config.dryrun.json'))
+          pairs = cfg.get('exchange',{}).get('pair_whitelist',[])
+          for p in pairs:
+              if ':USDT' in p: print(f'ERROR: {p}'); exit(1)
+              print(f'OK: {p}')
           print('Pair format validated.')
           " 2>&1 | tee pair_format_check.log
-
       - name: Generate validation summary
         if: always()
         run: |
           cd implementation
-          COMMIT=$(git -C .. rev-parse HEAD)
-          COMMIT_SHORT=$(git -C .. rev-parse --short HEAD)
-
+          COMMIT=$(git -C .. rev-parse --short HEAD)
           cat > validation_summary.md << ENDMD
-          # AI Autonomous Trading OS — Validation Report
-
+          # Validation Report
           **Commit:** ${COMMIT}
-          **Workflow:** ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-
-          ## 1. Code Completeness
-          - Python modules: 39
-          - Shell scripts: 11
-          - Tests: 97 (all passing)
-          - Safety gates: 10 deterministic
-          - Provider types: 5 (mock, OpenAI, DeepSeek, OpenAI-compatible, Anges)
-
-          ## 2. Test Results
-          \`\`\`
-          $(cat pytest.log 2>/dev/null | tail -5 || echo "pytest.log not found")
-          \`\`\`
-
-          ## 3. Secret Leakage Scan
-          \`\`\`
-          $(cat no_secret_scan.log 2>/dev/null | tail -5 || echo "scan not found")
-          \`\`\`
-
-          ## 4. Freqtrade Strategy Discovery
-          \`\`\`
-          $(cat freqtrade_list_strategies.log 2>/dev/null | grep -A2 AISupervisedStrategy || echo "strategy list not found")
-          \`\`\`
-
-          ## 5. Data Download
-          \`\`\`
-          $(cat download_data.log 2>/dev/null | tail -5 || echo "download_data not run or failed")
-          \`\`\`
-
-          ## 6. Backtest Results
-          $(if [ -f freqtrade_data/backtest_results/backtest_result.json ]; then
-            echo '```'
-            python3 -c "
-          import json
-          with open('freqtrade_data/backtest_results/backtest_result.json') as f:
-              d = json.load(f)
-          s = d.get('strategy', d.get('strategy_comparison', [{}])[0])
-          for k in ['total_trades','winrate','profit_total_pct','profit_total','max_drawdown','max_drawdown_account']:
-              v = s.get(k , '-')
-              if v is not None:
-                  print(f'  {k}: {v}')
-          " 2>/dev/null
-            echo '```'
-          else
-            echo "**No backtest result file found.** Either no data, download failed, or backtest not run."
-          fi)
-
-          ## 7. Lookahead Analysis
-          \`\`\`
-          $(cat lookahead_analysis.log 2>/dev/null | tail -10 || echo "lookahead not run")
-          \`\`\`
-
-          ## 8. Pair Format Check
-          \`\`\`
-          $(cat pair_format_check.log 2>/dev/null || echo "check not run")
-          \`\`\`
-
-          ## 9. Walk-Forward + Monte Carlo
-          \`\`\`
-          $(cat freqtrade_data/backtest_results/walk_forward_report.json 2>/dev/null | python3 -c "
-          import json,sys
-          try:
-              d = json.load(sys.stdin)
-              print(f\"  Overall return: {d['overall']['total_return']}\")
-              print(f\"  Sharpe: {d['overall']['sharpe']}\")
-              print(f\"  Max drawdown: {d['overall']['max_drawdown_pct']}%\")
-              print(f\"  Monte Carlo ruin prob: {d['monte_carlo']['ruin_probability']}\")
-          except: pass
-          " 2>/dev/null || echo "(not available)")
-          \`\`\`
-
-          ## 10. Conclusion
-
+          **Run:** ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          ## Tests
+          ` + "`" + "`" + "`" + `
+          $(tail -3 pytest.log 2>/dev/null)
+          ` + "`" + "`" + "`" + `
+          ## Secret Scan
+          ` + "`" + "`" + "`" + `
+          $(tail -3 no_secret_scan.log 2>/dev/null)
+          ` + "`" + "`" + "`" + `
+          ## Data Download
+          ` + "`" + "`" + "`" + `
+          $(tail -3 download_data.log 2>/dev/null)
+          ` + "`" + "`" + "`" + `
+          ## Backtest
+          ` + "`" + "`" + "`" + `
+          $(grep "STRATEGY SUMMARY" -A5 backtest.log 2>/dev/null || echo "not found")
+          ` + "`" + "`" + "`" + `
+          ## Lookahead
+          ` + "`" + "`" + "`" + `
+          $(tail -10 lookahead_analysis.log 2>/dev/null)
+          ` + "`" + "`" + "`" + `
+          ## Conclusion
           | Metric | Status |
           |--------|--------|
-          | Code complete | 39 modules, 11 scripts |
-          | Tests passing | 97/97 |
-          | No secret leak | ✅ |
-          | Freqtrade strategy discovered | $(grep -q AISupervisedStrategy freqtrade_list_strategies.log 2>/dev/null && echo '✅' || echo '⚠️') |
-          | Pair format validated | $(grep -q 'OK:' pair_format_check.log 2>/dev/null && echo '✅' || echo '⚠️') |
-          | Backtest completed | $(if [ -f freqtrade_data/backtest_results/backtest_result.json ]; then echo '✅'; else echo '⚠️ No data or not run'; fi) |
-          | Lookahead bias detected | $(grep -qi 'lookahead' lookahead_analysis.log 2>/dev/null && echo 'See log' || echo '⚠️ Not run') |
-          | Profitability evidence | ⚠️ **Not yet proven** — requires multi-month backtest + dry-run results |
-
-          **Current status: System code is complete and testable. Profitability has NOT been proven yet.**
-          Do NOT enable live trading without:
-          1. 90+ day backtest with positive Sharpe
-          2. Lookahead analysis passing
-          3. Minimum 30 days shadow/dry-run without drawdown > 10%
+          | Tests | $(grep -c passed pytest.log 2>/dev/null || echo "?") |
+          | Secret leak | $(grep -q 'No secret' no_secret_scan.log 2>/dev/null && echo 'CLEAN' || echo '?') |
+          | Strategy found | $(grep -q AISupervisedStrategy freqtrade_list_strategies.log 2>/dev/null && echo 'YES' || echo '?') |
+          | Lookahead | $(grep -q 'has_bias.*No' lookahead_analysis.log 2>/dev/null && echo 'PASS' || echo '?') |
+          | Profitability | NOT PROVEN |
+          | Live trading | FORBIDDEN |
           ENDMD
-
-          echo "=== Validation Summary ==="
           cat validation_summary.md
-
       - name: Upload Freqtrade artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -528,11 +166,7 @@ for line in text.split('\n'):
             implementation/lookahead_analysis.log
             implementation/pair_format_check.log
             implementation/validation_summary.md
-            implementation/validation_reports/baseline_comparison.md
-            implementation/validation_reports/multi_period_backtest.md
-            implementation/validation_reports/multi_pair_backtest.md
-            implementation/validation_reports/strategy_attribution.md
-            implementation/freqtrade_data/backtest_results/backtest_result.json
-            implementation/freqtrade_data/backtest_results/walk_forward_report.json
+            implementation/validation_reports/*.md
+            implementation/freqtrade_data/backtest_results/*.json
           retention-days: 14
           if-no-files-found: ignore
