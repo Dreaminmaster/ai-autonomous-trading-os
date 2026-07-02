@@ -278,7 +278,49 @@ class AISupervisedStrategy(IStrategy):
         policy["dry_run"] = self.config.get("dry_run", True)
         return policy
 
-    # ── Indicators ──────────────────────────────────────────────────
+    def _resolve_candle_ts(self, dataframe: DataFrame, idx: Any) -> float:
+        """Get epoch seconds from dataframe row for backtest time semantics.
+
+        Uses 'date' column if available, falls back to time.time().
+        Compatible with pandas Timestamp, datetime, string, and numeric.
+        """
+        import time as _time
+
+        if "date" in dataframe.columns:
+            raw = dataframe.at[idx, "date"]
+            return self._to_epoch(raw)
+
+        # idx may be a pandas Timestamp
+        try:
+            raw = idx
+            return self._to_epoch(raw)
+        except Exception:
+            pass
+
+        # Fallback: wall clock (live/dry-run)
+        return _time.time()
+
+    @staticmethod
+    def _to_epoch(raw: Any) -> float:
+        """Convert various timestamp types to epoch seconds."""
+        import time as _time
+        import pandas as _pd
+
+        if raw is None:
+            return _time.time()
+        if isinstance(raw, (int, float)):
+            if raw > 1e10:
+                return raw / 1000.0  # milliseconds
+            return raw  # seconds (small number → wall clock, fallback)
+        if isinstance(raw, _pd.Timestamp):
+            return raw.timestamp()
+        if isinstance(raw, str):
+            try:
+                return _pd.Timestamp(raw).timestamp()
+            except Exception:
+                pass
+        # Last resort
+        return _time.time()
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
@@ -331,13 +373,17 @@ class AISupervisedStrategy(IStrategy):
             f"(provider={self.atos_provider})"
         )
 
-        # ── Diagnostic counters ───────────────────────────────
+        # ── Diagnostic counters (P1: separated BUY/HOLD/APPROVED/REJECTED) ─
         stats = {
             "candles_evaluated": 0,
             "total_candidates": 0,
             "buy_candidates": 0,
             "provider_buy": 0,
-            "risk_approved": 0,
+            "provider_hold": 0,
+            "risk_approved_buy": 0,
+            "risk_approved_hold": 0,
+            "risk_rejected_buy": 0,
+            "risk_rejected_duplicate": 0,
             "signals_emitted": 0,
             "rejection_reasons": {},
         }
@@ -443,22 +489,44 @@ class AISupervisedStrategy(IStrategy):
                         intent_dict = _make_hold_intent(symbol, "no valid candidate")
 
                 # ── Step 3: Risk Check ──────────────────────────
+                # Resolve candle timestamp (epoch seconds) for backtest time semantics
+                candle_ts = self._resolve_candle_ts(dataframe, idx)
+
+                risk_state = {
+                    "mode": policy.get("mode", "paper"),
+                    "decision_ts": candle_ts,
+                    "candle_ts": candle_ts,
+                }
+
                 if ATOS_AVAILABLE and self._risk_engine:
-                    risk = self._risk_engine.evaluate(intent_dict, {"mode": policy.get("mode", "paper")})
+                    risk = self._risk_engine.evaluate(intent_dict, risk_state)
                     risk_dict = risk.to_dict()
                 else:
                     risk_dict = _builtin_risk_check(intent_dict, policy)
 
-                # ── Collect stats ───────────────────────────────
+                # ── Collect stats (P1: separate BUY/HOLD/APPROVED/REJECTED) ─
                 stats["total_candidates"] += len(candidates)
-                buy_cands = [c for c in candidates if c.get("side") == "BUY"]
-                stats["buy_candidates"] += len(buy_cands)
-                if intent_dict.get("action") == "BUY":
+                buy_cands_count = len([c for c in candidates if c.get("side") == "BUY"])
+                stats["buy_candidates"] += buy_cands_count
+
+                intent_action = intent_dict.get("action", "HOLD")
+                risk_decision = risk_dict.get("decision", "REJECTED")
+
+                if intent_action == "BUY":
                     stats["provider_buy"] += 1
-                if risk_dict.get("decision") == "APPROVED":
-                    stats["risk_approved"] += 1
-                for reason in risk_dict.get("reasons", []):
-                    stats["rejection_reasons"][reason] = stats["rejection_reasons"].get(reason, 0) + 1
+                    if risk_decision == "APPROVED":
+                        stats["risk_approved_buy"] += 1
+                    else:
+                        stats["risk_rejected_buy"] += 1
+                        for reason in risk_dict.get("reasons", []):
+                            stats["rejection_reasons"][reason] = stats["rejection_reasons"].get(reason, 0) + 1
+                else:
+                    stats["provider_hold"] += 1
+                    if risk_decision == "APPROVED":
+                        stats["risk_approved_hold"] += 1
+
+                if "duplicate" in str(risk_dict.get("reasons", [])):
+                    stats["risk_rejected_duplicate"] += 1
 
                 # ── Step 4: Produce Signal ──────────────────────
                 if risk_dict.get("decision") == "APPROVED" and intent_dict.get("action") == "BUY":
@@ -494,17 +562,25 @@ class AISupervisedStrategy(IStrategy):
                 dataframe.at[idx, "enter_long"] = 0
                 dataframe.at[idx, "enter_tag"] = "atos_error"
 
-        # ── Diagnostic summary ─────────────────────────────────
+        # ── Diagnostic summary (P3: full breakdown) ────────────────
         logger.info(
             f"{symbol} — ATOS evaluation complete | "
             f"candles={stats['candles_evaluated']} | "
             f"candidates={stats['total_candidates']} | "
             f"buy_cands={stats['buy_candidates']} | "
             f"provider_BUY={stats['provider_buy']} | "
-            f"risk_APPROVED={stats['risk_approved']} | "
+            f"provider_HOLD={stats['provider_hold']} | "
+            f"risk_APPROVED_BUY={stats['risk_approved_buy']} | "
+            f"risk_APPROVED_HOLD={stats['risk_approved_hold']} | "
+            f"risk_REJECTED_BUY={stats['risk_rejected_buy']} | "
+            f"risk_REJECTED_DUPLICATE={stats['risk_rejected_duplicate']} | "
             f"enter_long={stats['signals_emitted']} | "
-            f"rejection_reasons={stats.get('rejection_reasons', {})}"
+            f"top_rejection_reasons={stats.get('rejection_reasons', {})}"
         )
+
+        # Bottleneck warning
+        if stats["provider_buy"] > 100 and stats["signals_emitted"] < 10:
+            logger.warning("SIGNAL BOTTLENECK: provider_buy >> enter_long — check risk cooldown/rejection reasons")
 
         return dataframe
 

@@ -109,10 +109,23 @@ class RiskEngine:
 
         # ── Gate 8: Duplicate signal cooldown ───────────────────
         cooldown_sec = float(self.policy.get("trade_limits", {}).get("cooldown_seconds", 300))
-        now = time.time()
+        # Use decision_ts from state (backtest candle time) if available;
+        # otherwise fall back to wall-clock time (live/dry-run).
+        # This prevents backtest from squashing all historical candles
+        # into the same real-world second.
+        decision_ts = self._resolve_decision_ts(state)
+        now = decision_ts
+
+        # Clean up stale signals BEFORE cooldown check.
+        # In backtest with candle timestamps, this ensures that signals from
+        # candles more than 1 hour apart don't trigger false cooldown hits.
+        self._recent_signals = [s for s in self._recent_signals if now - s["timestamp"] < 3600]
+
         for sig in self._recent_signals:
             if sig["symbol"] == symbol and set(sig.get("strategy_ids", [])) & set(selected_strategies):
-                if now - sig.get("timestamp", 0) < cooldown_sec:
+                sig_ts = sig.get("timestamp", 0)
+                # If both timestamps are candle-based, compare directly
+                if now - sig_ts < cooldown_sec:
                     reasons.append(f"duplicate_signal_cooldown: {symbol}")
                     break
         checks["duplicate_guard_ok"] = not any("duplicate" in r for r in reasons)
@@ -153,9 +166,32 @@ class RiskEngine:
             "strategy_ids": selected_strategies,
             "timestamp": now,
         })
+        # Keep only signals within the last hour of DECISION TIME
+        # (not wall-clock time — for backtest, this means the candle timestamp)
         self._recent_signals = [s for s in self._recent_signals if now - s["timestamp"] < 3600]
 
         return RiskDecision("risk_decision.v1", "APPROVED", ["all_checks_passed"], 0.1, checks)
+
+    # ── Quick pre-check ────────────────────────────────────────
+
+    def _resolve_decision_ts(self, state: dict) -> float:
+        """Resolve decision timestamp from state, falling back to time.time().
+
+        Priority:
+          1. state['decision_ts']  (epoch seconds, float)
+          2. state['candle_ts']    (epoch seconds, float)
+          3. time.time()           (wall clock — live/dry-run mode)
+
+        In backtest, decision_ts is the historical candle's Unix timestamp.
+        This ensures duplicate cooldown works per-candle, not per-wall-second.
+        """
+        ts = state.get("decision_ts") or state.get("candle_ts")
+        if ts is not None:
+            try:
+                return float(ts)
+            except (ValueError, TypeError):
+                pass
+        return time.time()
 
     # ── Quick pre-check ────────────────────────────────────────
 
