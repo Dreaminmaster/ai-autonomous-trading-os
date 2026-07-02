@@ -79,7 +79,15 @@ src/atos/
 ├── operator_commands.py # Operator command parser
 ├── cli.py               # Main CLI (status, risk, cycle, loop, review, market, dashboard)
 ├── cli_ext.py           # Extended CLI (state, evaluate, timer)
-└── dashboard.py         # Simple HTTP dashboard
+└── dashboard.py         # Full HTML + JSON API dashboard
+
+    # New modules (stages 11+)
+    ├── data_freshness.py     # Data freshness guard (stale data → HOLD)
+    ├── market_regime.py      # Market regime detector (trending/volatile/ranging)
+    ├── okx_cache.py          # OKX data cache with freshness tracking
+    ├── okx_readonly_account.py # Read-only OKX account adapter (no trade)
+    ├── db_migrations.py      # Versioned SQLite schema migrations
+    └── strategy_registry.py  # Registry + 5 additional strategies
 ```
 
 ## Freqtrade Integration
