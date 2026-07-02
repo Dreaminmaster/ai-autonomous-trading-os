@@ -7,41 +7,46 @@ Run from repository root:
 ```bash
 cd implementation
 python -m pip install -e '.[dev]'
-python python/cli.py status
-python python/cli.py risk
-python python/cli.py cycle
-python python/cli.py review
-python python/cli.py market --symbol BTC-USDT
+python -m atos.cli status
+python -m atos.cli risk
+python -m atos.cli cycle
+python -m atos.cli loop --loops 3
+python -m atos.cli review
+python -m atos.cli market --symbol BTC-USDT
+python -m atos.cli dashboard --port 8787
 pytest
 ```
+
+Legacy compatibility commands are still available under `python/cli.py`.
 
 Expected behavior:
 
 - default mode is paper
 - strategy pool generates candidates
-- decision/provider layer emits structured intent
+- provider layer emits structured intent
 - risk engine approves or rejects
 - paper executor simulates result
 - ledger writes runtime records
-- public market adapter can fetch ticker/candles/orderbook
-- review layer can produce strategy score recommendations
-- production boundary is disabled by default
+- public market adapter can fetch ticker, candles, orderbook, trades, funding, and open-interest interfaces
+- scoring layer can produce strategy recommendations
+- autonomous runtime can loop without Harness per-trade involvement
+- local dashboard can show recent ledger events
+- guarded exchange path is disabled by default
 
-Current implementation modules:
+Current standard implementation modules:
 
 ```text
-python/atos_core.py
-python/models.py
-python/strategy_pool.py
-python/decision_layer.py
-python/provider_layer.py
-python/risk_engine.py
-python/paper_executor.py
-python/ledger_store.py
-python/market_data.py
-python/history_replay.py
-python/review_layer.py
-python/run_demo.py
-python/cli.py
-python/production_guard.py
+src/atos/core.py
+src/atos/domain.py
+src/atos/strategies.py
+src/atos/providers.py
+src/atos/risk.py
+src/atos/execution.py
+src/atos/ledger.py
+src/atos/market.py
+src/atos/history.py
+src/atos/scoring.py
+src/atos/runtime.py
+src/atos/dashboard.py
+src/atos/cli.py
 ```
