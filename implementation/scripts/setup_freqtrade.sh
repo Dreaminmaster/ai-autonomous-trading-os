@@ -71,7 +71,7 @@ cat > "$USER_DATA/config.dryrun.json" << 'CONFIGEOF'
         "unit": "minutes"
     },
     "entry_pricing": {
-        "price_side": "same",
+        "price_side": "other",
         "use_order_book": true,
         "order_book_top": 1,
         "price_last_balance": 0.0,
