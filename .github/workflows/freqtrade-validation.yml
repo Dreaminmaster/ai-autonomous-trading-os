@@ -385,6 +385,7 @@ for line in text.split('\n'):
           grep "ATOS_SIGNAL_DIAGNOSTICS" backtest.log 2>/dev/null | head -1 >> validation_reports/strategy_attribution.md || echo "(not found)" >> validation_reports/strategy_attribution.md
           echo '```' >> validation_reports/strategy_attribution.md
           cat validation_reports/strategy_attribution.md
+      - name: Validate pair format (spot)
         if: always()
         run: |
           cd implementation
