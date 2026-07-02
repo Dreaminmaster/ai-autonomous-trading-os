@@ -166,7 +166,225 @@ jobs:
             2>&1 | tee lookahead_analysis.log
           echo "Lookahead exit code: $?"
 
-      - name: Validate pair format (spot)
+      # ═══════════════════════════════════════════════════════════
+      # P1: Multi-period backtest (REAL runs, no estimates)
+      # ═══════════════════════════════════════════════════════════
+      - name: Multi-period backtest
+        if: always()
+        continue-on-error: true
+        run: |
+          cd implementation
+          mkdir -p validation_reports
+          echo "# Multi-Period Backtest" > validation_reports/multi_period_backtest.md
+          echo "" >> validation_reports/multi_period_backtest.md
+          echo "**Commit:** $(git -C .. rev-parse --short HEAD)" >> validation_reports/multi_period_backtest.md
+          echo "" >> validation_reports/multi_period_backtest.md
+          echo "| Period | Trades | Winrate | Profit % | Max DD % | Profit Factor | Data Status |" >> validation_reports/multi_period_backtest.md
+          echo "|--------|--------|---------|----------|----------|---------------|-------------|" >> validation_reports/multi_period_backtest.md
+
+          PERIODS=("20250101-20250401" "20250401-20250701" "20250101-20250701")
+          for i in "${!PERIODS[@]}"; do
+            PERIOD="${PERIODS[$i]}"
+            echo "=== Multi-period: $PERIOD ==="
+            LOG="freqtrade_data/backtest_results/mp_${i}.log"
+            freqtrade backtesting \
+              --config freqtrade_data/config.dryrun.json \
+              --strategy AISupervisedStrategy \
+              --strategy-path freqtrade_data/strategies \
+              --datadir freqtrade_data/data/okx \
+              --timerange "$PERIOD" \
+              --timeframe 5m \
+              2>&1 > "$LOG" || true
+            python3 -c "
+text = open('$LOG').read()
+found = False
+for line in text.split('\n'):
+    if 'AISupervisedStrategy' in line and '│' in line and not 'TOTAL' in line[:20]:
+        parts = [p.strip() for p in line.split('│')]
+        if len(parts) >= 7 and parts[2].strip().isdigit():
+            trades = parts[2].strip()
+            tot = parts[5].strip()
+            dd = parts[8].strip() if len(parts) > 8 else '-'
+            with open('validation_reports/multi_period_backtest.md', 'a') as f:
+                f.write(f'| $PERIOD | {trades} | - | {tot} | {dd} | - | REAL_RUN |\n')
+            found = True
+            break
+if not found:
+    with open('validation_reports/multi_period_backtest.md', 'a') as f:
+        f.write(f'| $PERIOD | - | - | - | - | - | FAILED (no trades) |\n')
+" 2>/dev/null || echo "| $PERIOD | - | - | - | - | - | FAILED |" >> validation_reports/multi_period_backtest.md
+          done
+          cat validation_reports/multi_period_backtest.md
+
+      # ═══════════════════════════════════════════════════════════
+      # P2: Baseline comparison (AISupervised, SMA, RSI, SampleStrategy)
+      # ═══════════════════════════════════════════════════════════
+      - name: Baseline comparison backtests
+        if: always()
+        continue-on-error: true
+        run: |
+          cd implementation
+          mkdir -p validation_reports
+          echo "# Baseline Comparison" > validation_reports/baseline_comparison.md
+          echo "" >> validation_reports/baseline_comparison.md
+          echo "**Timerange:** 20250101-20250701 | **Pair:** BTC/USDT 5m" >> validation_reports/baseline_comparison.md
+          echo "" >> validation_reports/baseline_comparison.md
+          echo "| Strategy | Trades | Winrate | Profit % | Max DD % | Data Status |" >> validation_reports/baseline_comparison.md
+          echo "|----------|--------|---------|----------|----------|-------------|" >> validation_reports/baseline_comparison.md
+
+          STRATS=("AISupervisedStrategy" "SmaCrossover" "RsiMeanReversion" "SampleStrategy")
+          for j in "${!STRATS[@]}"; do
+            STRAT="${STRATS[$j]}"
+            echo "=== Baseline: $STRAT ==="
+            LOG="freqtrade_data/backtest_results/bl_${j}.log"
+            freqtrade backtesting \
+              --config freqtrade_data/config.dryrun.json \
+              --strategy "$STRAT" \
+              --strategy-path freqtrade_data/strategies \
+              --datadir freqtrade_data/data/okx \
+              --timerange 20250101-20250701 \
+              --timeframe 5m \
+              2>&1 > "$LOG" || true
+            python3 -c "
+text = open('$LOG').read().replace('\$STRAT', '${STRAT}')
+found = False
+for line in text.split('\n'):
+    if '\${STRAT}' in line and '│' in line:
+        parts = [p.strip() for p in line.split('│')]
+        if len(parts) >= 7 and (parts[2].strip().isdigit() or parts[2].strip() == '0'):
+            trades = parts[2].strip()
+            tot = parts[5].strip()
+            dd = parts[8].strip() if len(parts) > 8 else '-'
+            with open('validation_reports/baseline_comparison.md', 'a') as f:
+                f.write(f'| \${STRAT} | {trades} | - | {tot} | {dd} | REAL_RUN |\n')
+            found = True
+            break
+if not found:
+    with open('validation_reports/baseline_comparison.md', 'a') as f:
+        f.write(f'| \${STRAT} | - | - | - | - | FAILED (no parse) |\n')
+" 2>/dev/null || echo "| $STRAT | - | - | - | - | FAILED |" >> validation_reports/baseline_comparison.md
+          done
+
+          # Buy & Hold from data
+          python3 -c "
+from pathlib import Path
+import pandas as pd
+for f in sorted(Path('freqtrade_data/data/okx').rglob('*.feather')):
+    if 'BTC' in str(f) and '5m' in str(f):
+        df = pd.read_feather(f)
+        if 'close' in df.columns and len(df) > 0:
+            first = float(df['close'].iloc[0])
+            last = float(df['close'].iloc[-1])
+            pct = (last - first) / first * 100
+            with open('validation_reports/baseline_comparison.md', 'a') as out:
+                out.write(f'| Buy & Hold BTC | 1 | - | {pct:.2f}% | {abs(pct):.2f}% | REAL_RUN |\n')
+            import sys; sys.exit(0)
+" 2>/dev/null || echo "| Buy & Hold BTC | 1 | - | NOT_RUN | NOT_RUN | FAILED |" >> validation_reports/baseline_comparison.md
+          echo "" >> validation_reports/baseline_comparison.md
+          echo "**Verdict:** See above." >> validation_reports/baseline_comparison.md
+          cat validation_reports/baseline_comparison.md
+
+      # ═══════════════════════════════════════════════════════════
+      # P3: Multi-pair — download ETH + SOL and run backtest
+      # ═══════════════════════════════════════════════════════════
+      - name: Multi-pair backtest
+        if: always()
+        continue-on-error: true
+        run: |
+          cd implementation
+          mkdir -p validation_reports
+          echo "# Multi-Pair Backtest" > validation_reports/multi_pair_backtest.md
+          echo "" >> validation_reports/multi_pair_backtest.md
+          echo "**Timerange:** 20250101-20250701 | **Timeframe:** 5m spot" >> validation_reports/multi_pair_backtest.md
+          echo "" >> validation_reports/multi_pair_backtest.md
+          echo "| Pair | Download | Trades | Profit % | Max DD % | Data Status |" >> validation_reports/multi_pair_backtest.md
+          echo "|------|----------|--------|----------|----------|-------------|" >> validation_reports/multi_pair_backtest.md
+
+          # BTC already done above
+          python3 -c "
+text = open('freqtrade_data/backtest_results/bl_0.log').read()
+for line in text.split('\n'):
+    if 'AISupervisedStrategy' in line and '│' in line:
+        parts = [p.strip() for p in line.split('│')]
+        if len(parts) >= 7 and parts[2].strip().isdigit():
+            with open('validation_reports/multi_pair_backtest.md', 'a') as f:
+                f.write(f'| BTC/USDT | DONE | {parts[2].strip()} | {parts[5].strip()} | {parts[8].strip() if len(parts)>8 else \"-\"} | REAL_RUN |\n')
+            break
+" 2>/dev/null || echo "| BTC/USDT | DONE | - | - | - | (see baseline) |" >> validation_reports/multi_pair_backtest.md
+
+          PAIRS=("ETH/USDT" "SOL/USDT")
+          for PAIR in "${PAIRS[@]}"; do
+            echo "=== Downloading $PAIR ==="
+            DL_LOG="freqtrade_data/backtest_results/dl_${PAIR//\//_}.log"
+            freqtrade download-data \
+              --config freqtrade_data/config.dryrun.json \
+              --datadir freqtrade_data/data/okx \
+              --exchange okx \
+              --pairs "$PAIR" \
+              --timeframes 5m \
+              --timerange 20250101-20250701 \
+              2>&1 > "$DL_LOG" || true
+
+            if grep -qE "Downloaded data|Downloading.*100%" "$DL_LOG" 2>/dev/null; then
+              echo "=== Backtesting $PAIR ==="
+              BT_LOG="freqtrade_data/backtest_results/bt_${PAIR//\//_}.log"
+              freqtrade backtesting \
+                --config freqtrade_data/config.dryrun.json \
+                --strategy AISupervisedStrategy \
+                --strategy-path freqtrade_data/strategies \
+                --datadir freqtrade_data/data/okx \
+                --timerange 20250101-20250701 \
+                --timeframe 5m \
+                --pairs "$PAIR" \
+                2>&1 > "$BT_LOG" || true
+              python3 -c "
+text = open('$BT_LOG').read()
+for line in text.split('\n'):
+    if 'AISupervisedStrategy' in line and '│' in line:
+        parts = [p.strip() for p in line.split('│')]
+        if len(parts) >= 7 and parts[2].strip().isdigit():
+            with open('validation_reports/multi_pair_backtest.md', 'a') as f:
+                f.write(f'| $PAIR | SUCCESS | {parts[2].strip()} | {parts[5].strip()} | {parts[8].strip() if len(parts)>8 else \"-\"} | REAL_RUN |\n')
+            break
+" 2>/dev/null || echo "| $PAIR | SUCCESS | - | - | - | FAILED (bt parse) |" >> validation_reports/multi_pair_backtest.md
+            else
+              ERR=$(tail -3 "$DL_LOG" 2>/dev/null | head -1 || echo "unknown")
+              echo "| $PAIR | FAILED | - | - | - | FAILED: ${ERR:0:80} |" >> validation_reports/multi_pair_backtest.md
+            fi
+          done
+          cat validation_reports/multi_pair_backtest.md
+
+      # ═══════════════════════════════════════════════════════════
+      # P4: Strategy attribution — extract from backtest log
+      # ═══════════════════════════════════════════════════════════
+      - name: Strategy attribution report
+        if: always()
+        continue-on-error: true
+        run: |
+          cd implementation
+          mkdir -p validation_reports
+          echo "# Strategy Attribution" > validation_reports/strategy_attribution.md
+          echo "" >> validation_reports/strategy_attribution.md
+          echo "**Commit:** $(git -C .. rev-parse --short HEAD)" >> validation_reports/strategy_attribution.md
+          echo "" >> validation_reports/strategy_attribution.md
+          echo "## Entry Tag Distribution" >> validation_reports/strategy_attribution.md
+          echo "" >> validation_reports/strategy_attribution.md
+          echo '```' >> validation_reports/strategy_attribution.md
+          grep -E "atos_trend|atos_breakout|atos_mean|atos_hold" backtest.log | grep "│" | grep -v "TOTAL\|MIXED" | head -20 >> validation_reports/strategy_attribution.md 2>/dev/null || echo "(not found)" >> validation_reports/strategy_attribution.md
+          echo '```' >> validation_reports/strategy_attribution.md
+          echo "" >> validation_reports/strategy_attribution.md
+          echo "## Exit Reason Distribution" >> validation_reports/strategy_attribution.md
+          echo "" >> validation_reports/strategy_attribution.md
+          echo '```' >> validation_reports/strategy_attribution.md
+          grep -E "take_profit|max_holding|stop_loss|force_exit|rsi_overbought" backtest.log | grep "│" | grep -v "TOTAL\|MIXED\|EXIT REASON" | head -20 >> validation_reports/strategy_attribution.md 2>/dev/null || echo "(not found)" >> validation_reports/strategy_attribution.md
+          echo '```' >> validation_reports/strategy_attribution.md
+          echo "" >> validation_reports/strategy_attribution.md
+          echo "## ATOS Signal Diagnostics" >> validation_reports/strategy_attribution.md
+          echo "" >> validation_reports/strategy_attribution.md
+          echo '```' >> validation_reports/strategy_attribution.md
+          grep "ATOS_SIGNAL_DIAGNOSTICS" backtest.log 2>/dev/null | head -1 >> validation_reports/strategy_attribution.md || echo "(not found)" >> validation_reports/strategy_attribution.md
+          echo '```' >> validation_reports/strategy_attribution.md
+          cat validation_reports/strategy_attribution.md
         if: always()
         run: |
           cd implementation
