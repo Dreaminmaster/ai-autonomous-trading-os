@@ -59,6 +59,7 @@ def test_acceptance_risk_blocks_invalid():
 
 def test_acceptance_kill_switch():
     """A3: Kill switch must block execution."""
+    Path("runtime").mkdir(exist_ok=True)
     Path("runtime/kill_switch.flag").write_text("kill")
     try:
         risk = RiskEngine(POLICY)
