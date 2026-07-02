@@ -54,7 +54,7 @@ def risk(policy: dict) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="atos")
     parser.add_argument("command", choices=["status", "risk", "cycle", "loop", "market", "review", "dashboard"])
-    parser.add_argument("--policy", default="implementation/config/policy.json")
+    parser.add_argument("--policy", default="config/policy.json")
     parser.add_argument("--symbol", default="BTC-USDT")
     parser.add_argument("--loops", type=int, default=3)
     parser.add_argument("--port", type=int, default=8787)
