@@ -37,7 +37,7 @@ jobs:
       - name: Secret leakage scan
         run: |
           cd implementation
-          sh scripts/validate_no_secrets.sh 2>&1 | tee no_secret_scan.log
+          bash scripts/validate_no_secrets.sh 2>&1 | tee no_secret_scan.log
 
       - name: CLI smoke test
         run: |
@@ -104,7 +104,7 @@ jobs:
       - name: Setup Freqtrade
         run: |
           cd implementation
-          sh scripts/setup_freqtrade.sh
+          bash scripts/setup_freqtrade.sh
 
       - name: List strategies
         run: |
