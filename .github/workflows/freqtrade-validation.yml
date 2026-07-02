@@ -155,6 +155,7 @@ jobs:
         continue-on-error: true
         env:
           ATOS_POLICY: config/policy.validation.json
+          ATOS_LOOKAHEAD_MODE: "1"
         run: |
           cd implementation
           freqtrade lookahead-analysis \

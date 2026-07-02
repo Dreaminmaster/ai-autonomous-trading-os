@@ -255,34 +255,44 @@ class AISupervisedStrategy(IStrategy):
     # ── Initialization ──────────────────────────────────────────────
 
     def _init_atos(self) -> None:
-        """Lazy-init ATOS components. Called on first candle processing."""
-        if self._initialized:
-            return
+        """Lazy-init ATOS components. Called on first candle processing.
 
-        # Load policy: env var ATOS_POLICY overrides defaults for CI/validation
-        import os, json
-        policy_path = os.environ.get("ATOS_POLICY", "")
-        if policy_path and Path(policy_path).exists():
-            try:
-                loaded = json.loads(Path(policy_path).read_text())
-                self.atos_policy = loaded
-                logger.info(f"ATOS policy loaded from ATOS_POLICY={policy_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load ATOS_POLICY={policy_path}: {e}, using default policy")
+        In backtest/lookahead mode, creates a FRESH RiskEngine every call
+        to avoid path-dependent state (daily_trades, recent_signals) leaking
+        between sliced vs full runs and causing false lookahead bias.
+        """
+        # Always create a fresh ProviderManager
+        self._provider_manager = ProviderManager(self.atos_provider) if ATOS_AVAILABLE else None
 
+        if not self._initialized:
+            # One-time policy load from ATOS_POLICY env var
+            import os, json
+            policy_path = os.environ.get("ATOS_POLICY", "")
+            if policy_path and Path(policy_path).exists():
+                try:
+                    loaded = json.loads(Path(policy_path).read_text())
+                    self.atos_policy = loaded
+                    logger.info(f"ATOS policy loaded from ATOS_POLICY={policy_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to load ATOS_POLICY={policy_path}: {e}, using default policy")
+            self._initialized = True
+
+        # FRESH RiskEngine every populate_entry_trend call
+        # This avoids false lookahead bias from shared risk state
         if ATOS_AVAILABLE:
-            try:
-                self._provider_manager = ProviderManager(self.atos_provider)
-                self._risk_engine = RiskEngine(self.atos_policy)
-                self._ledger = Ledger(self.atos_ledger_path)
-                logger.info(f"ATOS initialized: provider={self.atos_provider}, mode={self.atos_policy.get('mode', 'paper')}")
-            except Exception as e:
-                logger.error(f"ATOS init failed: {e}. Using built-in fallback.")
-                self._provider_manager = None
-                self._risk_engine = None
-                self._ledger = None
+            self._risk_engine = RiskEngine(self.atos_policy)
+        else:
+            self._risk_engine = None
 
-        self._initialized = True
+        # Ledger: only in live/dry-run (skip in backtest lookahead to reduce side effects)
+        is_lookahead = os.environ.get("ATOS_LOOKAHEAD_MODE", "") == "1"
+        if ATOS_AVAILABLE and not is_lookahead:
+            if self._ledger is None:
+                self._ledger = Ledger(self.atos_ledger_path)
+        else:
+            self._ledger = None
+
+        logger.info(f"ATOS init: provider={self.atos_provider}, risk_engine=fresh, lookahead_mode={is_lookahead}")
 
     def _get_policy(self) -> dict:
         """Merge runtime config with static policy."""
@@ -445,7 +455,10 @@ class AISupervisedStrategy(IStrategy):
                             "risk_notes": "safe default",
                         })
                 else:
-                    candidates = _builtin_candidates(dataframe.loc[:idx])
+                    # Use position-based iloc window — no future data
+                    row_idx = dataframe.index.get_loc(idx) if hasattr(dataframe.index, 'get_loc') else idx
+                    window_df = dataframe.iloc[max(0, row_idx - 39) : row_idx + 1]
+                    candidates = _builtin_candidates(window_df)
                     if not any(c.get("strategy_id") == "hold_baseline" for c in candidates):
                         candidates.append({
                             "strategy_id": "hold_baseline",
