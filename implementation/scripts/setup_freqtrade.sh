@@ -121,7 +121,7 @@ cat > "$USER_DATA/config.dryrun.json" << 'CONFIGEOF'
         "listen_port": 8080,
         "verbosity": "info",
         "enable_openapi": false,
-        "jwt_secret_key": "changeme_in_production",
+        "jwt_secret_key": "changeme_in_production_please_change_me_to_random_32_chars",
         "CORS_origins": [],
         "username": "atos",
         "password": "atos_dashboard"
