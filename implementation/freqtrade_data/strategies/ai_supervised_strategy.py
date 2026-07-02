@@ -255,18 +255,13 @@ class AISupervisedStrategy(IStrategy):
     # ── Initialization ──────────────────────────────────────────────
 
     def _init_atos(self) -> None:
-        """Lazy-init ATOS components. Called on first candle processing.
+        """Lazy-init ATOS components. Called on first candle processing."""
+        import os, json
 
-        In backtest/lookahead mode, creates a FRESH RiskEngine every call
-        to avoid path-dependent state (daily_trades, recent_signals) leaking
-        between sliced vs full runs and causing false lookahead bias.
-        """
         # Always create a fresh ProviderManager
         self._provider_manager = ProviderManager(self.atos_provider) if ATOS_AVAILABLE else None
 
         if not self._initialized:
-            # One-time policy load from ATOS_POLICY env var
-            import os, json
             policy_path = os.environ.get("ATOS_POLICY", "")
             if policy_path and Path(policy_path).exists():
                 try:
