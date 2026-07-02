@@ -81,6 +81,7 @@ _FALLBACK_POLICY = {
     "allowed_symbols": ["BTC/USDT", "ETH/USDT"],
     "position_limits": {"max_position_pct_per_trade": 10.0},
     "ai_output_limits": {"min_confidence_for_trade": 0.60},
+    "trade_limits": {"max_trades_per_day": 100, "cooldown_seconds": 300},
     "kill_switch": {"flag_path": "runtime/kill_switch.flag"},
 }
 
