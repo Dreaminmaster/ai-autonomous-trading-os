@@ -1,5 +1,7 @@
 # Implementation Run Guide
 
+<!-- validation-trigger: CI workflow dispatch -->
+
 ## Quick Start (ATOS only, no Freqtrade — works anywhere Python 3.11+)
 
 ```bash
