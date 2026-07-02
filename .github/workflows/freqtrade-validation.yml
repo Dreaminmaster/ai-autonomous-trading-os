@@ -105,6 +105,8 @@ jobs:
         run: |
           cd implementation
           bash scripts/setup_freqtrade.sh
+          # Use validation policy (max_trades_per_day=50) for CI backtesting
+          cp config/policy.validation.json config/policy.json
 
       - name: List strategies
         run: |
@@ -124,7 +126,7 @@ jobs:
             --exchange okx \
             --pairs BTC/USDT \
             --timeframes 5m \
-            --timerange 20250601-20250701 \
+            --timerange 20250101-20250701 \
             --erase \
             2>&1 | tee download_data.log
           ls -la freqtrade_data/data/okx/ || echo "(no data dir — download may have failed)"
@@ -139,7 +141,7 @@ jobs:
             --strategy AISupervisedStrategy \
             --strategy-path freqtrade_data/strategies \
             --datadir freqtrade_data/data/okx \
-            --timerange 20250601-20250701 \
+            --timerange 20250101-20250701 \
             --timeframe 5m \
             --export trades \
             --export-filename freqtrade_data/backtest_results/backtest_result.json \
@@ -155,7 +157,7 @@ jobs:
             --config freqtrade_data/config.dryrun.json \
             --strategy AISupervisedStrategy \
             --strategy-path freqtrade_data/strategies \
-            --timerange 20250601-20250701 \
+            --timerange 20250101-20250701 \
             2>&1 | tee lookahead_analysis.log
           echo "Lookahead exit code: $?"
 

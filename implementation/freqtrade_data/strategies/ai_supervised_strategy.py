@@ -384,8 +384,11 @@ class AISupervisedStrategy(IStrategy):
             "risk_approved_hold": 0,
             "risk_rejected_buy": 0,
             "risk_rejected_duplicate": 0,
+            "risk_rejected_daily_limit": 0,
             "signals_emitted": 0,
             "rejection_reasons": {},
+            "first_decision_day": None,
+            "last_decision_day": None,
         }
 
         for idx in valid_rows:
@@ -492,10 +495,17 @@ class AISupervisedStrategy(IStrategy):
                 # Resolve candle timestamp (epoch seconds) for backtest time semantics
                 candle_ts = self._resolve_candle_ts(dataframe, idx)
 
+                # Resolve date for this candle
+                from atos.time_context import resolve_decision_day
+                candle_day = resolve_decision_day({"decision_ts": candle_ts})
+                stats["_current_decision_day"] = candle_day
+
                 risk_state = {
                     "mode": policy.get("mode", "paper"),
+                    "is_backtest": True,
                     "decision_ts": candle_ts,
                     "candle_ts": candle_ts,
+                    "decision_day": candle_day,
                 }
 
                 if ATOS_AVAILABLE and self._risk_engine:
@@ -527,6 +537,15 @@ class AISupervisedStrategy(IStrategy):
 
                 if "duplicate" in str(risk_dict.get("reasons", [])):
                     stats["risk_rejected_duplicate"] += 1
+                if "daily_trade_limit" in str(risk_dict.get("reasons", [])):
+                    stats["risk_rejected_daily_limit"] += 1
+
+                # Track decision day range
+                day_label = stats.get("_current_decision_day", "")
+                if day_label and not stats["first_decision_day"]:
+                    stats["first_decision_day"] = day_label
+                if day_label:
+                    stats["last_decision_day"] = day_label
 
                 # ── Step 4: Produce Signal ──────────────────────
                 if risk_dict.get("decision") == "APPROVED" and intent_dict.get("action") == "BUY":
@@ -562,10 +581,20 @@ class AISupervisedStrategy(IStrategy):
                 dataframe.at[idx, "enter_long"] = 0
                 dataframe.at[idx, "enter_tag"] = "atos_error"
 
-        # ── Diagnostic summary (P3: full breakdown) ────────────────
+        # ── Diagnostic summary (P5: full ATOS_SIGNAL_DIAGNOSTICS) ──────
+        risk_stats = self._risk_engine.stats() if ATOS_AVAILABLE and self._risk_engine else {}
+        first_day = stats.get("first_decision_day") or "wallclock"
+        last_day = stats.get("last_decision_day") or "wallclock"
+        day_count = risk_stats.get("daily_trade_days_count", 0)
+        max_day = risk_stats.get("max_trades_in_single_day", 0)
+
         logger.info(
-            f"{symbol} — ATOS evaluation complete | "
+            f"ATOS_SIGNAL_DIAGNOSTICS: {symbol} | "
             f"candles={stats['candles_evaluated']} | "
+            f"first_day={first_day} | "
+            f"last_day={last_day} | "
+            f"day_count={day_count} | "
+            f"max_trades_day={max_day} | "
             f"candidates={stats['total_candidates']} | "
             f"buy_cands={stats['buy_candidates']} | "
             f"provider_BUY={stats['provider_buy']} | "
@@ -574,13 +603,18 @@ class AISupervisedStrategy(IStrategy):
             f"risk_APPROVED_HOLD={stats['risk_approved_hold']} | "
             f"risk_REJECTED_BUY={stats['risk_rejected_buy']} | "
             f"risk_REJECTED_DUPLICATE={stats['risk_rejected_duplicate']} | "
+            f"risk_REJECTED_DAILY_LIMIT={stats['risk_rejected_daily_limit']} | "
             f"enter_long={stats['signals_emitted']} | "
-            f"top_rejection_reasons={stats.get('rejection_reasons', {})}"
+            f"rejection_reasons={stats.get('rejection_reasons', {})}"
         )
 
+        # Day range validation
+        if day_count == 1 and stats["candles_evaluated"] > 500:
+            logger.error("ERROR: backtest daily trade limit may still be using wall-clock date: only 1 day_key for many candles")
+
         # Bottleneck warning
-        if stats["provider_buy"] > 100 and stats["signals_emitted"] < 10:
-            logger.warning("SIGNAL BOTTLENECK: provider_buy >> enter_long — check risk cooldown/rejection reasons")
+        if stats["provider_buy"] > 100 and stats["signals_emitted"] < 30:
+            logger.warning("WARNING: signal bottleneck detected — provider_buy >> enter_long")
 
         return dataframe
 
@@ -626,7 +660,14 @@ class AISupervisedStrategy(IStrategy):
                 return "atos_take_profit"
 
             from datetime import datetime, timezone
-            age_minutes = (datetime.now(timezone.utc) - trade.open_date_utc.replace(tzinfo=timezone.utc)).total_seconds() / 60
+            # Use Freqtrade's current_time (historical candle time in backtest),
+            # NOT datetime.now() which uses wall-clock and breaks backtest time semantics.
+            if hasattr(current_time, 'timestamp'):
+                now_ts = current_time.timestamp()
+            else:
+                now_ts = trade.open_date_utc.replace(tzinfo=timezone.utc).timestamp()
+            open_ts = trade.open_date_utc.replace(tzinfo=timezone.utc).timestamp()
+            age_minutes = (now_ts - open_ts) / 60
             if age_minutes > 1200:  # 20 hours
                 return "atos_max_holding_time"
         except Exception as e:

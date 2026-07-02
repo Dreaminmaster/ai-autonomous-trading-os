@@ -1,9 +1,6 @@
 """
 Risk Supervisor — deterministic safety gate. Cannot be bypassed by AI.
 
-Every TradeIntent MUST pass this supervisor before execution.
-This is NOT configurable by the AI provider.
-
 Hard-coded safety gates:
   1. Kill switch (file or flag)
   2. Emergency stop
@@ -11,45 +8,41 @@ Hard-coded safety gates:
   4. Symbol allowlist
   5. Confidence threshold
   6. Position size limits
-  7. Daily trade count limit
-  8. Duplicate signal cooldown
+  7. Daily trade count limit (uses decision_day — candle date in backtest)
+  8. Duplicate signal cooldown (uses decision_ts — candle timestamp in backtest)
   9. Max drawdown guard
-  10. Required field validation (thesis, evidence, stop_loss, take_profit, invalidation)
+  10. Required field validation
 
-Backward compatible with old RiskEngine.evaluate() API.
+ALL time-dependent rules use atos.time_context:
+  resolve_decision_ts(state)   → epoch float for cooldown
+  resolve_decision_day(state)  → "YYYY-MM-DD" for daily limits
+
+In backtest: decision_ts/decision_day from candle time.
+In live/dry-run: fall back to wall-clock time.time() / time.strftime().
 """
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any
 
 from atos.core import Action, RunMode
 from atos.domain import RiskDecision
+from atos.time_context import resolve_decision_ts, resolve_decision_day
 
 
 class RiskEngine:
-    """Deterministic risk engine. AI CANNOT bypass this.
-
-    Enhanced with:
-      - Daily trade limits
-      - Duplicate signal cooldown
-      - Max drawdown pause
-      - Quick pre-check method
-      - Stats tracking
-    """
+    """Deterministic risk engine. AI CANNOT bypass this."""
 
     def __init__(self, policy: dict[str, Any]):
         self.policy = policy
         self._recent_signals: list[dict] = []
         self._daily_trades: dict[str, int] = {}
-        self._today = time.strftime("%Y-%m-%d")
 
     # ── Main entry point ────────────────────────────────────────
 
     def evaluate(self, intent: dict[str, Any], state: dict[str, Any] | None = None) -> RiskDecision:
-        """Evaluate a TradeIntent against ALL risk rules. Returns RiskDecision."""
+        """Evaluate a TradeIntent against ALL 10 risk gates."""
         state = state or {}
         reasons: list[str] = []
         checks: dict[str, Any] = {}
@@ -60,6 +53,10 @@ class RiskEngine:
         confidence = float(intent.get("confidence", 0.0) or 0.0)
         position_size_pct = float(intent.get("position_size_pct", 0.0) or 0.0)
         selected_strategies = intent.get("selected_strategy_ids", [])
+
+        # ── Resolve time context ONCE per evaluation ─────────────
+        decision_ts = resolve_decision_ts(state)
+        decision_day = resolve_decision_day(state)
 
         # ── Gate 1: Kill switch ─────────────────────────────────
         flag_path = self.policy.get("kill_switch", {}).get("flag_path")
@@ -96,36 +93,21 @@ class RiskEngine:
         if position_size_pct > max_pos:
             reasons.append(f"position_size_exceeds_limit: {position_size_pct} > {max_pos}")
 
-        # ── Gate 7: Daily trade limit ───────────────────────────
+        # ── Gate 7: Daily trade limit (uses decision_day) ────────
         max_daily = int(self.policy.get("trade_limits", {}).get("max_trades_per_day", 20))
-        today = time.strftime("%Y-%m-%d")
-        if today != self._today:
-            self._daily_trades.clear()
-            self._today = today
-        current_count = self._daily_trades.get(today, 0)
+        current_count = self._daily_trades.get(decision_day, 0)
         checks["daily_limit_ok"] = current_count < max_daily
         if action != Action.HOLD.value and current_count >= max_daily:
-            reasons.append(f"daily_trade_limit_reached: {current_count}/{max_daily}")
+            reasons.append(f"daily_trade_limit_reached: {current_count}/{max_daily} on {decision_day}")
 
-        # ── Gate 8: Duplicate signal cooldown ───────────────────
+        # ── Gate 8: Duplicate signal cooldown (uses decision_ts) ─
         cooldown_sec = float(self.policy.get("trade_limits", {}).get("cooldown_seconds", 300))
-        # Use decision_ts from state (backtest candle time) if available;
-        # otherwise fall back to wall-clock time (live/dry-run).
-        # This prevents backtest from squashing all historical candles
-        # into the same real-world second.
-        decision_ts = self._resolve_decision_ts(state)
-        now = decision_ts
-
-        # Clean up stale signals BEFORE cooldown check.
-        # In backtest with candle timestamps, this ensures that signals from
-        # candles more than 1 hour apart don't trigger false cooldown hits.
-        self._recent_signals = [s for s in self._recent_signals if now - s["timestamp"] < 3600]
+        # Clean stale signals (>1 hour in decision time)
+        self._recent_signals = [s for s in self._recent_signals if decision_ts - s["timestamp"] < 3600]
 
         for sig in self._recent_signals:
             if sig["symbol"] == symbol and set(sig.get("strategy_ids", [])) & set(selected_strategies):
-                sig_ts = sig.get("timestamp", 0)
-                # If both timestamps are candle-based, compare directly
-                if now - sig_ts < cooldown_sec:
+                if decision_ts - sig.get("timestamp", 0) < cooldown_sec:
                     reasons.append(f"duplicate_signal_cooldown: {symbol}")
                     break
         checks["duplicate_guard_ok"] = not any("duplicate" in r for r in reasons)
@@ -153,50 +135,27 @@ class RiskEngine:
 
         # ── Decision ────────────────────────────────────────────
         if action == Action.HOLD.value and not reasons:
+            # HOLD is always safe — but do NOT count it as a trade
             return RiskDecision("risk_decision.v1", "APPROVED", ["hold_is_safe_default"], 0.0, checks)
 
         if reasons:
             score = min(1.0, 0.3 + 0.1 * len(reasons))
             return RiskDecision("risk_decision.v1", "REJECTED", reasons, score, checks)
 
-        # Record signal for duplicate guard
-        self._daily_trades[today] = current_count + 1
+        # ── APPROVED for a non-HOLD action → record as a trade ──
+        self._daily_trades[decision_day] = current_count + 1
         self._recent_signals.append({
             "symbol": symbol,
             "strategy_ids": selected_strategies,
-            "timestamp": now,
+            "timestamp": decision_ts,
         })
-        # Keep only signals within the last hour of DECISION TIME
-        # (not wall-clock time — for backtest, this means the candle timestamp)
-        self._recent_signals = [s for s in self._recent_signals if now - s["timestamp"] < 3600]
 
         return RiskDecision("risk_decision.v1", "APPROVED", ["all_checks_passed"], 0.1, checks)
 
     # ── Quick pre-check ────────────────────────────────────────
 
-    def _resolve_decision_ts(self, state: dict) -> float:
-        """Resolve decision timestamp from state, falling back to time.time().
-
-        Priority:
-          1. state['decision_ts']  (epoch seconds, float)
-          2. state['candle_ts']    (epoch seconds, float)
-          3. time.time()           (wall clock — live/dry-run mode)
-
-        In backtest, decision_ts is the historical candle's Unix timestamp.
-        This ensures duplicate cooldown works per-candle, not per-wall-second.
-        """
-        ts = state.get("decision_ts") or state.get("candle_ts")
-        if ts is not None:
-            try:
-                return float(ts)
-            except (ValueError, TypeError):
-                pass
-        return time.time()
-
-    # ── Quick pre-check ────────────────────────────────────────
-
     def quick_check(self, intent: dict, allowed: set[str] | None = None) -> tuple[bool, str]:
-        """Fast pre-check without state modification. Returns (safe, reason)."""
+        """Fast pre-check without state modification."""
         action = intent.get("action", "HOLD")
         if action == "HOLD":
             return True, "hold_safe"
@@ -211,4 +170,9 @@ class RiskEngine:
     # ── Stats ──────────────────────────────────────────────────
 
     def stats(self) -> dict:
-        return {"daily_trades": dict(self._daily_trades), "recent_signals": len(self._recent_signals)}
+        return {
+            "daily_trades": dict(self._daily_trades),
+            "daily_trade_days_count": len(self._daily_trades),
+            "max_trades_in_single_day": max(self._daily_trades.values()) if self._daily_trades else 0,
+            "recent_signals": len(self._recent_signals),
+        }

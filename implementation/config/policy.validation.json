@@ -1,0 +1,22 @@
+{
+  "mode": "paper",
+  "allowed_symbols": ["BTC/USDT", "ETH/USDT"],
+  "position_limits": {
+    "max_position_pct_per_trade": 10.0,
+    "max_total_exposure_pct": 30.0
+  },
+  "ai_output_limits": {
+    "min_confidence_for_trade": 0.60
+  },
+  "trade_limits": {
+    "max_trades_per_day": 50,
+    "cooldown_seconds": 300
+  },
+  "risk_limits": {
+    "max_drawdown_pct": 20.0
+  },
+  "kill_switch": {
+    "flag_path": "runtime/kill_switch.flag"
+  },
+  "_comment": "VALIDATION POLICY ONLY — for CI/backtest verification. NOT for production/live trading. Conservative. Does not disable any safety gate."
+}
