@@ -175,6 +175,12 @@ FREQTRADE_VERSION=$(python -c "import freqtrade; print(freqtrade.__version__)" 2
 echo "  Freqtrade version: $FREQTRADE_VERSION"
 echo "  Config: $USER_DATA/config.dryrun.json"
 echo "  Live disabled: YES (dry_run=true in dryrun config)"
+
+# Create user_data symlink for Freqtrade compatibility
+if [ ! -d "user_data" ] && [ ! -L "user_data" ]; then
+    ln -s freqtrade_data user_data
+    echo "  ✓ user_data → freqtrade_data symlink created"
+fi
 echo ""
 
 echo "=== Setup complete ==="
