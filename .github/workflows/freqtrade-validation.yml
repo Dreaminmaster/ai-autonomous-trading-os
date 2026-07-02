@@ -309,6 +309,10 @@ jobs:
             implementation/lookahead_analysis.log
             implementation/pair_format_check.log
             implementation/validation_summary.md
+            implementation/reports/baseline_comparison.md
+            implementation/reports/multi_period_backtest.md
+            implementation/reports/multi_pair_backtest.md
+            implementation/reports/strategy_attribution.md
             implementation/freqtrade_data/backtest_results/backtest_result.json
             implementation/freqtrade_data/backtest_results/walk_forward_report.json
           retention-days: 14
