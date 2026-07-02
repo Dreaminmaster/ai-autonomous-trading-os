@@ -57,7 +57,7 @@ def main() -> None:
     parser.add_argument("--policy", default="config/policy.json")
     parser.add_argument("--symbol", default="BTC-USDT")
     parser.add_argument("--loops", type=int, default=3)
-    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--port", type=int, default=28787)
     args = parser.parse_args()
     policy = load_policy(args.policy)
     if args.command == "dashboard":

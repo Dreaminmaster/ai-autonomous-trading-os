@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# run_dryrun.sh — Start Freqtrade dry-run with AI Supervised Strategy
+# run_dryrun.sh — Start Freqtrade dry-run with AISupervisedStrategy
 # ============================================================================
 # Starts Freqtrade in dry-run (paper trading) mode.
 # Uses config.dryrun.json which has dry_run=true by default.
@@ -14,7 +14,7 @@
 #   - Call the AI supervised strategy on each candle
 #   - Simulate trades (no real orders)
 #   - Log everything to freqtrade_data/logs/
-#   - Serve dashboard on http://127.0.0.1:8080
+#   - Serve Freqtrade dashboard on http://127.0.0.1:8080
 #
 # To stop: Ctrl+C
 # ============================================================================
@@ -22,24 +22,25 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-USER_DATA="$PROJECT_DIR/freqtrade_data"
-CONFIG="$USER_DATA/config.dryrun.json"
+FREQTRADE_DATA="$PROJECT_DIR/freqtrade_data"
+CONFIG="$FREQTRADE_DATA/config.dryrun.json"
+STRATEGY_PATH="$FREQTRADE_DATA/strategies"
 
-STRATEGY="${STRATEGY:-ai_supervised_strategy}"
+STRATEGY="${STRATEGY:-AISupervisedStrategy}"
 
 echo "=== Freqtrade Dry-Run (Paper Trading) ==="
-echo "Mode:    DRY-RUN (no real orders)"
-echo "Config:  $CONFIG"
+echo "Mode:     DRY-RUN (no real orders)"
+echo "Config:   $CONFIG"
 echo "Strategy: $STRATEGY"
+echo "Path:     $STRATEGY_PATH"
 echo ""
-echo "Dashboard: http://127.0.0.1:8080"
-echo "API:       http://127.0.0.1:8080/api/v1/"
+echo "Freqtrade Dashboard: http://127.0.0.1:8080"
 echo ""
 echo "Press Ctrl+C to stop."
 echo ""
 
 # Verify dry_run is true
-DRY_CHECK=$(python -c "
+DRY_CHECK=$(python3 -c "
 import json
 with open('$CONFIG') as f:
     cfg = json.load(f)
@@ -52,15 +53,20 @@ echo "$DRY_CHECK"
 echo ""
 
 # Check strategy file
-STRATEGY_FILE="$USER_DATA/strategies/${STRATEGY}.py"
-if [ ! -f "$STRATEGY_FILE" ]; then
-    echo "WARNING: AI strategy file not found at $STRATEGY_FILE"
-    echo "  Using Freqtrade SampleStrategy instead for smoke test."
-    STRATEGY="SampleStrategy"
+if [ ! -f "$STRATEGY_PATH/ai_supervised_strategy.py" ]; then
+    echo "ERROR: Strategy file not found at $STRATEGY_PATH/ai_supervised_strategy.py"
+    exit 1
 fi
+
+# Verify strategy can be discovered
+echo "Verifying strategy discovery..."
+freqtrade list-strategies --strategy-path "$STRATEGY_PATH" 2>&1 | grep -q "$STRATEGY" \
+    && echo "  ✓ $STRATEGY found" \
+    || echo "  ! $STRATEGY not found in list-strategies output"
 
 # Start Freqtrade trade (dry-run)
 freqtrade trade \
     --config "$CONFIG" \
     --strategy "$STRATEGY" \
+    --strategy-path "$STRATEGY_PATH" \
     --dry-run

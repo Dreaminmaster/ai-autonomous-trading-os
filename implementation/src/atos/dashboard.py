@@ -96,7 +96,7 @@ Market Data → Feature Builder → Strategy Pool → AI Provider
 
 class DashboardHandler(BaseHTTPRequestHandler):
     ledger_path = "runtime/atos.sqlite"
-    policy = {"mode": "paper", "allowed_symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT"]}
+    policy = {"mode": "paper", "allowed_symbols": ["BTC/USDT", "ETH/USDT"]}
 
     def _send(self, code: int, body: str, content_type: str = "text/html") -> None:
         self.send_response(code)
@@ -154,10 +154,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send(404, "not found", "text/plain")
 
 
-def run_dashboard(host: str = "127.0.0.1", port: int = 8787, ledger_path: str = "runtime/atos.sqlite", policy: dict | None = None) -> None:
+def run_dashboard(host: str | None = None, port: int | None = None, ledger_path: str = "runtime/atos.sqlite", policy: dict | None = None) -> None:
+    import os
+    host = host or os.environ.get("ATOS_DASHBOARD_HOST", "127.0.0.1")
+    port = port or int(os.environ.get("ATOS_DASHBOARD_PORT", "28787"))
+
     DashboardHandler.ledger_path = ledger_path
-    DashboardHandler.policy = policy or {"mode": "paper", "allowed_symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT"]}
-    server = HTTPServer((host, port), DashboardHandler)
+    DashboardHandler.policy = policy or {"mode": "paper", "allowed_symbols": ["BTC/USDT", "ETH/USDT"]}
+
+    try:
+        server = HTTPServer((host, port), DashboardHandler)
+    except OSError as e:
+        print(f"ERROR: Cannot bind to {host}:{port} — {e}")
+        print("  Set ATOS_DASHBOARD_PORT to an available port or free up the current one.")
+        return
+
     print(f"Dashboard running at http://{host}:{port}")
     print(f"API endpoints: /api/events /api/report /api/risk /api/scores")
     server.serve_forever()

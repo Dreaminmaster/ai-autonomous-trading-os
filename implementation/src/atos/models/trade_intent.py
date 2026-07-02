@@ -89,7 +89,7 @@ class TradeIntent:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
     @classmethod
-    def hold(cls, reason: str = "safe default", symbol: str = "BTC/USDT:USDT") -> TradeIntent:
+    def hold(cls, reason: str = "safe default", symbol: str = "BTC/USDT") -> TradeIntent:
         """Create a safe HOLD intent."""
         return cls(
             schema_version=SCHEMA_VERSION,

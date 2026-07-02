@@ -30,7 +30,7 @@ from atos.models.trade_intent import (
 )
 
 
-ALLOWED_SYMBOLS = {"BTC/USDT:USDT", "ETH/USDT:USDT"}
+ALLOWED_SYMBOLS = {"BTC/USDT", "ETH/USDT"}
 MAX_POSITION = 10.0
 
 
@@ -38,7 +38,7 @@ def _valid_buy() -> dict:
     return {
         "schema_version": "trade_intent.v1",
         "action": "BUY",
-        "symbol": "BTC/USDT:USDT",
+        "symbol": "BTC/USDT",
         "market_type": "paper_spot",
         "confidence": 0.75,
         "thesis": "BTC showing strong upward momentum with increasing volume",
@@ -80,7 +80,7 @@ def test_buy_minimal_valid():
     intent = TradeIntent.from_dict({
         "schema_version": "trade_intent.v1",
         "action": "BUY",
-        "symbol": "BTC/USDT:USDT",
+        "symbol": "BTC/USDT",
         "market_type": "paper_spot",
         "confidence": 0.61,
         "thesis": "entry signal is strong enough to enter",
@@ -212,7 +212,7 @@ def test_empty_intent_fails_validation():
     assert result.corrected_intent.action == "HOLD"
 
 def test_hold_intent_passes_json_schema():
-    hold = TradeIntent.hold("test", symbol="BTC/USDT:USDT").to_dict()
+    hold = TradeIntent.hold("test", symbol="BTC/USDT").to_dict()
     # HOLD doesn't need thesis/evidence but schema still requires them
     # Update hold to meet schema requirements
     hold["thesis"] = "No trade: test — safe default hold position"
@@ -231,7 +231,7 @@ def test_intent_logger_records():
     logger = IntentLogger()
     intent = TradeIntent.from_dict(_valid_buy())
     result = intent.validate(allowed_symbols=ALLOWED_SYMBOLS)
-    logger.record(intent, result, "BTC/USDT:USDT")
+    logger.record(intent, result, "BTC/USDT")
     assert len(logger.log) == 1
     assert logger.log[0]["final_action"] == "BUY"
 
@@ -241,13 +241,13 @@ def test_intent_logger_summary():
     for i in range(3):
         intent = TradeIntent.from_dict(_valid_buy())
         result = intent.validate(allowed_symbols=ALLOWED_SYMBOLS)
-        logger.record(intent, result, "BTC/USDT:USDT")
+        logger.record(intent, result, "BTC/USDT")
 
     bad = _valid_buy()
     bad["thesis"] = ""
     intent = TradeIntent.from_dict(bad)
     result = intent.validate(allowed_symbols=ALLOWED_SYMBOLS)
-    logger.record(intent, result, "BTC/USDT:USDT")
+    logger.record(intent, result, "BTC/USDT")
 
     summary = logger.summary()
     assert summary["total"] == 4

@@ -18,7 +18,7 @@ CONFIG="$USER_DATA/config.dryrun.json"
 
 # Default time range: last 180 days
 TIMERANGE="${TIMERANGE:-20241201-}"
-PAIRS=("BTC/USDT:USDT" "ETH/USDT:USDT")
+PAIRS=("BTC/USDT" "ETH/USDT")
 TIMEFRAMES=("1h" "5m")
 
 echo "=== Downloading OKX Historical Data ==="

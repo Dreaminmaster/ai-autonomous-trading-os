@@ -26,7 +26,7 @@ def _buy_candidates():
     return [
         {
             "strategy_id": "trend_following_v1",
-            "symbol": "BTC/USDT:USDT",
+            "symbol": "BTC/USDT",
             "side": "BUY",
             "signal_strength": 0.65,
             "confidence": 0.72,
@@ -42,7 +42,7 @@ def _buy_candidates():
 
 def _request():
     return ProviderRequest(
-        symbol="BTC/USDT:USDT",
+        symbol="BTC/USDT",
         candidates=_buy_candidates(),
         market_state={"mark_price": 50000.0, "rsi": 55.0, "volume_ratio": 1.2},
         risk_state={"mode": "paper"},

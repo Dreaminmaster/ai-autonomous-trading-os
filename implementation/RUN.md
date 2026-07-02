@@ -11,7 +11,7 @@ python -m atos.cli cycle
 python -m atos.cli loop --loops 3
 python -m atos.cli review
 python -m atos.cli market --symbol BTC-USDT
-python -m atos.cli dashboard --port 8787
+python -m atos.cli dashboard --port 28787
 pytest
 ```
 

@@ -131,8 +131,12 @@ class ProviderManager:
 
     def __init__(self, default_provider: str = "mock"):
         self.providers: dict[str, BaseProvider] = {}
-        self.chain: list[str] = [default_provider]
+        self.chain: list[str] = []
         self.stats: dict[str, dict[str, Any]] = {}
+        # Always register MockProvider as the ultimate fallback
+        from atos.providers.mock_provider import MockProvider
+        self.register(MockProvider())
+        self.set_chain([default_provider, "mock"])
 
     def register(self, provider: BaseProvider) -> None:
         """Register a provider by name."""

@@ -20,7 +20,7 @@ from atos.models.trade_intent import TradeIntent, TradeAction, validate_json_sch
 
 POLICY = {
     "mode": "paper",
-    "allowed_symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
+    "allowed_symbols": ["BTC/USDT", "ETH/USDT"],
     "position_limits": {"max_position_pct_per_trade": 10.0, "max_total_exposure_pct": 30.0},
     "ai_output_limits": {"min_confidence_for_trade": 0.60},
     "trade_limits": {"max_trades_per_day": 20, "cooldown_seconds": 300},
@@ -35,7 +35,7 @@ def test_ai_invalid_json_defaults_hold():
     """Simulate AI returning garbled JSON → must default to HOLD."""
     garbled = {"action": "BUY"}  # missing everything
     intent = TradeIntent.from_dict(garbled)
-    result = intent.validate(allowed_symbols={"BTC/USDT:USDT"})
+    result = intent.validate(allowed_symbols={"BTC/USDT"})
     assert result.corrected_intent.action == "HOLD"
 
     # Also test through risk engine
@@ -78,7 +78,7 @@ def test_risk_confidence_guard():
     risk = RiskEngine(POLICY)
     intent = {
         "action": "BUY",
-        "symbol": "BTC/USDT:USDT",
+        "symbol": "BTC/USDT",
         "confidence": 0.30,
         "thesis": "Testing confidence guard with enough chars",
         "evidence": ["test"],
@@ -96,7 +96,7 @@ def test_risk_position_size_guard():
     risk = RiskEngine(POLICY)
     intent = {
         "action": "BUY",
-        "symbol": "BTC/USDT:USDT",
+        "symbol": "BTC/USDT",
         "confidence": 0.75,
         "thesis": "Testing position size guard with enough characters",
         "evidence": ["test"],
@@ -114,7 +114,7 @@ def test_risk_duplicate_guard():
     risk = RiskEngine({**POLICY, "trade_limits": {"max_trades_per_day": 20, "cooldown_seconds": 99999}})
     intent = {
         "action": "BUY",
-        "symbol": "BTC/USDT:USDT",
+        "symbol": "BTC/USDT",
         "confidence": 0.75,
         "thesis": "First trade",
         "evidence": ["signal"],
@@ -225,7 +225,7 @@ def test_strategy_weight_bounds():
 def test_backtest_runner_importable():
     """Backtest runner module must be importable."""
     from atos.research_loop import ResearchLoop
-    loop = ResearchLoop({"mode": "paper", "allowed_symbols": ["BTC/USDT:USDT"]})
+    loop = ResearchLoop({"mode": "paper", "allowed_symbols": ["BTC/USDT"]})
     assert loop is not None
 
 

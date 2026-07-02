@@ -100,8 +100,8 @@ cat > "$USER_DATA/config.dryrun.json" << 'CONFIGEOF'
         },
         "ccxt_async_config": {},
         "pair_whitelist": [
-            "BTC/USDT:USDT",
-            "ETH/USDT:USDT"
+            "BTC/USDT",
+            "ETH/USDT"
         ],
         "pair_blacklist": [],
         "outdated_offset": 5
@@ -152,8 +152,8 @@ cat > "$USER_DATA/config.live.example.json" << 'CONFIGEOF'
         "ccxt_config": {"enableRateLimit": true},
         "ccxt_async_config": {},
         "pair_whitelist": [
-            "BTC/USDT:USDT",
-            "ETH/USDT:USDT"
+            "BTC/USDT",
+            "ETH/USDT"
         ],
         "pair_blacklist": []
     },

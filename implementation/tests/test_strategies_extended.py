@@ -35,7 +35,7 @@ def test_registry_enable_disable():
 
 def test_registry_generate_all():
     reg = create_default_registry()
-    candidates = reg.generate_all("BTC/USDT:USDT", candles_uptrend())
+    candidates = reg.generate_all("BTC/USDT", candles_uptrend())
     assert len(candidates) >= 2  # at least some candidates + hold baseline
     # hold baseline should always be present
     assert any(c.strategy_id == "hold_baseline" for c in candidates)
@@ -50,7 +50,7 @@ def test_registry_default_has_8():
 
 def test_range_grid_ranging():
     strat = RangeGridStrategy()
-    c = strat.generate("BTC/USDT:USDT", candles_ranging())
+    c = strat.generate("BTC/USDT", candles_ranging())
     # May or may not trigger — depends on range width
     if c:
         assert c.strategy_id == "range_grid_v1"
@@ -58,7 +58,7 @@ def test_range_grid_ranging():
 
 def test_range_grid_uptrend_skips():
     strat = RangeGridStrategy()
-    c = strat.generate("BTC/USDT:USDT", candles_uptrend())
+    c = strat.generate("BTC/USDT", candles_uptrend())
     # Strong trend = no range = should return None
     if c:
         assert c.regime_tags is not None
@@ -68,7 +68,7 @@ def test_range_grid_uptrend_skips():
 
 def test_vol_breakout_exists():
     strat = VolatilityBreakoutStrategy()
-    c = strat.generate("BTC/USDT:USDT", candles_uptrend())
+    c = strat.generate("BTC/USDT", candles_uptrend())
     if c:
         assert c.strategy_id == "volatility_breakout_v1"
 
@@ -77,7 +77,7 @@ def test_vol_breakout_exists():
 
 def test_momentum_returns_candidate():
     strat = MomentumStrategy()
-    c = strat.generate("BTC/USDT:USDT", candles_uptrend())
+    c = strat.generate("BTC/USDT", candles_uptrend())
     if c:
         assert c.strategy_id == "momentum_v1"
 
@@ -86,12 +86,12 @@ def test_momentum_returns_candidate():
 
 def test_funding_stub():
     strat = FundingBasisStrategy()
-    c = strat.generate("BTC/USDT:USDT", candles_uptrend())
+    c = strat.generate("BTC/USDT", candles_uptrend())
     assert c is None  # stub, always None
 
 def test_orderbook_stub():
     strat = OrderbookImbalanceStrategy()
-    c = strat.generate("BTC/USDT:USDT", candles_uptrend())
+    c = strat.generate("BTC/USDT", candles_uptrend())
     assert c is None  # stub, always None
 
 
@@ -99,7 +99,7 @@ def test_orderbook_stub():
 
 def test_hold_baseline():
     strat = HoldBaselineStrategy()
-    c = strat.generate("BTC/USDT:USDT", candles_uptrend())
+    c = strat.generate("BTC/USDT", candles_uptrend())
     assert c is not None
     assert c.strategy_id == "hold_baseline"
     assert c.side == "HOLD"

@@ -78,7 +78,7 @@ except ImportError as e:
 
 _FALLBACK_POLICY = {
     "mode": "paper",
-    "allowed_symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
+    "allowed_symbols": ["BTC/USDT", "ETH/USDT"],
     "position_limits": {"max_position_pct_per_trade": 10.0},
     "ai_output_limits": {"min_confidence_for_trade": 0.60},
     "kill_switch": {"flag_path": "runtime/kill_switch.flag"},
@@ -143,7 +143,7 @@ def _builtin_candidates(dataframe: DataFrame) -> list[dict]:
         if fast > slow:
             candidates.append({
                 "strategy_id": "trend_following_v1",
-                "symbol": "BTC/USDT:USDT",
+                "symbol": "BTC/USDT",
                 "side": "BUY",
                 "signal_strength": 0.65,
                 "confidence": 0.62,
@@ -161,7 +161,7 @@ def _builtin_candidates(dataframe: DataFrame) -> list[dict]:
         if closes[-1] < avg * 0.985:
             candidates.append({
                 "strategy_id": "mean_reversion_v1",
-                "symbol": "BTC/USDT:USDT",
+                "symbol": "BTC/USDT",
                 "side": "BUY",
                 "signal_strength": 0.58,
                 "confidence": 0.60,
@@ -323,7 +323,7 @@ class AISupervisedStrategy(IStrategy):
         if not self.atos_enabled:
             return dataframe
 
-        symbol = metadata.get("pair", "BTC/USDT:USDT")
+        symbol = metadata.get("pair", "BTC/USDT")
         valid_rows = dataframe[dataframe["slow_ma"].notna()].index
 
         logger.info(

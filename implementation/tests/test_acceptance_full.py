@@ -20,7 +20,7 @@ from atos.providers import MockProvider, ProviderManager, ProviderRequest
 
 POLICY = {
     "mode": "paper",
-    "allowed_symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT"],
+    "allowed_symbols": ["BTC/USDT", "ETH/USDT"],
     "position_limits": {"max_position_pct_per_trade": 10.0, "max_total_exposure_pct": 30.0},
     "ai_output_limits": {"min_confidence_for_trade": 0.60},
     "trade_limits": {"max_trades_per_day": 20, "cooldown_seconds": 300},
@@ -34,7 +34,7 @@ def test_acceptance_mock_provider():
     """A1: Mock provider must produce structured TradeIntent."""
     provider = MockProvider()
     request = ProviderRequest(
-        symbol="BTC/USDT:USDT",
+        symbol="BTC/USDT",
         candidates=[{"strategy_id": "trend_v1", "side": "BUY", "confidence": 0.7, "entry_reason": "trend up", "suggested_stop_loss_pct": 1.0, "suggested_take_profit_pct": 2.0, "max_holding_minutes": 240}],
         market_state={},
         risk_state={},
@@ -74,7 +74,7 @@ def test_acceptance_kill_switch():
 def test_acceptance_ledger_records():
     """A4: Ledger must record every trade intent."""
     ledger = Ledger(":memory:")
-    ledger.record("trade_intent", {"action": "BUY", "symbol": "BTC/USDT:USDT"})
+    ledger.record("trade_intent", {"action": "BUY", "symbol": "BTC/USDT"})
     ledger.record("risk_decision", {"decision": "APPROVED"})
     ledger.record("execution", {"status": "FILLED_SIMULATED"})
     assert ledger.count() == 3
@@ -87,7 +87,7 @@ def test_acceptance_ledger_records():
 def test_acceptance_fees_affect_pnl():
     """A5: Fees and slippage must affect simulated PnL."""
     executor = PaperExecutor(fee_bps=10.0, slippage_bps=5.0)
-    intent = {"action": "BUY", "symbol": "BTC/USDT:USDT", "position_size_pct": 100}
+    intent = {"action": "BUY", "symbol": "BTC/USDT", "position_size_pct": 100}
     risk = {"decision": "APPROVED"}
     result = executor.execute(intent, risk, mark_price=50000.0, equity_usdt=1000.0)
     assert result.fee > 0  # Fee must be non-zero
@@ -99,7 +99,7 @@ def test_acceptance_chronological():
     """A6: Historical replay must process candles in order."""
     candles = [Candle(100 + i, 102 + i, 99 + i, 101 + i, 1000) for i in range(40)]
     runtime = AutonomousRuntime(POLICY)
-    result = runtime.run_once("BTC/USDT:USDT", candles, mark_price=140.0)
+    result = runtime.run_once("BTC/USDT", candles, mark_price=140.0)
     assert result["execution"]["status"] in ("FILLED_SIMULATED", "NOOP_HOLD", "BLOCKED_BY_RISK")
 
 
@@ -122,7 +122,7 @@ def test_acceptance_strategy_risk_notes():
     """A8: Each strategy must include risk_notes and regime_tags."""
     candles = [Candle(100 + i, 102 + i, 99 + i, 101 + i, 1000) for i in range(40)]
     for strategy in default_strategies():
-        candidate = strategy.generate("BTC/USDT:USDT", candles)
+        candidate = strategy.generate("BTC/USDT", candles)
         if candidate:
             assert candidate.risk_notes or candidate.strategy_id == "hold_baseline"
             assert candidate.regime_tags
