@@ -61,6 +61,7 @@ cat > "$USER_DATA/config.dryrun.json" << 'CONFIGEOF'
     "tradable_balance_ratio": 0.99,
     "fiat_display_currency": "USD",
     "dry_run": true,
+    "stoploss": -0.10,
     "cancel_open_orders_on_exit": false,
     "trading_mode": "spot",
     "margin_mode": "",
