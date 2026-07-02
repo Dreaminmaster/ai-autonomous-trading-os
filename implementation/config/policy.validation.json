@@ -9,8 +9,8 @@
     "min_confidence_for_trade": 0.60
   },
   "trade_limits": {
-    "max_trades_per_day": 100,
-    "cooldown_seconds": 60
+    "max_trades_per_day": 200,
+    "cooldown_seconds": 0
   },
   "risk_limits": {
     "max_drawdown_pct": 20.0
