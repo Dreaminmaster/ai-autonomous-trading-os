@@ -331,7 +331,19 @@ class AISupervisedStrategy(IStrategy):
             f"(provider={self.atos_provider})"
         )
 
+        # ── Diagnostic counters ───────────────────────────────
+        stats = {
+            "candles_evaluated": 0,
+            "total_candidates": 0,
+            "buy_candidates": 0,
+            "provider_buy": 0,
+            "risk_approved": 0,
+            "signals_emitted": 0,
+            "rejection_reasons": {},
+        }
+
         for idx in valid_rows:
+            stats["candles_evaluated"] += 1
             try:
                 # ── Step 1: Strategy candidates ─────────────────
                 if ATOS_AVAILABLE:
@@ -402,8 +414,10 @@ class AISupervisedStrategy(IStrategy):
                         market_state=market_state,
                         risk_state={"mode": policy.get("mode", "paper")},
                     )
-                    intent = self._provider_manager.decide(request)
-                    intent_dict = intent.to_dict()
+                    provider_result = self._provider_manager.decide(request)
+                    trade_intent = provider_result.intent  # ProviderResult → TradeIntent
+                    intent_dict = trade_intent.to_dict()
+                    provider_dict = provider_result.to_dict()
                 else:
                     buy_candidates = [c for c in candidates if c.get("side") == "BUY" and c.get("confidence", 0) >= 0.6]
                     if buy_candidates:
@@ -435,11 +449,23 @@ class AISupervisedStrategy(IStrategy):
                 else:
                     risk_dict = _builtin_risk_check(intent_dict, policy)
 
+                # ── Collect stats ───────────────────────────────
+                stats["total_candidates"] += len(candidates)
+                buy_cands = [c for c in candidates if c.get("side") == "BUY"]
+                stats["buy_candidates"] += len(buy_cands)
+                if intent_dict.get("action") == "BUY":
+                    stats["provider_buy"] += 1
+                if risk_dict.get("decision") == "APPROVED":
+                    stats["risk_approved"] += 1
+                for reason in risk_dict.get("reasons", []):
+                    stats["rejection_reasons"][reason] = stats["rejection_reasons"].get(reason, 0) + 1
+
                 # ── Step 4: Produce Signal ──────────────────────
                 if risk_dict.get("decision") == "APPROVED" and intent_dict.get("action") == "BUY":
                     dataframe.at[idx, "enter_long"] = 1
                     tag = intent_dict.get("selected_strategy_ids", ["unknown"])[0]
                     dataframe.at[idx, "enter_tag"] = f"atos_{tag}"
+                    stats["signals_emitted"] += 1
 
                 # ── Logging ─────────────────────────────────────
                 if self.atos_log_decisions:
@@ -468,9 +494,19 @@ class AISupervisedStrategy(IStrategy):
                 dataframe.at[idx, "enter_long"] = 0
                 dataframe.at[idx, "enter_tag"] = "atos_error"
 
-        return dataframe
+        # ── Diagnostic summary ─────────────────────────────────
+        logger.info(
+            f"{symbol} — ATOS evaluation complete | "
+            f"candles={stats['candles_evaluated']} | "
+            f"candidates={stats['total_candidates']} | "
+            f"buy_cands={stats['buy_candidates']} | "
+            f"provider_BUY={stats['provider_buy']} | "
+            f"risk_APPROVED={stats['risk_approved']} | "
+            f"enter_long={stats['signals_emitted']} | "
+            f"rejection_reasons={stats.get('rejection_reasons', {})}"
+        )
 
-    # ── Exit Signal ─────────────────────────────────────────────────
+        return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """AI-driven exit signals based on RSI overbought."""
