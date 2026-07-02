@@ -81,7 +81,7 @@ cat > "$USER_DATA/config.dryrun.json" << 'CONFIGEOF'
         }
     },
     "exit_pricing": {
-        "price_side": "same",
+        "price_side": "other",
         "use_order_book": true,
         "order_book_top": 1
     },
