@@ -62,6 +62,7 @@ def run_backtest(variant_name, policy, desc):
         "--datadir", "freqtrade_data/data/okx",
         "--timerange", TIMERANGE,
         "--timeframe", "5m",
+        "--cache", "none",
     ], capture_output=True, text=True, timeout=TIMEOUT, env=env)
 
     elapsed = _time.time() - t0
