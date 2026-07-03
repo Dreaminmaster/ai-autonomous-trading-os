@@ -480,6 +480,27 @@ class AISupervisedStrategy(IStrategy):
                             "risk_notes": "safe default",
                         })
 
+                # ── Experiment: filter disabled strategies + apply weights ──
+                disabled = getattr(self, "_exp_disabled_strategies", set())
+                if disabled:
+                    candidates = [c for c in candidates if c.get("strategy_id") not in disabled
+                                  and c.get("strategy_id") != "hold_baseline"]
+                    # Re-add hold baseline always
+                    if not any(c.get("strategy_id") == "hold_baseline" for c in candidates):
+                        candidates.append({"strategy_id":"hold_baseline","side":"HOLD","confidence":1.0,
+                                          "entry_reason":"baseline hold","signal_strength":0.0,
+                                          "suggested_stop_loss_pct":0.0,"suggested_take_profit_pct":0.0,
+                                          "max_holding_minutes":0,"regime_tags":["all"],"risk_notes":"safe default"})
+
+                weights = getattr(self, "_exp_strategy_weights", {})
+                for c in candidates:
+                    sid = c.get("strategy_id", "")
+                    raw_conf = float(c.get("confidence", 0.0))
+                    w = float(weights.get(sid, 1.0))
+                    c["raw_confidence"] = raw_conf
+                    c["strategy_weight"] = w
+                    c["confidence"] = raw_conf * w  # effective confidence
+
                 # ── Step 2: AI Decision ─────────────────────────
                 mark_price = float(dataframe.at[idx, "close"])
                 market_state = {

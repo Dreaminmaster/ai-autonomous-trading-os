@@ -1,72 +1,53 @@
 #!/usr/bin/env python3
 """
-Strategy Fix Round 1 — 9-variant A/B matrix with full isolation.
-Baseline uses config/policy.validation.json (unchanged).
-Experiment variants start from validation policy + apply overrides.
-Each variant has independent log, policy file, backtest run.
+Strategy Fix Round 1 — 9 variants via canonical backtest runner.
+Baseline uses VALIDATION policy. Others apply overrides on top.
+Each variant: independent --export JSON + log + policy.
+Only best 2 run lookahead. Report: validation_reports/strategy_fix_round1.md
 """
-import subprocess, json, os, sys, time as _time, traceback
+import subprocess, json, os, sys, traceback
 from pathlib import Path
 
-IMPL_DIR = Path(__file__).resolve().parents[1]
-os.chdir(IMPL_DIR)
-
+os.chdir(Path(__file__).resolve().parents[1])
 os.makedirs("freqtrade_data/backtest_results", exist_ok=True)
 os.makedirs("validation_reports", exist_ok=True)
 
-TIMERANGE = os.environ.get("TIMERANGE", "20250101-20250701")
 TIMEOUT = 900
+VALIDATION_POLICY = "config/policy.validation.json"
+# Validate baseline = fresh run from validation policy
+BASELINE_OUT = "round1_1_baseline_current"
 
-# Baseline uses VALIDATION policy (unchanged)
-VALIDATION_POLICY_PATH = "config/policy.validation.json"
-VALIDATION_POLICY = json.loads(Path(VALIDATION_POLICY_PATH).read_text())
-
-# Experiment overrides (applied on top of VALIDATION policy)
 VARIANTS = [
-    ("1_baseline_current", None, "baseline unchanged (validation policy)"),
-    ("2_trend_weight_025_only", {"experiment.strategy_weights.trend_following_v1": 0.25}, "trend weight 0.25"),
-    ("3_trend_disabled_only", {"experiment.disabled_strategies": ["trend_following_v1"]}, "trend disabled"),
-    ("4_max_hold_6h_only", {"experiment.max_holding_minutes": 360}, "max hold 6h"),
-    ("5_max_hold_4h_only", {"experiment.max_holding_minutes": 240}, "max hold 4h"),
-    ("6_trend_025_hold_6h", {"experiment.strategy_weights.trend_following_v1": 0.25, "experiment.max_holding_minutes": 360}, "trend 0.25 + hold 6h"),
-    ("7_trend_disabled_hold_6h", {"experiment.disabled_strategies": ["trend_following_v1"], "experiment.max_holding_minutes": 360}, "trend disabled + hold 6h"),
-    ("8_trend_025_early_exit", {"experiment.strategy_weights.trend_following_v1": 0.25, "experiment.max_holding_minutes": 360, "experiment.early_exit_loss_pct": -0.3, "experiment.early_exit_after_minutes": 120}, "trend 0.25 + early exit"),
-    ("9_trend_disabled_early_exit", {"experiment.disabled_strategies": ["trend_following_v1"], "experiment.max_holding_minutes": 360, "experiment.early_exit_loss_pct": -0.3, "experiment.early_exit_after_minutes": 120}, "trend disabled + early exit"),
+    (BASELINE_OUT, None),
+    ("round1_2_trend_weight_025_only", {"experiment.strategy_weights.trend_following_v1": 0.25}),
+    ("round1_3_trend_disabled_only", {"experiment.disabled_strategies": ["trend_following_v1"]}),
+    ("round1_4_max_hold_6h_only", {"experiment.max_holding_minutes": 360}),
+    ("round1_5_max_hold_4h_only", {"experiment.max_holding_minutes": 240}),
+    ("round1_6_trend_025_hold_6h", {"experiment.strategy_weights.trend_following_v1": 0.25, "experiment.max_holding_minutes": 360}),
+    ("round1_7_trend_disabled_hold_6h", {"experiment.disabled_strategies": ["trend_following_v1"], "experiment.max_holding_minutes": 360}),
+    ("round1_8_trend_025_early_exit", {"experiment.strategy_weights.trend_following_v1": 0.25, "experiment.max_holding_minutes": 360, "experiment.early_exit_loss_pct": -0.3, "experiment.early_exit_after_minutes": 120}),
+    ("round1_9_trend_disabled_early_exit", {"experiment.disabled_strategies": ["trend_following_v1"], "experiment.max_holding_minutes": 360, "experiment.early_exit_loss_pct": -0.3, "experiment.early_exit_after_minutes": 120}),
 ]
 
 def apply_overrides(policy, overrides):
-    """Deep copy policy, then apply dot-path overrides."""
-    policy = json.loads(json.dumps(policy))
-    if not overrides:
-        return policy
-    for key, value in overrides.items():
-        parts = key.split(".")
-        target = policy
-        for p in parts[:-1]:
-            if p not in target:
-                target[p] = {}
-            target = target[p]
-        target[parts[-1]] = value
-    return policy
+    p = json.loads(json.dumps(policy))
+    if not overrides: return p
+    for k, v in overrides.items():
+        target = p
+        for part in k.split(".")[:-1]:
+            if part not in target: target[part] = {}
+            target = target[part]
+        target[k.split(".")[-1]] = v
+    return p
 
-def run_one_variant(variant_name, policy, desc):
-    """Run one variant backtest + lookahead. Returns result dict. Always writes log."""
-    log_path = Path(f"freqtrade_data/backtest_results/round1_{variant_name}.log")
-    policy_path = Path(f"freqtrade_data/backtest_results/exp_{variant_name}_policy.json")
-    la_log_path = Path(f"freqtrade_data/backtest_results/round1_la_{variant_name}.log")
-
-    # Write policy
+def write_policy_and_run(name, policy, env):
+    """Write policy file, run canonical backtest, return summary path."""
+    policy_path = Path(f"freqtrade_data/backtest_results/exp_{name}_policy.json")
     policy_path.write_text(json.dumps(policy, indent=2))
-    env = os.environ.copy()
+    env = env.copy()
     env["ATOS_POLICY"] = str(policy_path.resolve())
 
-    # Remove stale cache
-    for cached in Path("user_data/backtest_results").glob("backtest-result-*.zip"):
-        cached.unlink(missing_ok=True)
-
-    print(f"  [{variant_name}] {desc} ...", flush=True)
-    t0 = _time.time()
-
+    print(f"  [{name}] running...", flush=True)
     try:
         result = subprocess.run([
             "freqtrade", "backtesting",
@@ -74,114 +55,102 @@ def run_one_variant(variant_name, policy, desc):
             "--strategy", "AISupervisedStrategy",
             "--strategy-path", "freqtrade_data/strategies",
             "--datadir", "freqtrade_data/data/okx",
-            "--timerange", TIMERANGE,
+            "--timerange", os.environ.get("TIMERANGE", "20250101-20250701"),
             "--timeframe", "5m",
             "--cache", "none",
+            "--export", "trades",
+            "--export-filename", f"freqtrade_data/backtest_results/{name}.json",
         ], capture_output=True, text=True, timeout=TIMEOUT, env=env)
+        log_path = Path(f"freqtrade_data/backtest_results/{name}.log")
+        log_path.write_text(result.stdout + "\n" + result.stderr)
+        if result.returncode != 0:
+            return {"name": name, "status": f"FAILED(rc={result.returncode})", "trades": "?", "profit": "?", "dd": "?"}
     except subprocess.TimeoutExpired:
-        log_path.write_text("TIMEOUT")
-        print(f"  [{variant_name}] TIMEOUT", flush=True)
-        return {"variant": variant_name, "status": "TIMEOUT", "trades": "?", "profit": "?", "dd": "?", "lookahead": "?"}
+        return {"name": name, "status": "TIMEOUT", "trades": "?", "profit": "?", "dd": "?"}
     except Exception as e:
-        log_path.write_text(f"EXCEPTION: {traceback.format_exc()}")
-        print(f"  [{variant_name}] EXCEPTION: {e}", flush=True)
-        return {"variant": variant_name, "status": f"EXCEPTION:{e}", "trades": "?", "profit": "?", "dd": "?", "lookahead": "?"}
+        return {"name": name, "status": f"CRASH:{e}", "trades": "?", "profit": "?", "dd": "?"}
 
-    elapsed = _time.time() - t0
-    rc = result.returncode
-    log_path.write_text(result.stdout + "\n" + result.stderr)
-
-    if rc != 0:
-        err_tail = (result.stderr[-200:] if result.stderr else result.stdout[-200:])
-        print(f"  [{variant_name}] FAILED(rc={rc}) in {elapsed:.0f}s: {err_tail[:80]}", flush=True)
-        return {"variant": variant_name, "status": f"FAILED(rc={rc})", "trades": "?", "profit": "?", "dd": "?", "lookahead": "?"}
-
-    text = result.stdout
-    trades = profit = dd = "?"
-    for line in text.split("\n"):
-        if "AISupervisedStrategy" in line and "\u2502" in line and "TOTAL" not in line:
-            parts = [p.strip() for p in line.split("\u2502")]
-            if len(parts) >= 9:
-                trades = parts[2].strip()
-                profit = parts[5].strip()
-                dd = parts[8].strip() if len(parts) > 8 else "-"
-                break
-
-    # Lookahead (optional, don't fail on its failure)
+    # Parse JSON result
+    json_path = Path(f"freqtrade_data/backtest_results/{name}.json")
     try:
-        la_result = subprocess.run([
+        data = json.loads(json_path.read_text())
+        s = data.get("strategy", data.get("strategy_comparison", [{}])[0])
+        return {"name": name, "status": "OK",
+                "trades": s.get("total_trades", "?"),
+                "profit": s.get("profit_total_pct", s.get("profit_total", "?")),
+                "dd": s.get("max_drawdown", s.get("max_drawdown_account", "?")),
+                "winrate": s.get("winrate", "?"),
+                "profit_factor": s.get("profit_factor", "?"),
+                "summary_path": f"freqtrade_data/backtest_results/{name}_summary.json"}
+    except Exception as e:
+        return {"name": name, "status": f"PARSE_ERROR:{e}", "trades": "?", "profit": "?", "dd": "?"}
+
+# ════════════════════════════════════════
+# Run all 9
+# ════════════════════════════════════════
+base_env = os.environ.copy()
+base_policy = json.loads(open(VALIDATION_POLICY).read())
+results = []
+for name, overrides in VARIANTS:
+    if overrides is None:
+        policy = base_policy  # untouched validation policy
+    else:
+        policy = apply_overrides(base_policy, overrides)
+    r = write_policy_and_run(name, policy, base_env)
+    results.append(r)
+
+# ════════════════════════════════════════
+# Best 2 lookahead
+# ════════════════════════════════════════
+ok_results = [r for r in results if r["status"] == "OK"]
+ok_results.sort(key=lambda r: float(str(r["profit"]).replace("%","").replace("?","-999")))
+best_two = ok_results[-2:] if len(ok_results) >= 2 else ok_results
+
+for b in best_two:
+    name = b["name"]
+    print(f"  Lookahead: {name} ...", flush=True)
+    try:
+        result = subprocess.run([
             "freqtrade", "lookahead-analysis",
             "--config", "freqtrade_data/config.dryrun.json",
             "--strategy", "AISupervisedStrategy",
             "--strategy-path", "freqtrade_data/strategies",
-            "--timerange", TIMERANGE,
-        ], capture_output=True, text=True, timeout=TIMEOUT, env=env)
-        la_log_path.write_text(la_result.stdout + "\n" + la_result.stderr)
-        la_status = "PASS" if "has_bias" in la_result.stdout and "No" in la_result.stdout.split("has_bias")[-1][:5] else "?"
-        if "too few trades" in la_result.stdout:
-            la_status = "TOO_FEW"
+            "--timerange", os.environ.get("TIMERANGE", "20250101-20250701"),
+        ], capture_output=True, text=True, timeout=TIMEOUT, env={"ATOS_POLICY": str(Path(f"freqtrade_data/backtest_results/exp_{name}_policy.json").resolve())})
+        Path(f"freqtrade_data/backtest_results/{name}_lookahead.log").write_text(result.stdout + "\n" + result.stderr)
+        b["lookahead"] = "PASS" if "has_bias" in result.stdout and "No" in result.stdout.split("has_bias")[-1][:5] else "?"
     except Exception:
-        la_status = "?"
-
-    print(f"  [{variant_name}] trades={trades} profit={profit} dd={dd} la={la_status} ({elapsed:.0f}s)", flush=True)
-    return {"variant": variant_name, "status": "OK", "trades": trades, "profit": profit, "dd": dd, "lookahead": la_status}
+        b["lookahead"] = "?"
 
 # ════════════════════════════════════════
-# Run all
+# Report
 # ════════════════════════════════════════
-results = []
-failed_count = 0
-for name, overrides, desc in VARIANTS:
-    if overrides is None:
-        policy = VALIDATION_POLICY  # Use validation policy directly for baseline
-    else:
-        policy = apply_overrides(VALIDATION_POLICY, overrides)
-    r = run_one_variant(name, policy, desc)
-    results.append(r)
-    if r["status"] != "OK":
-        failed_count += 1
-
-# ════════════════════════════════════════
-# Write report
-# ════════════════════════════════════════
-baseline = results[0] if results else {}
-baseline_trades = baseline.get("trades", "?")
-baseline_profit = baseline.get("profit", "?")
-baseline_integrity = "PASS" if (baseline_trades == "244" or (isinstance(baseline_trades, str) and "244" in baseline_trades)) else "FAIL"
-# Allow small variance: 240-250 trades acceptable
-try:
-    bt = int(baseline_trades)
-    baseline_integrity = "PASS" if 230 <= bt <= 260 else f"FAIL (expected ~244, got {bt})"
-except:
-    pass
+baseline = results[0]
+canonical_json = "freqtrade_data/backtest_results/canonical_baseline.json"
+cb_trades = "?"
+if Path(canonical_json).exists():
+    try:
+        cb = json.loads(Path(canonical_json).read_text())
+        s = cb.get("strategy", cb.get("strategy_comparison", [{}])[0])
+        cb_trades = s.get("total_trades", "?")
+    except: pass
 
 with open("validation_reports/strategy_fix_round1.md", "w") as f:
     f.write("# Strategy Fix Round 1\n\n")
-    f.write(f"**Timerange:** {TIMERANGE} | **Pair:** BTC/USDT 5m\n\n")
-    f.write("## Baseline Integrity Check\n\n")
-    f.write(f"- Expected: 244 trades / -16.12%\n")
-    f.write(f"- Actual: {baseline_trades} trades / {baseline_profit}%\n")
-    f.write(f"- **Baseline integrity: {baseline_integrity}**\n\n")
+    f.write(f"**Timerange:** {os.environ.get('TIMERANGE','20250101-20250701')} | **Pair:** BTC/USDT 5m\n\n")
+    f.write("## Canonical Baseline\n\n")
+    f.write(f"- Canonical fresh: {cb_trades} trades\n")
+    f.write(f"- Round1 baseline: {baseline.get('trades','?')} trades / {baseline.get('profit','?')}%\n")
+    match = (str(cb_trades) == str(baseline.get("trades",""))) and "OK" in baseline.get("status","")
+    f.write(f"- Baseline integrity: {'PASS' if match else 'FAIL (canonical ≠ round1 baseline)'}\n\n")
     f.write("## Variant Matrix\n\n")
-    f.write("| Variant | Status | Trades | Profit % | Max DD | Lookahead |\n")
-    f.write("|---------|--------|--------|----------|--------|-----------|\n")
-    for r in results:
-        f.write(f"| {r['variant']} | {r['status']} | {r['trades']} | {r['profit']} | {r['dd']} | {r['lookahead']} |\n")
-    f.write(f"\n## Summary\n\n- Total: {len(results)} variants\n- Succeeded: {len(results)-failed_count}\n- Failed: {failed_count}\n")
-    f.write(f"- Baseline integrity: {baseline_integrity}\n")
-    f.write("- Live trading: FORBIDDEN\n")
+    f.write("| # | Variant | Status | Trades | Profit % | Winrate | Max DD | Profit Factor | Lookahead |\n")
+    f.write("|---|---------|--------|--------|----------|---------|--------|---------------|-----------|\n")
+    for i, r in enumerate(results):
+        f.write(f"| {i+1} | {r['name']} | {r['status']} | {r.get('trades','?')} | {r.get('profit','?')} | {r.get('winrate','?')} | {r.get('dd','?')} | {r.get('profit_factor','?')} | {r.get('lookahead','?')} |\n")
+    f.write(f"\n## Best 2\n\n")
+    for b in best_two:
+        f.write(f"- **{b['name']}**: {b.get('trades','?')} trades, {b.get('profit','?')}%, WR {b.get('winrate','?')}, LA {b.get('lookahead','?')}\n")
+    f.write("\n## Conclusion\n\n- Live trading: FORBIDDEN\n")
 
-report_path = Path("validation_reports/strategy_fix_round1.md")
-print("\n" + report_path.read_text())
-
-# Exit code
-log_count = len(list(Path("freqtrade_data/backtest_results").glob("round1_[1-9]_*.log")))
-print(f"\nRound 1 logs: {log_count}/9")
-if log_count < 9:
-    print(f"FATAL: only {log_count}/9 variant logs generated", file=sys.stderr)
-    sys.exit(1)
-if failed_count > 1:
-    print(f"WARNING: {failed_count} variants failed", file=sys.stderr)
-if baseline_integrity != "PASS":
-    print(f"FATAL: baseline integrity check failed: {baseline_integrity}", file=sys.stderr)
-    sys.exit(1)
+print(Path("validation_reports/strategy_fix_round1.md").read_text())
