@@ -71,6 +71,8 @@ def run_backtest(variant_name, policy, desc):
     Path(log_path).write_text(result.stdout + "\n" + result.stderr)
 
     if rc != 0:
+        # Write log ALWAYS even on failure
+        Path(log_path).write_text(f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}\n\nRC={rc}")
         print(f"  [{variant_name}] FAILED (rc={rc}) in {elapsed:.0f}s", flush=True)
         return {"variant": variant_name, "status": f"FAILED(rc={rc})", "trades": "?", "profit": "?", "dd": "?", "lookahead": "?"}
 
