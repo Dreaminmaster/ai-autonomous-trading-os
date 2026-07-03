@@ -81,7 +81,8 @@ if result.returncode != 0:
 
 # ── Find the new JSON in isolated dir ─────────────────────────
 json_glob = sorted(
-    (isolated_dir / "backtest_results").glob("backtest-result-*.json"),
+    list((isolated_dir / "backtest_results").glob("backtest-result-*.json"))
+    + list((isolated_dir / "backtest_results").glob("backtest-result-*.meta.json")),
     key=lambda p: p.stat().st_mtime,
     reverse=True,
 )
