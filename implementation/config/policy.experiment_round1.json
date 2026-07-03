@@ -21,11 +21,11 @@
   "_comment": "EXPERIMENT ROUND 1 — For backtest validation only. NOT for production. Strategy weights and exit params set via env vars.",
   "experiment": {
     "strategy_weights": {
-      "trend_following_v1": 0.25,
+      "trend_following_v1": 1.0,
       "breakout_v1": 1.0,
       "mean_reversion_v1": 1.0
     },
-    "max_holding_minutes": 360,
+    "max_holding_minutes": 1200,
     "early_exit_loss_pct": null,
     "early_exit_after_minutes": null,
     "take_profit_pct": 2.0

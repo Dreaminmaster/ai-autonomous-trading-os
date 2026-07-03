@@ -2,7 +2,7 @@ import re, sys
 from pathlib import Path
 
 for i in range(1, 10):
-    logs = list(Path("/tmp/ci_r1/freqtrade_data/backtest_results").glob(f"round1_{i}_*.log"))
+    logs = list(Path("/tmp/ci_r3/freqtrade_data/backtest_results").glob(f"round1_{i}_*.log"))
     if not logs:
         print(f"{i}: LOG_MISSING")
         continue
