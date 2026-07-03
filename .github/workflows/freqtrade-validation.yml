@@ -113,12 +113,13 @@ jobs:
           print('Pair format validated.')
           " 2>&1 | tee pair_format_check.log
       - name: Strategy Fix Round 1
-        if: always()
-        continue-on-error: true
-        timeout-minutes: 60
+        timeout-minutes: 120
         run: |
           cd implementation
           python3 scripts/ci_strategy_fix_round1.py
+          test -f validation_reports/strategy_fix_round1.md || (echo "FATAL: round1 report missing" && exit 1)
+          ls -la freqtrade_data/backtest_results/round1_*.log
+          test $(ls freqtrade_data/backtest_results/round1_*.log 2>/dev/null | wc -l) -eq 9 || (echo "FATAL: expected 9 round1 logs" && exit 1)
       - name: Generate validation summary
         if: always()
         run: |
@@ -174,6 +175,9 @@ jobs:
             implementation/pair_format_check.log
             implementation/validation_summary.md
             implementation/validation_reports/*.md
+            implementation/freqtrade_data/backtest_results/round1_*.log
+            implementation/freqtrade_data/backtest_results/round1_la_*.log
+            implementation/freqtrade_data/backtest_results/exp_*_policy.json
             implementation/freqtrade_data/backtest_results/*.json
           retention-days: 14
           if-no-files-found: ignore
