@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
 Canonical Backtest Runner — single source of truth for all backtest commands.
+Each run uses an ISOLATED --user-data-dir to prevent cross-run contamination.
+Results are provenance-tracked with SHA256.
+
 Usage:
   python3 scripts/run_canonical_backtest.py <variant_name> <output_base> [policy_path]
-
-Outputs:
-  freqtrade_data/backtest_results/<output_base>.json
-  freqtrade_data/backtest_results/<output_base>.log
-  freqtrade_data/backtest_results/<output_base>_summary.json
 """
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -20,40 +19,52 @@ from pathlib import Path
 IMPL_DIR = Path(__file__).resolve().parents[1]
 os.chdir(IMPL_DIR)
 
-# Ensure output dirs
-results_dir = Path("freqtrade_data/backtest_results")
-results_dir.mkdir(parents=True, exist_ok=True)
-Path("user_data/backtest_results").mkdir(parents=True, exist_ok=True)
-
 variant = sys.argv[1]
 output_base = sys.argv[2].replace(".json", "")
 policy_path = sys.argv[3] if len(sys.argv) > 3 else "config/policy.validation.json"
 timerange = os.environ.get("TIMERANGE", "20250101-20250701")
 
-log_path = Path(f"freqtrade_data/backtest_results/{output_base}.log")
-json_path = Path(f"user_data/backtest_results/backtest-result.json")  # Freqtrade writes here
-summary_path = Path(f"freqtrade_data/backtest_results/{output_base}_summary.json")
+# ── Isolated runtime dir per variant ──────────────────────────
+run_id = os.environ.get("GITHUB_RUN_ID", f"local_{int(time.time())}")
+isolated_dir = Path(f".runtime/backtests/{run_id}/{output_base}")
+results_dir = Path("freqtrade_data/backtest_results")
+for d in [isolated_dir, results_dir]:
+    d.mkdir(parents=True, exist_ok=True)
+# Freqtrade needs user_data structure
+for sub in ("strategies", "data", "backtest_results"):
+    (isolated_dir / sub).mkdir(parents=True, exist_ok=True)
+
+log_path = results_dir / f"{output_base}.log"
+summary_path = results_dir / f"{output_base}_summary.json"
 env = os.environ.copy()
 
-# Resolve policy
-policy_sha = "none"
+# ── Resolve policy ────────────────────────────────────────────
 policy_abs = Path(policy_path).resolve()
 if not policy_abs.exists():
     print(f"FATAL: policy file not found: {policy_abs}", file=sys.stderr)
     sys.exit(1)
 env["ATOS_POLICY"] = str(policy_abs)
 policy_sha = hashlib.sha256(policy_abs.read_bytes()).hexdigest()[:12]
-print(f"Policy: {policy_path} sha256={policy_sha}")
 
-print(f"Backtesting {variant}: {output_base}.json", flush=True)
+# Config SHA
+config_abs = Path("freqtrade_data/config.dryrun.json").resolve()
+config_sha = hashlib.sha256(config_abs.read_bytes()).hexdigest()[:12]
+
+print(f"Policy: {policy_path} sha256={policy_sha}  Config: sha256={config_sha}")
+print(f"Isolated: {isolated_dir}")
+
+# ── Run backtest ──────────────────────────────────────────────
+run_started_ns = time.time_ns()
+print(f"Backtesting {variant}: {output_base} (run_id={run_id})", flush=True)
 t0 = time.time()
 
 result = subprocess.run([
     "freqtrade", "backtesting",
-    "--config", "freqtrade_data/config.dryrun.json",
+    "--config", str(config_abs),
     "--strategy", "AISupervisedStrategy",
     "--strategy-path", "freqtrade_data/strategies",
     "--datadir", "freqtrade_data/data/okx",
+    "--user-data-dir", str(isolated_dir.resolve()),
     "--timerange", timerange,
     "--timeframe", "5m",
     "--cache", "none",
@@ -65,27 +76,31 @@ log_path.write_text(result.stdout + "\n" + result.stderr)
 
 if result.returncode != 0:
     print(f"FATAL: Backtest failed (rc={result.returncode}) in {elapsed:.0f}s", file=sys.stderr)
-    print(result.stderr[-500:] if result.stderr else result.stdout[-500:], file=sys.stderr)
+    print(result.stderr[-800:] if result.stderr else result.stdout[-800:], file=sys.stderr)
     sys.exit(result.returncode)
 
-# ── Find Freqtrade output JSON (written to user_data/) ─────────
-results_glob = sorted(Path("user_data/backtest_results").glob("backtest-result-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+# ── Find the new JSON in isolated dir ─────────────────────────
+json_glob = sorted(
+    (isolated_dir / "backtest_results").glob("backtest-result-*.json"),
+    key=lambda p: p.stat().st_mtime,
+    reverse=True,
+)
 actual_json_path = None
-for rp in results_glob:
-    if "meta" not in rp.name:
+for rp in json_glob:
+    if "meta" not in rp.name and rp.stat().st_mtime_ns >= run_started_ns:
         actual_json_path = rp
         break
 
 if not actual_json_path:
-    print(f"FATAL: No Freqtrade result JSON found in user_data/backtest_results/", file=sys.stderr)
+    print(f"FATAL: No fresh Freqtrade result JSON generated in {isolated_dir}/backtest_results/", file=sys.stderr)
     sys.exit(1)
 
 print(f"  JSON: {actual_json_path.name}")
-# Copy to our output dir
-import shutil
-shutil.copy2(actual_json_path, Path(f"freqtrade_data/backtest_results/{output_base}.json"))
+# Copy to shared results dir
+copied_json = results_dir / f"{output_base}.json"
+shutil.copy2(actual_json_path, copied_json)
 
-# ── Extract metrics from JSON (fail-fast) ──────────────────────
+# ── Extract metrics ───────────────────────────────────────────
 try:
     data = json.loads(actual_json_path.read_text())
 except json.JSONDecodeError as e:
@@ -111,6 +126,11 @@ print(f"  elapsed={elapsed:.0f}s")
 
 summary = {
     "variant": variant,
+    "run_id": run_id,
+    "run_started_at_ns": run_started_ns,
+    "source_json_path": str(actual_json_path.resolve()),
+    "source_json_mtime_ns": actual_json_path.stat().st_mtime_ns,
+    "source_json_sha256": hashlib.sha256(actual_json_path.read_bytes()).hexdigest()[:16],
     "total_trades": trades,
     "profit_total_pct": profit_pct,
     "profit_total": profit_total,
@@ -118,20 +138,23 @@ summary = {
     "max_drawdown": max_dd,
     "profit_factor": pf,
     "policy_sha256": policy_sha,
+    "config_sha256": config_sha,
+    "cache_mode": "none",
     "elapsed_s": elapsed,
 }
 summary_path.write_text(json.dumps(summary, indent=2))
 
-# ── Lookahead (optional, only if RUN_LOOKAHEAD=1) ──────────────
+# ── Lookahead (optional) ──────────────────────────────────────
 if os.environ.get("RUN_LOOKAHEAD", "") == "1":
     print(f"  Lookahead for {variant}...", flush=True)
-    la_log = Path(f"freqtrade_data/backtest_results/{output_base}_lookahead.log")
+    la_log = results_dir / f"{output_base}_lookahead.log"
     la_result = subprocess.run([
         "freqtrade", "lookahead-analysis",
-        "--config", "freqtrade_data/config.dryrun.json",
+        "--config", str(config_abs),
         "--strategy", "AISupervisedStrategy",
         "--strategy-path", "freqtrade_data/strategies",
         "--timerange", timerange,
+        "--user-data-dir", str(isolated_dir.resolve()),
     ], capture_output=True, text=True, timeout=900, env=env)
     la_log.write_text(la_result.stdout + "\n" + la_result.stderr)
     la_text = la_result.stdout
