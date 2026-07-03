@@ -20,9 +20,10 @@ from pathlib import Path
 IMPL_DIR = Path(__file__).resolve().parents[1]
 os.chdir(IMPL_DIR)
 
-# Ensure output dir
+# Ensure output dirs
 results_dir = Path("freqtrade_data/backtest_results")
 results_dir.mkdir(parents=True, exist_ok=True)
+Path("user_data/backtest_results").mkdir(parents=True, exist_ok=True)
 
 variant = sys.argv[1]
 output_base = sys.argv[2].replace(".json", "")
@@ -30,7 +31,7 @@ policy_path = sys.argv[3] if len(sys.argv) > 3 else "config/policy.validation.js
 timerange = os.environ.get("TIMERANGE", "20250101-20250701")
 
 log_path = Path(f"freqtrade_data/backtest_results/{output_base}.log")
-json_path = Path(f"freqtrade_data/backtest_results/{output_base}.json")
+json_path = Path(f"user_data/backtest_results/backtest-result.json")  # Freqtrade writes here
 summary_path = Path(f"freqtrade_data/backtest_results/{output_base}_summary.json")
 env = os.environ.copy()
 
@@ -57,7 +58,6 @@ result = subprocess.run([
     "--timeframe", "5m",
     "--cache", "none",
     "--export", "trades",
-    "--export-filename", str(json_path),
 ], capture_output=True, text=True, timeout=900, env=env)
 
 elapsed = time.time() - t0
@@ -68,13 +68,26 @@ if result.returncode != 0:
     print(result.stderr[-500:] if result.stderr else result.stdout[-500:], file=sys.stderr)
     sys.exit(result.returncode)
 
-# ── Extract metrics from JSON (fail-fast) ──────────────────────
-if not json_path.exists():
-    print(f"FATAL: Expected JSON output not found: {json_path}", file=sys.stderr)
+# ── Find Freqtrade output JSON (written to user_data/) ─────────
+results_glob = sorted(Path("user_data/backtest_results").glob("backtest-result-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+actual_json_path = None
+for rp in results_glob:
+    if "meta" not in rp.name:
+        actual_json_path = rp
+        break
+
+if not actual_json_path:
+    print(f"FATAL: No Freqtrade result JSON found in user_data/backtest_results/", file=sys.stderr)
     sys.exit(1)
 
+print(f"  JSON: {actual_json_path.name}")
+# Copy to our output dir
+import shutil
+shutil.copy2(actual_json_path, Path(f"freqtrade_data/backtest_results/{output_base}.json"))
+
+# ── Extract metrics from JSON (fail-fast) ──────────────────────
 try:
-    data = json.loads(json_path.read_text())
+    data = json.loads(actual_json_path.read_text())
 except json.JSONDecodeError as e:
     print(f"FATAL: Cannot parse JSON: {e}", file=sys.stderr)
     sys.exit(1)
