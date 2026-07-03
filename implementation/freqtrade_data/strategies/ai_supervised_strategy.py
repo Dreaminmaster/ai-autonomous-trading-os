@@ -255,22 +255,26 @@ class AISupervisedStrategy(IStrategy):
     # ── Initialization ──────────────────────────────────────────────
 
     def _init_atos(self) -> None:
-        """Lazy-init ATOS components. Called on first candle processing."""
+        """Lazy-init ATOS components. Called on first candle processing.
+        
+        ALWAYS reloads ATOS_POLICY from env var (ignores _initialized flag).
+        This ensures per-variant experiment configs take effect.
+        """
         import os, json
 
         # Always create a fresh ProviderManager
         self._provider_manager = ProviderManager(self.atos_provider) if ATOS_AVAILABLE else None
 
-        if not self._initialized:
-            policy_path = os.environ.get("ATOS_POLICY", "")
-            if policy_path and Path(policy_path).exists():
-                try:
-                    loaded = json.loads(Path(policy_path).read_text())
-                    self.atos_policy = loaded
-                    logger.info(f"ATOS policy loaded from ATOS_POLICY={policy_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to load ATOS_POLICY={policy_path}: {e}, using default policy")
-            self._initialized = True
+        # Always reload policy from ATOS_POLICY env var (per-process)
+        policy_path = os.environ.get("ATOS_POLICY", "")
+        if policy_path and Path(policy_path).exists():
+            try:
+                loaded = json.loads(Path(policy_path).read_text())
+                self.atos_policy = loaded
+                logger.info(f"ATOS policy loaded from ATOS_POLICY={policy_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load ATOS_POLICY={policy_path}: {e}, using default policy")
+        self._initialized = True
 
         # ── Experiment config ──────────────────────────────────
         exp = self.atos_policy.get("experiment", {})
