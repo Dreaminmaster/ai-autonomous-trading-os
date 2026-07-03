@@ -80,12 +80,12 @@ if result.returncode != 0:
     sys.exit(result.returncode)
 
 # ── Find the new JSON in isolated dir ─────────────────────────
-json_glob = sorted(
-    list((isolated_dir / "backtest_results").glob("backtest-result-*.json"))
-    + list((isolated_dir / "backtest_results").glob("backtest-result-*.meta.json")),
-    key=lambda p: p.stat().st_mtime,
-    reverse=True,
-)
+results_subdir = isolated_dir / "backtest_results"
+json_files = list(results_subdir.glob("backtest-result-*.json")) + list(results_subdir.glob("backtest-result-*.meta.json"))
+json_glob = sorted(json_files, key=lambda p: p.stat().st_mtime, reverse=True)
+print(f"  Scanning {results_subdir}: found {len(json_glob)} result files")
+for jf in json_glob[:3]:
+    print(f"    {jf.name} mtime_ns={jf.stat().st_mtime_ns}")
 actual_json_path = None
 for rp in json_glob:
     if "meta" not in rp.name and rp.stat().st_mtime_ns >= run_started_ns:
