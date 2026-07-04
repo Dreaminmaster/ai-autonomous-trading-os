@@ -43,10 +43,15 @@ if not policy_abs.exists():
     print(f"FATAL: policy file not found: {policy_abs}", file=sys.stderr)
     sys.exit(1)
 env["ATOS_POLICY"] = str(policy_abs)
-policy_sha = hashlib.sha256(policy_abs.read_bytes()).hexdigest()[:12]
+try:
+    policy_sha = hashlib.sha256(policy_abs.read_bytes()).hexdigest()[:12]
+except Exception:
+    policy_sha = "none"
 
 config_abs = Path("freqtrade_data/config.dryrun.json").resolve()
-config_sha = hashlib.sha256(config_abs.read_bytes()).hexdigest()[:12]
+config_sha = "none"
+if config_abs.exists():
+    config_sha = hashlib.sha256(config_abs.read_bytes()).hexdigest()[:12]
 
 print(f"Policy: {policy_path} sha256={policy_sha}  Config: sha256={config_sha}")
 print(f"Isolated: {isolated_dir}")
@@ -142,27 +147,57 @@ if not strat:
 # Debug: print available keys
 print(f"  Strategy keys: {sorted(strat.keys()) if isinstance(strat, dict) else 'not dict'}")
 
-def _pct(val):
-    """Normalize percentage: '17.85%' → 17.85, '17.85' → 17.85, 0.1785 → 17.85 (if < 1)"""
+def _number(val):
+    """'17.85%' → 17.85, '17.85' → 17.85, 17.85 → 17.85"""
     if isinstance(val, str):
         val = val.replace("%", "").strip()
     try:
-        v = float(val)
-        return v if abs(v) >= 1 else round(v * 100, 2)
+        return float(val)
     except (ValueError, TypeError):
         return val
 
+def _ratio_to_pct(val):
+    """0.447 → 44.7, -0.1612 → -16.12"""
+    v = _number(val)
+    return round(v * 100, 2) if isinstance(v, (int, float)) and abs(v) <= 1 else v
+
+# ── Field resolution with explicit source tracking ──────────
 trades = strat.get("total_trades", "?")
-profit_pct = strat.get("profit_total_pct", strat.get("profit_total", "?"))
-profit_pct_val = _pct(profit_pct) if profit_pct != "?" else "?"
+metric_sources = {"trades": "total_trades"}
+
+# profit: prefer profit_total_pct, fallback to profit_total (as ratio)
+if "profit_total_pct" in strat:
+    profit_val = _number(strat["profit_total_pct"])
+    metric_sources["profit_total_pct"] = "profit_total_pct"
+elif "profit_total" in strat:
+    profit_val = _ratio_to_pct(strat["profit_total"])
+    metric_sources["profit_total_pct"] = "profit_total (ratio→pct)"
+else:
+    profit_val = "?"
+
 profit_total = strat.get("profit_total", "?")
-winrate = strat.get("winrate", "?")
-winrate_val = _pct(winrate) if winrate != "?" else "?"
-max_dd = strat.get("max_drawdown", strat.get("max_drawdown_account", "?"))
-max_dd_val = _pct(max_dd) if max_dd != "?" else "?"
+
+# winrate: Freqtrade returns as ratio 0..1
+if "winrate" in strat:
+    winrate_val = _ratio_to_pct(strat["winrate"])
+    metric_sources["winrate"] = "winrate (ratio→pct)"
+else:
+    winrate_val = "?"
+
+# max_drawdown: prefer max_drawdown_pct, fallback max_drawdown (ratio)
+if "max_drawdown_pct" in strat:
+    max_dd_val = _number(strat["max_drawdown_pct"])
+    metric_sources["max_drawdown_pct"] = "max_drawdown_pct"
+elif "max_drawdown" in strat:
+    max_dd_val = _ratio_to_pct(strat["max_drawdown"])
+    metric_sources["max_drawdown_pct"] = "max_drawdown (ratio→pct)"
+else:
+    max_dd_val = "?"
+
 pf = strat.get("profit_factor", "?")
 
-print(f"  trades={trades} profit={profit_pct}% winrate={winrate} maxDD={max_dd} pf={pf}")
+print(f"  trades={trades} profit_val={profit_val} winrate_val={winrate_val} maxDD_val={max_dd_val} pf={pf}")
+print(f"  metric_sources: {metric_sources}")
 
 summary = {
     "variant": variant,
@@ -172,11 +207,12 @@ summary = {
     "source_result_sha256": hashlib.sha256(actual_json_path.read_bytes()).hexdigest()[:16],
     "source_result_type": source_type,
     "total_trades": trades,
-    "profit_total_pct": profit_pct_val,
+    "profit_total_pct": profit_val,
     "profit_total": profit_total,
-    "winrate": winrate,
+    "winrate": winrate_val,
     "max_drawdown_pct": max_dd_val,
     "profit_factor": pf,
+    "metric_sources": metric_sources,
     "policy_sha256": policy_sha,
     "config_sha256": config_sha,
     "cache_mode": "none",
