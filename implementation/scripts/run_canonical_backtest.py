@@ -139,24 +139,27 @@ if not strat:
     print(f"FATAL: No strategy data in result", file=sys.stderr)
     sys.exit(1)
 
+# Debug: print available keys
+print(f"  Strategy keys: {sorted(strat.keys()) if isinstance(strat, dict) else 'not dict'}")
+
+def _pct(val):
+    """Normalize percentage: '17.85%' → 17.85, '17.85' → 17.85, 0.1785 → 17.85 (if < 1)"""
+    if isinstance(val, str):
+        val = val.replace("%", "").strip()
+    try:
+        v = float(val)
+        return v if abs(v) >= 1 else round(v * 100, 2)
+    except (ValueError, TypeError):
+        return val
+
 trades = strat.get("total_trades", "?")
 profit_pct = strat.get("profit_total_pct", strat.get("profit_total", "?"))
-# Normalize: Freqtrade reports as percentage string or float
-if isinstance(profit_pct, str) and "%" in str(profit_pct):
-    profit_pct = str(profit_pct).replace("%", "").strip()
-try:
-    profit_pct_val = float(profit_pct)
-except (ValueError, TypeError):
-    profit_pct_val = profit_pct
+profit_pct_val = _pct(profit_pct) if profit_pct != "?" else "?"
 profit_total = strat.get("profit_total", "?")
 winrate = strat.get("winrate", "?")
+winrate_val = _pct(winrate) if winrate != "?" else "?"
 max_dd = strat.get("max_drawdown", strat.get("max_drawdown_account", "?"))
-if isinstance(max_dd, str) and "%" in str(max_dd):
-    max_dd = str(max_dd).replace("%", "").strip()
-try:
-    max_dd_val = float(max_dd) if isinstance(max_dd, str) else max_dd
-except (ValueError, TypeError):
-    max_dd_val = max_dd
+max_dd_val = _pct(max_dd) if max_dd != "?" else "?"
 pf = strat.get("profit_factor", "?")
 
 print(f"  trades={trades} profit={profit_pct}% winrate={winrate} maxDD={max_dd} pf={pf}")
