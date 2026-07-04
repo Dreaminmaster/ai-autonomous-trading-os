@@ -290,21 +290,14 @@ if os.environ.get("RUN_LOOKAHEAD", "") == "1":
     ], capture_output=True, text=True, timeout=900, env=env)
     la_log.write_text(la_result.stdout + "\n" + la_result.stderr)
 
-    # P0: fail-fast on any lookahead error
-    if la_result.returncode != 0:
-        print(f"FATAL: Lookahead failed rc={la_result.returncode}", file=sys.stderr)
-        sys.exit(la_result.returncode)
     la_text = la_result.stdout
-    if "has_bias" in la_text:
-        idx = la_text.index("has_bias")
-        snippet = la_text[idx:idx+40]
-        print(f"  Lookahead: {snippet}")
-        if "Yes" in snippet:
-            print(f"FATAL: Lookahead BIAS DETECTED", file=sys.stderr)
-            sys.exit(1)
-    elif "No data found" in la_text or "Terminating" in la_text:
-        print(f"FATAL: Lookahead found no data", file=sys.stderr)
+    from atos.lookahead_parser import parse_lookahead_result
+    parsed = parse_lookahead_result(la_text)
+    if parsed["status"] == "PASS":
+        print(f"  Lookahead: PASS (has_bias={parsed['has_bias']})")
+    elif parsed["status"] == "ERROR":
+        print(f"FATAL: Lookahead ERROR: {parsed.get('error','?')}", file=sys.stderr)
         sys.exit(1)
     else:
-        print(f"FATAL: Lookahead could not parse result", file=sys.stderr)
+        print(f"FATAL: Lookahead BIAS DETECTED", file=sys.stderr)
         sys.exit(1)
