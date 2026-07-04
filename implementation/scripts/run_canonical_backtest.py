@@ -227,9 +227,10 @@ elif "pairlist" in strat:
 elif "pairs" in data:
     actual_pairs = sorted(data["pairs"]) if isinstance(data.get("pairs"), list) else []
 if not actual_pairs:
-    # No fallback — must come from real data
     pair_universe_integrity = "FAIL:no_actual_pairs_evidence"
+    pairs_tested = []
 else:
+    pairs_tested = actual_pairs
     pair_universe_integrity = "PASS" if pairs_requested == actual_pairs else "FAIL"
 
 print(f"  trades={trades} profit_val={profit_val} winrate_val={winrate_val} maxDD_val={max_dd_val} pf={pf}")
@@ -257,7 +258,7 @@ summary = {
     "isolated_user_data_dir": str(isolated_dir.resolve()),
     "elapsed_s": elapsed,
     "baseline_integrity": baseline_integrity,
-    "pair_universe_integrity": "PASS" if pairs_requested == pairs_tested else "FAIL",
+    "pair_universe_integrity": pair_universe_integrity,
 }
 summary_path.write_text(json.dumps(summary, indent=2))
 print(f"  elapsed={elapsed:.0f}s  summary={summary_path}")

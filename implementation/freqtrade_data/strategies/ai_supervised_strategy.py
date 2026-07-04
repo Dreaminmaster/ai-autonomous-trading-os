@@ -418,6 +418,13 @@ class AISupervisedStrategy(IStrategy):
             "rejection_reasons": {},
             "first_decision_day": None,
             "last_decision_day": None,
+            # P2: per-strategy telemetry
+            "candidates_before_by_strategy": {},
+            "candidates_after_by_strategy": {},
+            "disabled_removed_by_strategy": {},
+            "raw_confidence_by_strategy": {},
+            "effective_confidence_by_strategy": {},
+            "no_substitution_forced_hold": 0,
         }
 
         for idx in valid_rows:
@@ -481,6 +488,11 @@ class AISupervisedStrategy(IStrategy):
                             "risk_notes": "safe default",
                         })
 
+                # ── P1: Capture pre-intervention best BUY candidate ──
+                original_candidates_before = [dict(c) for c in candidates]
+                original_buy = [c for c in original_candidates_before if c.get("side") == "BUY"]
+                original_best_buy = max(original_buy, key=lambda c: float(c.get("confidence", 0))) if original_buy else None
+
                 # ── Experiment: filter disabled strategies + apply weights ──
                 disabled = getattr(self, "_exp_disabled_strategies", set())
                 if disabled:
@@ -502,34 +514,50 @@ class AISupervisedStrategy(IStrategy):
                     c["strategy_weight"] = w
                     c["confidence"] = raw_conf * w  # effective confidence
 
+                # P2: per-strategy telemetry
+                before_ids = [c.get("strategy_id","?") for c in original_candidates_before]
+                for sid in set(before_ids):
+                    before_cnt = before_ids.count(sid)
+                    after_cnt = len([c for c in candidates if c.get("strategy_id") == sid])
+                    removed = before_cnt - after_cnt
+                    if before_cnt > 0:
+                        stats["candidates_before_by_strategy"][sid] = stats["candidates_before_by_strategy"].get(sid, 0) + before_cnt
+                    if after_cnt > 0:
+                        stats["candidates_after_by_strategy"][sid] = stats["candidates_after_by_strategy"].get(sid, 0) + after_cnt
+                    if removed > 0:
+                        stats["disabled_removed_by_strategy"][sid] = stats["disabled_removed_by_strategy"].get(sid, 0) + removed
+                for c in candidates:
+                    sid = c.get("strategy_id","?")
+                    if "raw_confidence" in c:
+                        if sid not in stats["raw_confidence_by_strategy"]:
+                            stats["raw_confidence_by_strategy"][sid] = []
+                        stats["raw_confidence_by_strategy"][sid].append(c["raw_confidence"])
+                    if "confidence" in c:
+                        if sid not in stats["effective_confidence_by_strategy"]:
+                            stats["effective_confidence_by_strategy"][sid] = []
+                        stats["effective_confidence_by_strategy"][sid].append(c["confidence"])
+
                 # ── P0: No-substitution ablation ────────────────────
-                # When enabled: if the top pre-intervention BUY candidate is
-                # trend_following_v1 and it loses qualification (disabled/weighted),
-                # force HOLD instead of letting Provider substitute.
                 no_sub = getattr(self, "_exp_no_substitution", False)
-                if no_sub and candidates:
-                    buy_cands = [c for c in candidates if c.get("side") == "BUY"]
-                    if buy_cands:
-                        best = max(buy_cands, key=lambda c: float(c.get("confidence", 0)))
-                        sid = best.get("strategy_id", "")
-                        eff = float(best.get("confidence", 0))
-                        raw = float(best.get("raw_confidence", eff))
-                        w = float(best.get("strategy_weight", 1.0))
-                        # Check if trend_following lost due to weight or disabled
-                        if sid == "trend_following_v1" and (w < 1.0 or raw >= 0.6 and eff < 0.6 or
-                            getattr(self, "_exp_disabled_strategies", set()) and sid in getattr(self, "_exp_disabled_strategies", set())):
-                            intent_dict = _make_hold_intent(symbol, "no_substitution: trend disqualified")
-                            stats["no_substitution_forced_hold"] = stats.get("no_substitution_forced_hold", 0) + 1
-                            # Skip Provider decision
-                            risk_dict = _builtin_risk_check(intent_dict, policy)
-                            stats["_current_decision_day"] = "no_sub"
-                            risk_state = {"mode": policy.get("mode", "paper")}
-                            candle_ts = self._resolve_candle_ts(dataframe, idx)
-                            # Jump to signal production
-                            if risk_dict.get("decision") == "APPROVED" and intent_dict.get("action") == "BUY":
-                                dataframe.at[idx, "enter_long"] = 1
-                                dataframe.at[idx, "enter_tag"] = f"atos_{intent_dict.get('selected_strategy_ids', ['unknown'])[0]}"
-                            continue
+                if no_sub and original_best_buy and original_best_buy.get("strategy_id") == "trend_following_v1":
+                    sid = original_best_buy["strategy_id"]
+                    raw_conf = float(original_best_buy.get("confidence", 0))
+                    # Check if original best lost qualification:
+                    # A: disabled
+                    trend_disabled = sid in getattr(self, "_exp_disabled_strategies", set())
+                    # B: weighted below threshold
+                    w = float(getattr(self, "_exp_strategy_weights", {}).get(sid, 1.0))
+                    eff_conf = raw_conf * w
+                    below_threshold = eff_conf < 0.6
+                    if trend_disabled or below_threshold:
+                        intent_dict = _make_hold_intent(symbol, "no_substitution: trend disqualified")
+                        stats["no_substitution_forced_hold"] = stats.get("no_substitution_forced_hold", 0) + 1
+                        # Skip Provider decision, go straight to signal
+                        risk_dict = _builtin_risk_check(intent_dict, policy)
+                        if risk_dict.get("decision") == "APPROVED" and intent_dict.get("action") == "BUY":
+                            dataframe.at[idx, "enter_long"] = 1
+                            dataframe.at[idx, "enter_tag"] = f"atos_{intent_dict.get('selected_strategy_ids', ['unknown'])[0]}"
+                        continue
 
                 # ── Step 2: AI Decision ─────────────────────────
                 mark_price = float(dataframe.at[idx, "close"])

@@ -98,7 +98,7 @@ for name, overrides in VARIANTS:
         results.append({"name": name, "status": f"CRASH:{e}", "trades": "?", "profit": "?", "winrate": "?", "dd": "?", "pf": "?", "lookahead": "?"})
 
 # ── Best 2 lookahead ─────────────────────────────────────────
-ok_results = [r for r in results if r["status"] == "OK" and r["profit"] != "?"]
+ok_results = [r for r in results if r["status"] == "OK" and r["profit"] != "?" and "baseline" not in r.get("name","")]
 try:
     ok_results.sort(key=lambda r: float(str(r["profit"]).replace("%","").replace("?","-999")), reverse=True)
 except: pass
