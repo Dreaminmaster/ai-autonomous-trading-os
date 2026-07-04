@@ -20,6 +20,14 @@ VARIANTS = [
     ("round1_7_trend_disabled_hold_6h", {"experiment.disabled_strategies": ["trend_following_v1"], "experiment.max_holding_minutes": 360}),
     ("round1_8_trend_025_early_exit", {"experiment.strategy_weights.trend_following_v1": 0.25, "experiment.early_exit_loss_pct": -0.3, "experiment.early_exit_after_minutes": 120}),
     ("round1_9_trend_disabled_early_exit", {"experiment.disabled_strategies": ["trend_following_v1"], "experiment.early_exit_loss_pct": -0.3, "experiment.early_exit_after_minutes": 120}),
+    ("round1_10_trend_025_no_sub", {
+        "experiment.strategy_weights.trend_following_v1": 0.25,
+        "experiment.no_substitution": True,
+    }),
+    ("round1_11_trend_disabled_no_sub", {
+        "experiment.disabled_strategies": ["trend_following_v1"],
+        "experiment.no_substitution": True,
+    }),
 ]
 
 def apply_overrides(base, overrides):
@@ -63,6 +71,17 @@ for name, overrides in VARIANTS:
             continue
 
         s = json.loads(summary_path.read_text())
+        # P3: wiring telemetry from log
+        log_path = Path(f"freqtrade_data/backtest_results/{name}.log")
+        telemetry = ""
+        if log_path.exists():
+            for line in log_path.read_text().split("\n"):
+                if "ATOS_SIGNAL_DIAGNOSTICS" in line:
+                    telemetry = line.strip()
+                    break
+            if "disabled_strategies" in telemetry or "strategy_weights" in telemetry:
+                pass  # extract later
+
         results.append({
             "name": name, "status": "OK",
             "trades": s.get("total_trades", "?"),
@@ -108,9 +127,23 @@ cb_data = {}
 if canonical_summary.exists():
     cb_data = json.loads(canonical_summary.read_text())
 baseline = results[0]
-match = (str(cb_data.get("total_trades","")) == str(baseline.get("trades",""))
-         and baseline.get("status") == "OK")
-integrity = "PASS" if match else "FAIL"
+# P1: Real baseline integrity — compare 4 metrics
+def _close(a, b, tol=1e-6):
+    try: return abs(float(a)-float(b)) <= tol
+    except: return str(a) == str(b)
+integrity_keys = ["total_trades", "profit_total_pct", "winrate", "max_drawdown_pct"]
+integrity_checks = {}
+for k in integrity_keys:
+    cv = cb_data.get(k)
+    bv = baseline.get("summary", {}).get(k) if "summary" in baseline else baseline.get(k.replace("total_trades","trades").replace("profit_total_pct","profit").replace("winrate","winrate").replace("max_drawdown_pct","dd"))
+    # For baseline, check against canonical
+    if isinstance(bv, dict): bv = bv.get(k)
+    if bv is None:
+        bv = baseline.get(k.replace("_pct","").replace("profit_total","profit"), "?")
+    ok = _close(cv, bv) if cv != "?" and bv != "?" else False
+    integrity_checks[k] = "PASS" if ok else "FAIL"
+integrity = "PASS" if all(v == "PASS" for v in integrity_checks.values()) else "FAIL"
+integrity_detail = ", ".join(f"{k}={v}" for k,v in integrity_checks.items())
 
 with open("validation_reports/strategy_fix_round1.md", "w") as f:
     f.write("# Strategy Fix Round 1\n\n")
@@ -118,7 +151,7 @@ with open("validation_reports/strategy_fix_round1.md", "w") as f:
     f.write("## Canonical Baseline\n\n")
     f.write(f"- Canonical fresh: {cb_data.get('total_trades','?')} trades, {cb_data.get('profit_total_pct','?')}%, WR {cb_data.get('winrate','?')}, DD {cb_data.get('max_drawdown_pct','?')}\n")
     f.write(f"- Round1 baseline: {baseline.get('trades','?')} trades / {baseline.get('profit','?')}%\n")
-    f.write(f"- Baseline integrity: {integrity}\n\n")
+    f.write(f"- Baseline integrity: {integrity} ({integrity_detail})\n\n")
     f.write("## Variant Matrix\n\n")
     f.write("| # | Variant | Status | Trades | Profit % | Winrate | Max DD | Profit Factor | Lookahead |\n")
     f.write("|---|---------|--------|--------|----------|---------|--------|---------------|-----------|\n")

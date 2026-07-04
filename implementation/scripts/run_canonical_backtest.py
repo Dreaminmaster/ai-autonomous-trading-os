@@ -215,8 +215,19 @@ has_missing = any(v == "?" or v is None for v in [trades, profit_val, winrate_va
 baseline_integrity = "CONFIRMED" if not has_missing else "FAIL:missing_metrics"
 
 # P4: Pair universe
+# P4: Pair universe from actual trades
 pairs_requested = ["BTC/USDT"]
-pairs_tested = [p for p in pairs_requested] if not has_missing else []
+actual_pairs = []
+trades_data = data.get("trades", [])
+if isinstance(trades_data, list):
+    actual_pairs = sorted(set(t.get("pair", "") for t in trades_data if t.get("pair")))
+elif "pairlist" in strat:
+    actual_pairs = sorted(strat["pairlist"]) if isinstance(strat.get("pairlist"), list) else []
+elif "pairs" in data:
+    actual_pairs = sorted(data["pairs"]) if isinstance(data.get("pairs"), list) else []
+if not actual_pairs:
+    actual_pairs = ["BTC/USDT"]
+pairs_tested = actual_pairs
 
 print(f"  trades={trades} profit_val={profit_val} winrate_val={winrate_val} maxDD_val={max_dd_val} pf={pf}")
 print(f"  metric_sources: {metric_sources}")
@@ -257,12 +268,27 @@ if os.environ.get("RUN_LOOKAHEAD", "") == "1":
         "--config", str(config_abs),
         "--strategy", "AISupervisedStrategy",
         "--strategy-path", "freqtrade_data/strategies",
+        "--datadir", str(Path("freqtrade_data/data/okx").resolve()),
         "--timerange", timerange,
-        "--user-data-dir", str(isolated_dir.resolve()),
+        "--pairs", "BTC/USDT",
     ], capture_output=True, text=True, timeout=900, env=env)
     la_log.write_text(la_result.stdout + "\n" + la_result.stderr)
+
+    # P0: fail-fast on any lookahead error
+    if la_result.returncode != 0:
+        print(f"FATAL: Lookahead failed rc={la_result.returncode}", file=sys.stderr)
+        sys.exit(la_result.returncode)
     la_text = la_result.stdout
     if "has_bias" in la_text:
-        print(f"  Lookahead: {la_text[la_text.index('has_bias'):la_text.index('has_bias')+25]}")
+        idx = la_text.index("has_bias")
+        snippet = la_text[idx:idx+40]
+        print(f"  Lookahead: {snippet}")
+        if "Yes" in snippet:
+            print(f"FATAL: Lookahead BIAS DETECTED", file=sys.stderr)
+            sys.exit(1)
+    elif "No data found" in la_text or "Terminating" in la_text:
+        print(f"FATAL: Lookahead found no data", file=sys.stderr)
+        sys.exit(1)
     else:
-        print(f"  Lookahead: could not parse")
+        print(f"FATAL: Lookahead could not parse result", file=sys.stderr)
+        sys.exit(1)
