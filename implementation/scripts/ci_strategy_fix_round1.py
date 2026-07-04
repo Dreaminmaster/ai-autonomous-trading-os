@@ -116,8 +116,10 @@ for b in best_two:
             "python3", "scripts/run_canonical_backtest.py",
             f"{name}_la", f"{name}_la", str(policy_p)
         ], capture_output=True, text=True, timeout=Timeout, env=env)
-        la_log = Path(f"freqtrade_data/backtest_results/{name}_la_lookahead.log")
-        la_text = la_result.stdout
+        la_text = result.stdout + "\n" + result.stderr
+        if result.returncode != 0:
+            b["lookahead"] = f"ERROR(rc={result.returncode})"
+            continue
         from atos.lookahead_parser import parse_lookahead_result
         parsed = parse_lookahead_result(la_text)
         b["lookahead"] = parsed["status"]

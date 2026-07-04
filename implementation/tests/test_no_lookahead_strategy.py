@@ -124,6 +124,8 @@ def test_fallback_window_is_position_based():
 
 def test_resolve_candle_ts_reads_only_current_row():
     """_resolve_candle_ts must only access the current row, not the future."""
+    import pytest
+    pandas = pytest.importorskip("pandas")
     import pandas as pd
     # Use a small mock — import inline to avoid freqtrade dependency
     df = pd.DataFrame({

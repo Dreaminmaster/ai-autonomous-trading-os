@@ -288,9 +288,14 @@ if os.environ.get("RUN_LOOKAHEAD", "") == "1":
         "--timerange", timerange,
         "--pairs", "BTC/USDT",
     ], capture_output=True, text=True, timeout=900, env=env)
-    la_log.write_text(la_result.stdout + "\n" + la_result.stderr)
+    la_text = la_result.stdout + "\n" + la_result.stderr
+    la_log.write_text(la_text)
 
-    la_text = la_result.stdout
+    # P1: returncode fail-fast BEFORE parser
+    if la_result.returncode != 0:
+        print(f"FATAL: Lookahead process failed rc={la_result.returncode}", file=sys.stderr)
+        sys.exit(la_result.returncode)
+
     from atos.lookahead_parser import parse_lookahead_result
     parsed = parse_lookahead_result(la_text)
     if parsed["status"] == "PASS":
