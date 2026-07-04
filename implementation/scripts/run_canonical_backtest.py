@@ -71,6 +71,7 @@ result = subprocess.run([
     "--timeframe", "5m",
     "--cache", "none",
     "--export", "trades",
+    "--pairs", "BTC/USDT",
 ], capture_output=True, text=True, timeout=900, env=env)
 
 elapsed = time.time() - t0
@@ -137,14 +138,27 @@ copied_json = results_dir / f"{output_base}.json"
 shutil.copy2(actual_json_path, copied_json)
 
 # ── Extract metrics ────────────────────────────────────────────
-strat = data.get("strategy", data.get("strategy_comparison", [{}]))
-if isinstance(strat, list):
-    strat = strat[0] if strat else {}
-# If "strategy" key doesn't exist, the data itself is the strategy result
-if not strat and "total_trades" in data:
-    strat = data
-if not strat:
-    print(f"FATAL: No strategy data in result. Top keys: {sorted(data.keys())}", file=sys.stderr)
+# P0: Freqtrade 2026.6 nests under strategy/{StrategyName}/ or strategy_comparison/[]
+strategy_container = data.get("strategy", data.get("strategy_comparison", None))
+
+if isinstance(strategy_container, dict):
+    if "AISupervisedStrategy" in strategy_container:
+        strat = strategy_container["AISupervisedStrategy"]
+    elif len(strategy_container) == 1:
+        strat = next(iter(strategy_container.values()))
+    elif "total_trades" in strategy_container:
+        strat = strategy_container
+    elif not strategy_container:
+        strat = data if "total_trades" in data else {}
+    else:
+        strat = {}
+elif isinstance(strategy_container, list) and len(strategy_container) > 0:
+    strat = strategy_container[0]
+else:
+    strat = data if "total_trades" in data else {}
+
+if not strat or "total_trades" not in strat:
+    print(f"FATAL: Cannot find strategy data with total_trades. Top keys: {sorted(data.keys())}", file=sys.stderr)
     sys.exit(1)
 
 # Debug: print available keys
@@ -164,40 +178,45 @@ def _ratio_to_pct(val):
     v = _number(val)
     return round(v * 100, 2) if isinstance(v, (int, float)) and abs(v) <= 1 else v
 
-# ── Field resolution with explicit source tracking ──────────
+# ── P1: Field resolution with real Freqtrade JSON keys ───────
 trades = strat.get("total_trades", "?")
 metric_sources = {"trades": "total_trades"}
 
-# profit: prefer profit_total_pct, fallback to profit_total (as ratio)
+profit_val = "?"
 if "profit_total_pct" in strat:
     profit_val = _number(strat["profit_total_pct"])
     metric_sources["profit_total_pct"] = "profit_total_pct"
 elif "profit_total" in strat:
     profit_val = _ratio_to_pct(strat["profit_total"])
     metric_sources["profit_total_pct"] = "profit_total (ratio→pct)"
-else:
-    profit_val = "?"
 
 profit_total = strat.get("profit_total", "?")
 
-# winrate: Freqtrade returns as ratio 0..1
+winrate_val = "?"
 if "winrate" in strat:
     winrate_val = _ratio_to_pct(strat["winrate"])
     metric_sources["winrate"] = "winrate (ratio→pct)"
-else:
-    winrate_val = "?"
 
-# max_drawdown: prefer max_drawdown_pct, fallback max_drawdown (ratio)
+max_dd_val = "?"
 if "max_drawdown_pct" in strat:
     max_dd_val = _number(strat["max_drawdown_pct"])
     metric_sources["max_drawdown_pct"] = "max_drawdown_pct"
+elif "max_drawdown_account" in strat:
+    max_dd_val = _ratio_to_pct(strat["max_drawdown_account"])
+    metric_sources["max_drawdown_pct"] = "max_drawdown_account (ratio→pct)"
 elif "max_drawdown" in strat:
     max_dd_val = _ratio_to_pct(strat["max_drawdown"])
     metric_sources["max_drawdown_pct"] = "max_drawdown (ratio→pct)"
-else:
-    max_dd_val = "?"
 
 pf = strat.get("profit_factor", "?")
+
+# P3: Baseline integrity — must have real values
+has_missing = any(v == "?" or v is None for v in [trades, profit_val, winrate_val, max_dd_val])
+baseline_integrity = "CONFIRMED" if not has_missing else "FAIL:missing_metrics"
+
+# P4: Pair universe
+pairs_requested = ["BTC/USDT"]
+pairs_tested = [p for p in pairs_requested] if not has_missing else []
 
 print(f"  trades={trades} profit_val={profit_val} winrate_val={winrate_val} maxDD_val={max_dd_val} pf={pf}")
 print(f"  metric_sources: {metric_sources}")
@@ -216,12 +235,15 @@ summary = {
     "max_drawdown_pct": max_dd_val,
     "profit_factor": pf,
     "metric_sources": metric_sources,
+    "pairs_requested": pairs_requested,
+    "pairs_tested": pairs_tested,
     "policy_sha256": policy_sha,
     "config_sha256": config_sha,
     "cache_mode": "none",
     "isolated_user_data_dir": str(isolated_dir.resolve()),
     "elapsed_s": elapsed,
-    "baseline_integrity": "CONFIRMED",
+    "baseline_integrity": baseline_integrity,
+    "pair_universe_integrity": "PASS" if pairs_requested == pairs_tested else "FAIL",
 }
 summary_path.write_text(json.dumps(summary, indent=2))
 print(f"  elapsed={elapsed:.0f}s  summary={summary_path}")

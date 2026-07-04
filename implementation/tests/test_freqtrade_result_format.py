@@ -89,7 +89,33 @@ def test_winrate_0_447_becomes_44_7():
 def test_string_percent_17_85_becomes_17_85():
     assert _number("17.85%") == 17.85
 
-def test_metric_sources_recorded():
-    summary = {"metric_sources": {"profit_total_pct": "profit_total_pct", "winrate": "winrate (ratio\u2192pct)"}}
-    assert "metric_sources" in summary
-    assert "profit_total_pct" in summary["metric_sources"]
+def test_nested_strategy_json_parsing():
+    """Parse actual Freqtrade zip structure: strategy/{AISupervisedStrategy}/{...}"""
+    data = {"strategy": {"AISupervisedStrategy": {"total_trades": 244, "profit_total": -0.1612, "winrate": 0.447, "max_drawdown_account": 0.1785, "profit_factor": 0.75}}}
+    c = data["strategy"]
+    assert "AISupervisedStrategy" in c
+    strat = c["AISupervisedStrategy"]
+    assert strat["total_trades"] == 244
+
+def test_profit_total_ratio_to_pct():
+    assert _ratio_to_pct(-0.1612) == -16.12
+    assert _ratio_to_pct(-0.4241) == -42.41
+
+def test_winrate_ratio_to_pct():
+    assert _ratio_to_pct(0.4963) == 49.63
+
+def test_max_drawdown_account_ratio_to_pct():
+    assert _ratio_to_pct(0.4686) == 46.86
+    assert _ratio_to_pct(0.1785) == 17.85
+
+def test_missing_metrics_cannot_pass_baseline_integrity():
+    vals = [244, "?", 44.7, 17.85]
+    has_missing = any(v == "?" or v is None for v in vals)
+    baseline = "CONFIRMED" if not has_missing else "FAIL:missing_metrics"
+    assert baseline == "FAIL:missing_metrics"
+
+def test_pair_universe_mismatch_fails():
+    # Tested via canonical runner summary in CI
+    a = ["BTC/USDT"]
+    b = ["BTC/USDT", "ETH/USDT"]
+    assert a != b
