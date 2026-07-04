@@ -131,7 +131,7 @@ baseline = results[0]
 def _close(a, b, tol=1e-6):
     try: return abs(float(a)-float(b)) <= tol
     except: return str(a) == str(b)
-integrity_keys = ["total_trades", "profit_total_pct", "winrate", "max_drawdown_pct"]
+integrity_keys = ["total_trades", "profit_total_pct", "winrate", "max_drawdown_pct", "profit_factor"]
 integrity_checks = {}
 for k in integrity_keys:
     cv = cb_data.get(k)

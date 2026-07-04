@@ -284,6 +284,7 @@ class AISupervisedStrategy(IStrategy):
         self._exp_take_profit_pct = exp.get("take_profit_pct", 2.0)
         self._exp_early_exit_loss_pct = exp.get("early_exit_loss_pct", None)
         self._exp_early_exit_after_minutes = exp.get("early_exit_after_minutes", None)
+        self._exp_no_substitution = bool(exp.get("no_substitution", False))
 
         # FRESH RiskEngine every populate_entry_trend call
         if ATOS_AVAILABLE:
@@ -501,6 +502,35 @@ class AISupervisedStrategy(IStrategy):
                     c["strategy_weight"] = w
                     c["confidence"] = raw_conf * w  # effective confidence
 
+                # ── P0: No-substitution ablation ────────────────────
+                # When enabled: if the top pre-intervention BUY candidate is
+                # trend_following_v1 and it loses qualification (disabled/weighted),
+                # force HOLD instead of letting Provider substitute.
+                no_sub = getattr(self, "_exp_no_substitution", False)
+                if no_sub and candidates:
+                    buy_cands = [c for c in candidates if c.get("side") == "BUY"]
+                    if buy_cands:
+                        best = max(buy_cands, key=lambda c: float(c.get("confidence", 0)))
+                        sid = best.get("strategy_id", "")
+                        eff = float(best.get("confidence", 0))
+                        raw = float(best.get("raw_confidence", eff))
+                        w = float(best.get("strategy_weight", 1.0))
+                        # Check if trend_following lost due to weight or disabled
+                        if sid == "trend_following_v1" and (w < 1.0 or raw >= 0.6 and eff < 0.6 or
+                            getattr(self, "_exp_disabled_strategies", set()) and sid in getattr(self, "_exp_disabled_strategies", set())):
+                            intent_dict = _make_hold_intent(symbol, "no_substitution: trend disqualified")
+                            stats["no_substitution_forced_hold"] = stats.get("no_substitution_forced_hold", 0) + 1
+                            # Skip Provider decision
+                            risk_dict = _builtin_risk_check(intent_dict, policy)
+                            stats["_current_decision_day"] = "no_sub"
+                            risk_state = {"mode": policy.get("mode", "paper")}
+                            candle_ts = self._resolve_candle_ts(dataframe, idx)
+                            # Jump to signal production
+                            if risk_dict.get("decision") == "APPROVED" and intent_dict.get("action") == "BUY":
+                                dataframe.at[idx, "enter_long"] = 1
+                                dataframe.at[idx, "enter_tag"] = f"atos_{intent_dict.get('selected_strategy_ids', ['unknown'])[0]}"
+                            continue
+
                 # ── Step 2: AI Decision ─────────────────────────
                 mark_price = float(dataframe.at[idx, "close"])
                 market_state = {
@@ -632,6 +662,14 @@ class AISupervisedStrategy(IStrategy):
                 logger.error(f"ATOS entry evaluation failed at row {idx}: {e}", exc_info=True)
                 dataframe.at[idx, "enter_long"] = 0
                 dataframe.at[idx, "enter_tag"] = "atos_error"
+
+        # P1: per-variant telemetry JSON
+        import os as _os, json as _json
+        telemetry_path = _os.environ.get("ATOS_TELEMETRY_PATH", "")
+        if telemetry_path:
+            from pathlib import Path as _Path
+            _Path(telemetry_path).write_text(_json.dumps(stats, indent=2, default=str))
+            logger.info(f"Telemetry written to {telemetry_path}")
 
         # ── Diagnostic summary (P5: full ATOS_SIGNAL_DIAGNOSTICS) ──────
         risk_stats = self._risk_engine.stats() if ATOS_AVAILABLE and self._risk_engine else {}

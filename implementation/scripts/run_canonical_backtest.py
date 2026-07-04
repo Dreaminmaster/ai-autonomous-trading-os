@@ -43,6 +43,7 @@ if not policy_abs.exists():
     print(f"FATAL: policy file not found: {policy_abs}", file=sys.stderr)
     sys.exit(1)
 env["ATOS_POLICY"] = str(policy_abs)
+env["ATOS_TELEMETRY_PATH"] = str(results_dir / f"{output_base}_telemetry.json")
 try:
     policy_sha = hashlib.sha256(policy_abs.read_bytes()).hexdigest()[:12]
 except Exception:
@@ -226,8 +227,10 @@ elif "pairlist" in strat:
 elif "pairs" in data:
     actual_pairs = sorted(data["pairs"]) if isinstance(data.get("pairs"), list) else []
 if not actual_pairs:
-    actual_pairs = ["BTC/USDT"]
-pairs_tested = actual_pairs
+    # No fallback — must come from real data
+    pair_universe_integrity = "FAIL:no_actual_pairs_evidence"
+else:
+    pair_universe_integrity = "PASS" if pairs_requested == actual_pairs else "FAIL"
 
 print(f"  trades={trades} profit_val={profit_val} winrate_val={winrate_val} maxDD_val={max_dd_val} pf={pf}")
 print(f"  metric_sources: {metric_sources}")
