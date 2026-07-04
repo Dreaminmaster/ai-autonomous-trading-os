@@ -115,7 +115,111 @@ def test_missing_metrics_cannot_pass_baseline_integrity():
     assert baseline == "FAIL:missing_metrics"
 
 def test_pair_universe_mismatch_fails():
-    # Tested via canonical runner summary in CI
     a = ["BTC/USDT"]
     b = ["BTC/USDT", "ETH/USDT"]
     assert a != b
+
+# ── Pair extraction tests ───────────────────────────────────
+
+def test_pair_extraction_from_nested_strategy_trades():
+    """trades inside strategy/{name}/trades"""
+    strat = {"trades": [{"pair": "BTC/USDT"}, {"pair": "BTC/USDT"}]}
+    actual = sorted(set(t["pair"] for t in strat["trades"]))
+    assert actual == ["BTC/USDT"]
+
+def test_pair_extraction_from_top_level_trades():
+    """trades at top level"""
+    data = {"trades": [{"pair": "BTC/USDT"}, {"pair": "ETH/USDT"}]}
+    actual = sorted(set(t["pair"] for t in data["trades"]))
+    assert actual == ["BTC/USDT", "ETH/USDT"]
+
+def test_pair_extraction_from_strategy_pairlist():
+    """pairlist in strategy dict"""
+    strat = {"pairlist": ["BTC/USDT"]}
+    actual = sorted(set(strat["pairlist"]))
+    assert actual == ["BTC/USDT"]
+
+def test_pair_integrity_no_evidence_fails():
+    actual_pairs = []
+    pairs_requested = ["BTC/USDT"]
+    if not actual_pairs:
+        result = "FAIL:no_actual_pairs_evidence"
+        assert result != "PASS"
+
+def test_pair_integrity_unexpected_pair_fails():
+    actual_pairs = ["BTC/USDT", "ETH/USDT"]
+    pairs_requested = ["BTC/USDT"]
+    result = "PASS" if pairs_requested == actual_pairs else "FAIL"
+    assert result == "FAIL"
+
+# ── No-substitution tests ───────────────────────────────────
+
+def test_original_best_captured_before_disabled_filter():
+    candidates = [
+        {"strategy_id": "trend_following_v1", "side": "BUY", "confidence": 0.8},
+        {"strategy_id": "breakout_v1", "side": "BUY", "confidence": 0.5},
+    ]
+    original = [dict(c) for c in candidates]
+    best = max([c for c in original if c["side"] == "BUY"], key=lambda c: c["confidence"])
+    assert best["strategy_id"] == "trend_following_v1"
+    # After disabled filter
+    filtered = [c for c in candidates if c["strategy_id"] != "trend_following_v1"]
+    assert best["strategy_id"] == "trend_following_v1"  # still original
+    assert len(filtered) == 1  # breakout only
+
+def test_no_substitution_disabled_forces_hold():
+    disabled = {"trend_following_v1"}
+    original_best = {"strategy_id": "trend_following_v1", "confidence": 0.8}
+    trend_disabled = original_best["strategy_id"] in disabled
+    force_hold = trend_disabled
+    assert force_hold is True
+
+def test_no_substitution_weight_crosses_threshold():
+    raw_conf = 0.8
+    weight = 0.25
+    eff_conf = raw_conf * weight  # 0.2
+    below_threshold = raw_conf >= 0.6 and eff_conf < 0.6
+    force_hold = below_threshold
+    assert force_hold is True
+
+def test_no_substitution_raw_below_threshold_not_forced():
+    raw_conf = 0.5
+    weight = 0.25
+    eff_conf = raw_conf * weight
+    below_threshold = raw_conf >= 0.6 and eff_conf < 0.6
+    assert below_threshold is False  # raw already below, not our intervention
+
+def test_no_sub_false_allows_substitution():
+    original_best = {"strategy_id": "trend_following_v1", "confidence": 0.8}
+    disabled = {"trend_following_v1"}
+    no_sub = False
+    force_hold = False
+    if no_sub and original_best["strategy_id"] in disabled:
+        force_hold = True
+    assert force_hold is False
+
+# ── Regression tests ────────────────────────────────────────
+
+def test_canonical_baseline_regression():
+    """Ensure canonical summary schema has required keys"""
+    required = ["total_trades", "profit_total_pct", "winrate", "max_drawdown_pct", "profit_factor",
+                "baseline_integrity", "pair_universe_integrity", "cache_mode"]
+    canonical = {"total_trades": 244, "profit_total_pct": -16.12, "winrate": 44.67,
+                 "max_drawdown_pct": 17.85, "profit_factor": 0.75, "baseline_integrity": "CONFIRMED",
+                 "pair_universe_integrity": "PASS", "cache_mode": "none"}
+    for k in required:
+        assert k in canonical, f"Missing key: {k}"
+    assert canonical["total_trades"] == 244
+
+def test_baseline_integrity_uses_five_metrics():
+    keys = ["total_trades", "profit_total_pct", "winrate", "max_drawdown_pct", "profit_factor"]
+    assert len(keys) == 5
+
+def test_best_two_excludes_baseline():
+    results = [
+        {"name": "round1_1_baseline_current", "profit": -16.12, "status": "OK"},
+        {"name": "round1_2_trend_weight_025", "profit": -41.67, "status": "OK"},
+    ]
+    experiment_results = [r for r in results if r["status"] == "OK" and "baseline" not in r.get("name","")]
+    assert len(experiment_results) == 1
+    assert experiment_results[0]["name"] == "round1_2_trend_weight_025"

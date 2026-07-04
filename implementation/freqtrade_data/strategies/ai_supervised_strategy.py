@@ -548,7 +548,7 @@ class AISupervisedStrategy(IStrategy):
                     # B: weighted below threshold
                     w = float(getattr(self, "_exp_strategy_weights", {}).get(sid, 1.0))
                     eff_conf = raw_conf * w
-                    below_threshold = eff_conf < 0.6
+                    below_threshold = raw_conf >= 0.6 and eff_conf < 0.6
                     if trend_disabled or below_threshold:
                         intent_dict = _make_hold_intent(symbol, "no_substitution: trend disqualified")
                         stats["no_substitution_forced_hold"] = stats.get("no_substitution_forced_hold", 0) + 1

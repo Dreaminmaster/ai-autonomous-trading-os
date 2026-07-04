@@ -216,19 +216,31 @@ has_missing = any(v == "?" or v is None for v in [trades, profit_val, winrate_va
 baseline_integrity = "CONFIRMED" if not has_missing else "FAIL:missing_metrics"
 
 # P4: Pair universe
-# P4: Pair universe from actual trades
 pairs_requested = ["BTC/USDT"]
 actual_pairs = []
-trades_data = data.get("trades", [])
-if isinstance(trades_data, list):
-    actual_pairs = sorted(set(t.get("pair", "") for t in trades_data if t.get("pair")))
-elif "pairlist" in strat:
-    actual_pairs = sorted(strat["pairlist"]) if isinstance(strat.get("pairlist"), list) else []
-elif "pairs" in data:
-    actual_pairs = sorted(data["pairs"]) if isinstance(data.get("pairs"), list) else []
+
+# 1) Try trades inside strategy
+trades_data = strat.get("trades")
+if not isinstance(trades_data, list) or not trades_data:
+    trades_data = data.get("trades")
+if isinstance(trades_data, list) and trades_data:
+    actual_pairs = sorted({t.get("pair") for t in trades_data if isinstance(t, dict) and t.get("pair")})
+
+# 2) Try pairlist in strategy
 if not actual_pairs:
-    pair_universe_integrity = "FAIL:no_actual_pairs_evidence"
+    pl = strat.get("pairlist")
+    if isinstance(pl, list):
+        actual_pairs = sorted(set(pl))
+
+# 3) Try top-level pairs
+if not actual_pairs:
+    p2 = data.get("pairs")
+    if isinstance(p2, list):
+        actual_pairs = sorted(set(p2))
+
+if not actual_pairs:
     pairs_tested = []
+    pair_universe_integrity = "FAIL:no_actual_pairs_evidence"
 else:
     pairs_tested = actual_pairs
     pair_universe_integrity = "PASS" if pairs_requested == actual_pairs else "FAIL"
