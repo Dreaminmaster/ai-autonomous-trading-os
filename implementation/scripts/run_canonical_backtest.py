@@ -140,8 +140,11 @@ shutil.copy2(actual_json_path, copied_json)
 strat = data.get("strategy", data.get("strategy_comparison", [{}]))
 if isinstance(strat, list):
     strat = strat[0] if strat else {}
+# If "strategy" key doesn't exist, the data itself is the strategy result
+if not strat and "total_trades" in data:
+    strat = data
 if not strat:
-    print(f"FATAL: No strategy data in result", file=sys.stderr)
+    print(f"FATAL: No strategy data in result. Top keys: {sorted(data.keys())}", file=sys.stderr)
     sys.exit(1)
 
 # Debug: print available keys
