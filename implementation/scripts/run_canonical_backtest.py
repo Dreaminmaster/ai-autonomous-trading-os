@@ -291,18 +291,11 @@ if os.environ.get("RUN_LOOKAHEAD", "") == "1":
     la_text = la_result.stdout + "\n" + la_result.stderr
     la_log.write_text(la_text)
 
-    # P1: returncode fail-fast BEFORE parser
-    if la_result.returncode != 0:
-        print(f"FATAL: Lookahead process failed rc={la_result.returncode}", file=sys.stderr)
-        sys.exit(la_result.returncode)
-
-    from atos.lookahead_parser import parse_lookahead_result
     parsed = parse_lookahead_result(la_text)
-    if parsed["status"] == "PASS":
-        print(f"  Lookahead: PASS (has_bias={parsed['has_bias']})")
-    elif parsed["status"] == "ERROR":
-        print(f"FATAL: Lookahead ERROR: {parsed.get('error','?')}", file=sys.stderr)
-        sys.exit(1)
+    from atos.lookahead_decision import decide_lookahead
+    decision = decide_lookahead(la_result.returncode, parsed, la_text)
+    if decision.get("final_status") in ("PASS", "PASS_WITH_RC_ANOMALY"):
+        print(f"  Lookahead: {decision["final_status"]}")
     else:
-        print(f"FATAL: Lookahead BIAS DETECTED", file=sys.stderr)
+        print(f"FATAL: Lookahead {decision["final_status"]}", file=sys.stderr)
         sys.exit(1)

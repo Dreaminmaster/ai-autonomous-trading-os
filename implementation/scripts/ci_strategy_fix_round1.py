@@ -127,23 +127,14 @@ for b in best_two:
         la_text = result.stdout + "\n" + result.stderr
         outer_rc = result.returncode
         from atos.lookahead_parser import parse_lookahead_result
+        from atos.lookahead_decision import decide_lookahead
         parsed = parse_lookahead_result(la_text)
-        final = parsed["status"]
-        if parsed["status"] == "PASS":
-            final = "PASS"
-        elif outer_rc != 0 and parsed["status"] == "ERROR":
-            final = "ERROR(rc={})".format(outer_rc)
-        b["lookahead"] = final
-        sp = Path("freqtrade_data/backtest_results/{}_la_lookahead_status.json".format(name))
-        sp.write_text(json.dumps({
-            "outer_returncode": outer_rc,
-            "parser_status": parsed["status"],
-            "has_bias": parsed.get("has_bias"),
-            "evidence_source": parsed.get("evidence_source", "unknown"),
-            "evidence_log": str(Path("freqtrade_data/backtest_results/{}_la_lookahead.log".format(name)).resolve()),
-            "final_status": final,
-        }, indent=2, default=str))
+        decision = decide_lookahead(outer_rc, parsed, la_text)
+        b["lookahead"] = decision["final_status"]
+        status_path = Path("freqtrade_data/backtest_results/{}_la_lookahead_status.json".format(name))
+        status_path.write_text(json.dumps(decision, indent=2, default=str))
     except Exception as e:
+        b["lookahead"] = "CRASH:{}".format(e)
         b["lookahead"] = "CRASH:{}".format(e)
         b["lookahead"] = f"CRASH:{e}"
 
