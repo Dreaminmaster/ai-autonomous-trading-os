@@ -33,3 +33,4 @@ ledger/private/
 account_snapshots/
 private_trade_history/
 okx_keys*/
+backtest_results/
