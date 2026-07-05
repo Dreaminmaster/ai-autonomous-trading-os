@@ -62,7 +62,9 @@ for name, overrides in VARIANTS:
             "python3", "scripts/run_canonical_backtest.py",
             name, name, str(policy_path.resolve())
         ], capture_output=True, text=True, timeout=Timeout)
-        print(result.stdout[-200:] if result.stdout else "(no stdout)", flush=True)
+        print((result.stdout or "(no stdout)")[-200:], flush=True)
+        if result.stderr:
+            print(f"STDERR: {(result.stderr)[:200]}", flush=True)
 
         summary_path = Path(f"freqtrade_data/backtest_results/{name}_summary.json")
         if not summary_path.exists():
@@ -95,6 +97,9 @@ for name, overrides in VARIANTS:
     except subprocess.TimeoutExpired:
         results.append({"name": name, "status": "TIMEOUT", "trades": "?", "profit": "?", "winrate": "?", "dd": "?", "pf": "?", "lookahead": "?"})
     except Exception as e:
+        import traceback
+        print(f"CRASH variant {name}: {e}")
+        traceback.print_exc()
         results.append({"name": name, "status": f"CRASH:{e}", "trades": "?", "profit": "?", "winrate": "?", "dd": "?", "pf": "?", "lookahead": "?"})
 
 # ── Best 2 lookahead ─────────────────────────────────────────
