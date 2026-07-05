@@ -127,20 +127,69 @@ def test_resolve_candle_ts_reads_only_current_row():
     import pytest
     pandas = pytest.importorskip("pandas")
     import pandas as pd
-    # Use a small mock — import inline to avoid freqtrade dependency
     df = pd.DataFrame({
         "date": pd.date_range("2025-01-01", periods=100, freq="5min"),
         "close": [100.0 + i * 0.1 for i in range(100)],
     })
     idx = df.index[50]
-
-    # Convert to epoch from a mock atos time_context
     from atos.time_context import _to_epoch
     ts = _to_epoch(df.at[idx, "date"])
     assert ts > 0
-    # Verify ts corresponds to the right row
     import datetime
     dt = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
     assert dt.year == 2025
     assert dt.month == 1
     assert dt.day == 1
+
+
+def test_resolve_candle_ts_reads_only_current_row_production_path():
+    """Production-path: real AISupervisedStrategy._resolve_candle_ts via GuardedAt.
+
+    Uses importorskip('freqtrade') — this skips in Simple CI (no Freqtrade)
+    but PASSES in Freqtrade Validation job (has Freqtrade).
+
+    Must call real production method (not _to_epoch).
+    Must detect future-row access as failure.
+    """
+    import pytest
+    pytest.importorskip("freqtrade")
+    import pandas as pd
+    from freqtrade_data.strategies.ai_supervised_strategy import AISupervisedStrategy
+
+    strategy = object.__new__(AISupervisedStrategy)
+
+    class GuardedFrame:
+        def __init__(self, df, allowed_idx):
+            self._df = df
+            self._allowed_idx = allowed_idx
+        @property
+        def columns(self):
+            return self._df.columns
+        def __getattr__(self, name):
+            if name in ('at','iloc','loc'):
+                def _guard(*args):
+                    idx_arg = args[0] if args else None
+                    if isinstance(idx_arg, int) and idx_arg > self._allowed_idx:
+                        raise AssertionError(f"FUTURE: row {idx_arg} > allowed {self._allowed_idx}")
+                    return getattr(self._df, name).__getitem__(args[0]) if args else getattr(self._df, name)
+                return _guard
+            return getattr(self._df, name)
+        @property
+        def index(self):
+            class GI:
+                def get_loc(this, key):
+                    return self._df.index.get_loc(key)
+            return GI()
+
+    idx = 50
+    df = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=100, freq="5min"), "close": range(100, 200)})
+    frame = GuardedFrame(df, idx)
+
+    ts = strategy._resolve_candle_ts(frame, idx)
+    assert ts > 0
+
+    try:
+        strategy._resolve_candle_ts(frame, idx + 1)
+        assert False, "Should have raised for future row access"
+    except AssertionError:
+        pass

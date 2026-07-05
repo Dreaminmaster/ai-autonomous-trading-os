@@ -77,6 +77,10 @@ jobs:
           cd implementation && mkdir -p freqtrade_data/data/okx
           freqtrade download-data --config freqtrade_data/config.dryrun.json --datadir freqtrade_data/data/okx --exchange okx --pairs BTC/USDT --timeframes 5m --timerange 20250101-20250701 2>&1 | tee download_data.log
           ls freqtrade_data/data/okx/ || echo "(no data)"
+      - name: Production-path safety test (required)
+        run: |
+          cd implementation
+          python -m pytest tests/test_no_lookahead_strategy.py::test_resolve_candle_ts_reads_only_current_row_production_path -v --no-header -s
       - name: Canonical fresh baseline
         run: |
           cd implementation
@@ -170,6 +174,7 @@ jobs:
             implementation/freqtrade_data/backtest_results/round1_*.log
             implementation/freqtrade_data/backtest_results/round1_*_summary.json
             implementation/freqtrade_data/backtest_results/exp_*_policy.json
+            implementation/freqtrade_data/backtest_results/*lookahead_status.json
             implementation/freqtrade_data/backtest_results/*.json
           retention-days: 14
           if-no-files-found: ignore

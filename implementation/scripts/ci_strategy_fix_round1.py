@@ -125,11 +125,17 @@ for b in best_two:
             f"{name}_la", f"{name}_la", str(policy_p)
         ], capture_output=True, text=True, timeout=Timeout, env=env)
         la_text = result.stdout + "\n" + result.stderr
-        if result.returncode != 0:
-            b["lookahead"] = f"ERROR(rc={result.returncode})"
-            continue
         from atos.lookahead_parser import parse_lookahead_result
         parsed = parse_lookahead_result(la_text)
+        # Write structured status
+        status_path = Path(f"freqtrade_data/backtest_results/{name}_la_lookahead_status.json")
+        status_path.write_text(json.dumps({
+            "outer_returncode": result.returncode,
+            "parser_status": parsed["status"],
+            "has_bias": parsed["has_bias"],
+            "evidence_log": str(Path(f"freqtrade_data/backtest_results/{name}_la_lookahead.log").resolve()),
+            "final_status": parsed["status"],
+        }, indent=2))
         b["lookahead"] = parsed["status"]
     except Exception as e:
         b["lookahead"] = f"CRASH:{e}"
