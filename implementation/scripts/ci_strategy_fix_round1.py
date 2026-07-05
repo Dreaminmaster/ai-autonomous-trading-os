@@ -99,11 +99,14 @@ for name, overrides in VARIANTS:
 
 # ── Best 2 lookahead ─────────────────────────────────────────
 ok_results = [r for r in results if r["status"] == "OK" and r["profit"] != "?" and "baseline" not in r.get("name","")]
-try:
-    ok_results.sort(key=lambda r: float(str(r["profit"]).replace("%","").replace("?","-999")), reverse=True)
-except: pass
-best_two = ok_results[:2] if len(ok_results) >= 2 else ok_results
-
+if not ok_results:
+    best_two = []
+else:
+    try:
+        ok_results.sort(key=lambda r: float(str(r["profit"]).replace("%","").replace("?","-999")), reverse=True)
+    except:
+        pass
+    best_two = ok_results[:2]
 for b in best_two:
     name = b["name"]
     print(f"  Lookahead: {name} ...", flush=True)
