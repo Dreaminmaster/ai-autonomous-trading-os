@@ -290,7 +290,7 @@ if os.environ.get("RUN_LOOKAHEAD", "") == "1":
         "--datadir", str(Path("freqtrade_data/data/okx").resolve()),
         "--timerange", timerange,
         "--pairs", "BTC/USDT",
-    ], capture_output=True, text=True, timeout=900, env=env)
+    ], capture_output=True, text=True, timeout=2100, env=env)
     la_text = la_result.stdout + "\n" + la_result.stderr
     la_log.write_text(la_text)
 
