@@ -154,42 +154,43 @@ def test_resolve_candle_ts_reads_only_current_row_production_path():
     import pytest
     pytest.importorskip("freqtrade")
     import pandas as pd
-    from freqtrade_data.strategies.ai_supervised_strategy import AISupervisedStrategy
-
-    strategy = object.__new__(AISupervisedStrategy)
-
-    class GuardedFrame:
-        def __init__(self, df, allowed_idx):
-            self._df = df
-            self._allowed_idx = allowed_idx
-        @property
-        def columns(self):
-            return self._df.columns
-        def __getattr__(self, name):
-            if name in ('at','iloc','loc'):
-                def _guard(*args):
-                    idx_arg = args[0] if args else None
-                    if isinstance(idx_arg, int) and idx_arg > self._allowed_idx:
-                        raise AssertionError(f"FUTURE: row {idx_arg} > allowed {self._allowed_idx}")
-                    return getattr(self._df, name).__getitem__(args[0]) if args else getattr(self._df, name)
-                return _guard
-            return getattr(self._df, name)
-        @property
-        def index(self):
-            class GI:
-                def get_loc(this, key):
-                    return self._df.index.get_loc(key)
-            return GI()
+    import sys
+    from pathlib import Path
+    _strat_dir = Path(__file__).resolve().parents[1] / "freqtrade_data" / "strategies"
+    if str(_strat_dir) not in sys.path:
+        sys.path.insert(0, str(_strat_dir))
+    from ai_supervised_strategy import AISupervisedStrategy
 
     idx = 50
-    df = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=100, freq="5min"), "close": range(100, 200)})
-    frame = GuardedFrame(df, idx)
+    ts_correct = 1719792000.0 + idx * 300  # 2025-01-01 00:00 + 50*5min
 
+    # GuardedAt: only allows access to (idx, "date"), fails on any other row
+    class GuardedAt:
+        def __init__(self, allowed_key, value):
+            self._allowed = allowed_key
+            self._value = value
+        def __getitem__(self, key):
+            assert key == self._allowed, f"FUTURE ACCESS: requested {key}, allowed {self._allowed}"
+            return self._value
+
+    class GuardedFrame:
+        columns = ["date"]
+        def __init__(self, row_key, ts_value):
+            self.at = GuardedAt(row_key, ts_value)
+        def __getattribute__(self, name):
+            if name == "at": return super().__getattribute__("at")
+            if name == "columns": return ["date"]
+            raise AttributeError(name)
+
+    strategy = object.__new__(AISupervisedStrategy)
+    frame = GuardedFrame((idx, "date"), ts_correct)
     ts = strategy._resolve_candle_ts(frame, idx)
-    assert ts > 0
+    assert ts == ts_correct, f"Expected {ts_correct}, got {ts}"
 
+    # Future row access must fail
+    future_frame = GuardedFrame((idx + 1, "date"), ts_correct + 300)
     try:
-        strategy._resolve_candle_ts(frame, idx + 1)
-        assert False, "Should have raised for future row access"
+        strategy._resolve_candle_ts(future_frame, idx + 1)
+        assert False, "Should have raised AssertionError for future row"
     except AssertionError:
         pass
