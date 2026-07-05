@@ -146,10 +146,6 @@ for b in best_two:
             b["lookahead"] = "ERROR:unknown"
     except Exception as e:
         b["lookahead"] = "CRASH:{0}".format(e)
-        status_path.write_text(json.dumps(decision, indent=2, default=str))
-    except Exception as e:
-        b["lookahead"] = "CRASH:{}".format(e)
-        b["lookahead"] = "CRASH:{}".format(e)
         b["lookahead"] = f"CRASH:{e}"
 
 # ── Report ────────────────────────────────────────────────────
