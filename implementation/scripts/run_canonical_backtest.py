@@ -18,6 +18,9 @@ import time
 import zipfile
 from pathlib import Path
 
+from atos.lookahead_parser import parse_lookahead_result
+from atos.lookahead_decision import decide_lookahead
+
 IMPL_DIR = Path(__file__).resolve().parents[1]
 os.chdir(IMPL_DIR)
 
@@ -292,10 +295,11 @@ if os.environ.get("RUN_LOOKAHEAD", "") == "1":
     la_log.write_text(la_text)
 
     parsed = parse_lookahead_result(la_text)
-    from atos.lookahead_decision import decide_lookahead
     decision = decide_lookahead(la_result.returncode, parsed, la_text)
     if decision.get("final_status") in ("PASS", "PASS_WITH_RC_ANOMALY"):
-        print(f"  Lookahead: {decision["final_status"]}")
+        fs = decision.get("final_status", "?")
+        print(f"  Lookahead: {fs} (rc={la_result.returncode})")
     else:
-        print(f"FATAL: Lookahead {decision["final_status"]}", file=sys.stderr)
+        fs = decision.get("final_status", "?")
+        print(f"FATAL: Lookahead {fs}: {decision.get('reason','?')}", file=sys.stderr)
         sys.exit(1)
