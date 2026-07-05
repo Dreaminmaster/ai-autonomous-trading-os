@@ -124,14 +124,28 @@ for b in best_two:
             "python3", "scripts/run_canonical_backtest.py",
             f"{name}_la", f"{name}_la", str(policy_p)
         ], capture_output=True, text=True, timeout=Timeout, env=env)
-        la_text = result.stdout + "\n" + result.stderr
-        outer_rc = result.returncode
-        from atos.lookahead_parser import parse_lookahead_result
-        from atos.lookahead_decision import decide_lookahead
-        parsed = parse_lookahead_result(la_text)
-        decision = decide_lookahead(outer_rc, parsed, la_text)
-        b["lookahead"] = decision["final_status"]
+        wrapper_rc = result.returncode
         status_path = Path("freqtrade_data/backtest_results/{}_la_lookahead_status.json".format(name))
+        if not status_path.exists():
+            b["lookahead"] = "ERROR_MISSING_EVIDENCE"
+            continue
+        st = json.loads(status_path.read_text())
+        final = st.get("final_status", "ERROR")
+        freq_rc = st.get("freqtrade_returncode", -1)
+        
+        # P2: wrapper_rc vs freqtrade_returncode contract
+        if wrapper_rc == 0 and final in ("PASS", "PASS_WITH_RC_ANOMALY"):
+            b["lookahead"] = final
+        elif wrapper_rc == 0 and final in ("FAIL", "ERROR"):
+            b["lookahead"] = "ERROR_CONTRACT:{0}".format(final)
+        elif wrapper_rc != 0 and final in ("FAIL", "ERROR"):
+            b["lookahead"] = final
+        elif wrapper_rc != 0 and final in ("PASS", "PASS_WITH_RC_ANOMALY"):
+            b["lookahead"] = "ERROR_CONTRACT_MISMATCH:{0}".format(final)
+        else:
+            b["lookahead"] = "ERROR:unknown"
+    except Exception as e:
+        b["lookahead"] = "CRASH:{0}".format(e)
         status_path.write_text(json.dumps(decision, indent=2, default=str))
     except Exception as e:
         b["lookahead"] = "CRASH:{}".format(e)

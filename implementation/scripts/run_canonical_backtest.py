@@ -296,6 +296,25 @@ if os.environ.get("RUN_LOOKAHEAD", "") == "1":
 
     parsed = parse_lookahead_result(la_text)
     decision = decide_lookahead(la_result.returncode, parsed, la_text)
+    
+    # P0: Write canonical structured status JSON (consumed by Round1)
+    status_path = results_dir / f"{output_base}_lookahead_status.json"
+    status_json = {
+        "schema_version": 1,
+        "variant": variant,
+        "output_base": output_base,
+        "freqtrade_returncode": la_result.returncode,
+        "parser_status": parsed.get("status"),
+        "has_bias": parsed.get("has_bias"),
+        "evidence_source": parsed.get("evidence_source", "unknown"),
+        "explicit_no_bias_evidence": decision.get("explicit_no_bias_evidence", False),
+        "fatal_markers_found": decision.get("fatal_markers_found", []),
+        "final_status": decision["final_status"],
+        "reason": decision.get("reason", ""),
+        "evidence_log": str(la_log.resolve()),
+    }
+    status_path.write_text(json.dumps(status_json, indent=2))
+    
     if decision.get("final_status") in ("PASS", "PASS_WITH_RC_ANOMALY"):
         fs = decision.get("final_status", "?")
         print(f"  Lookahead: {fs} (rc={la_result.returncode})")
