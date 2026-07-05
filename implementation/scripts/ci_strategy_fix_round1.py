@@ -125,19 +125,26 @@ for b in best_two:
             f"{name}_la", f"{name}_la", str(policy_p)
         ], capture_output=True, text=True, timeout=Timeout, env=env)
         la_text = result.stdout + "\n" + result.stderr
+        outer_rc = result.returncode
         from atos.lookahead_parser import parse_lookahead_result
         parsed = parse_lookahead_result(la_text)
-        # Write structured status
-        status_path = Path(f"freqtrade_data/backtest_results/{name}_la_lookahead_status.json")
-        status_path.write_text(json.dumps({
-            "outer_returncode": result.returncode,
+        final = parsed["status"]
+        if parsed["status"] == "PASS":
+            final = "PASS"
+        elif outer_rc != 0 and parsed["status"] == "ERROR":
+            final = "ERROR(rc={})".format(outer_rc)
+        b["lookahead"] = final
+        sp = Path("freqtrade_data/backtest_results/{}_la_lookahead_status.json".format(name))
+        sp.write_text(json.dumps({
+            "outer_returncode": outer_rc,
             "parser_status": parsed["status"],
-            "has_bias": parsed["has_bias"],
-            "evidence_log": str(Path(f"freqtrade_data/backtest_results/{name}_la_lookahead.log").resolve()),
-            "final_status": parsed["status"],
-        }, indent=2))
-        b["lookahead"] = parsed["status"]
+            "has_bias": parsed.get("has_bias"),
+            "evidence_source": parsed.get("evidence_source", "unknown"),
+            "evidence_log": str(Path("freqtrade_data/backtest_results/{}_la_lookahead.log".format(name)).resolve()),
+            "final_status": final,
+        }, indent=2, default=str))
     except Exception as e:
+        b["lookahead"] = "CRASH:{}".format(e)
         b["lookahead"] = f"CRASH:{e}"
 
 # ── Report ────────────────────────────────────────────────────
