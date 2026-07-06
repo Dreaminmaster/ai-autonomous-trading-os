@@ -1,8 +1,8 @@
 # B1 Design Bundle V3 — Complete Runtime State & Safety Kernel
 
-**Version**: V3  
-**Date**: 2026-07-06  
-**Status**: DESIGN ONLY — 0 code changes, 0 commits, 0 pushes  
+**Version**: V3.3 (B1.3 closeout)
+**Date**: 2026-07-06
+**Status**: DESIGN ONLY — 0 code changes
 **Live**: FORBIDDEN
 
 ---
@@ -64,7 +64,7 @@ Every attempt to send an order to the venue. Persisted and COMMITTED before netw
 | client_order_id | TEXT | Stable external order identifier |
 | venue | TEXT | e.g. "okx_paper" / "okx_live" |
 | account_scope | TEXT | e.g. "spot_btc" |
-| status | TEXT | PENDING_SUBMIT / SUBMITTED / ACCEPTED / REJECTED / TIMEOUT / AMBIGUOUS |
+| status | TEXT | PRE_DISPATCH_PROVEN / DISPATCH_INITIATED / SUBMITTED / ACCEPTED / REJECTED / TIMEOUT / AMBIGUOUS |
 | attempt_no | INTEGER | 1-based |
 | created_at | TEXT | |
 | dispatch_started_at | TEXT | |
@@ -161,7 +161,7 @@ One autonomous runtime session.
 | session_id | TEXT(UUID) | |
 | started_at | TEXT | |
 | mode | TEXT | paper / shadow / guarded |
-| status | TEXT | STARTING / RECOVERING / READY / RUNNING / PAUSED |
+| status | TEXT | STARTING / RECOVERING / READY / RUNNING / PAUSED / PAUSED_RECOVERY_REQUIRED / STOPPED |
 | stopped_at | TEXT | |
 | stop_reason | TEXT | |
 
@@ -256,10 +256,36 @@ DB INSERT DispatchAttempt → COMMIT → THEN network call
 ```
 Not: network call during DB transaction.
 
-### Ambiguous Response Handling
-1. Query venue by `client_order_id`
-2. If found → update OrderState + reconcile
-3. If not found AND timeout → mark AMBIGUOUS. PAUSE. No redispatch.
+### P0 fix (V3.3): PENDING_SUBMIT is not safe as "definitely not sent"
+
+Crash window:
+  DB = PENDING_SUBMIT → network request starts → venue may accept
+  → process crashes → DB never reaches SUBMITTED
+
+Therefore PENDING_SUBMIT cannot prove "definitely not sent".
+
+**Contract**: Any state that has entered the dispatch-capable boundary but cannot prove the network side effect did NOT occur → treat as AMBIGUOUS.
+
+**Recovery**:
+1. Query venue by stable client_order_id
+2. Respect venue visibility/consistency window
+3. If found → reconcile
+4. If not conclusively found → PAUSED_RECOVERY_REQUIRED. No blind redispatch.
+
+Only with explicit local proof ("request definitely never left process") is direct retry allowed.
+
+**DispatchAttempt status evolution (V3.3)**:
+```
+PRE_DISPATCH_PROVEN   — serialization/validation only. Proven: no bytes sent.
+DISPATCH_INITIATED    — bytes may have been sent. Ambiguity begins.
+SUBMITTED             — venue acknowledged receipt (response received).
+ACCEPTED              — venue confirmed order open.
+REJECTED              — venue rejected order.
+TIMEOUT               — no response within deadline.
+AMBIGUOUS             — unable to determine venue state conclusively.
+```
+
+CM8 revised accordingly.
 
 ---
 
@@ -344,11 +370,17 @@ SIGKILL after: MARKET_ACCEPTED, PROVIDER_DECIDED, RISK_DECIDED, EXECUTION_INTENT
 - Recovery: Discover intent. Clear to proceed. Attempt dispatch.
 - Assert: No duplicate. Exactly one DispatchAttempt created.
 
-**CM8: Crash after DISPATCH_COMMITTED, before network call**
-- Persisted: ExecutionIntent + DispatchAttempt + ExecutionState=DISPATCH_COMMITTED
-- External: Nothing sent
-- Recovery: Query venue (finds nothing). Mark Attempt=TIMEOUT. Retry or abandon.
-- Assert: No duplicate. New attempt has new attempt_id. No blind dispatch.
+**CM8-REVISED (V3.3): Crash after DISPATCH_INITIATED, before network proof**
+- Persisted: ExecutionIntent + DispatchAttempt(status=DISPATCH_INITIATED)
+- External: Bytes MAY have been sent. Venue MAY have accepted.
+- Recovery: Query venue by client_order_id.
+    - If found → reconcile. Mark Attempt=SUBMITTED/ACCEPTED.
+    - If NOT found after venue consistency window → mark AMBIGUOUS. PAUSE.
+- Assert: No blind retry. State = AMBIGUOUS or RECONCILED, never silently cleared.
+
+**CM8a: Crash after PRE_DISPATCH_PROVEN commit**
+- Persisted: DispatchAttempt(status=PRE_DISPATCH_PROVEN). Proven: no bytes sent.
+- Recovery: Safe to retry. Create new DispatchAttempt.
 
 **CM9: Venue may have accepted, response lost/timeout**
 - Persisted: DispatchAttempt (SUBMITTED status)
@@ -412,7 +444,19 @@ SIGKILL after: MARKET_ACCEPTED, PROVIDER_DECIDED, RISK_DECIDED, EXECUTION_INTENT
 
 ---
 
-## 10. Open Decisions (deferred)
+### 1.15 RiskDecision (IMMUTABLE)
+
+Snapshot of the risk engine output. Persisted at creation time, never modified.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| risk_decision_id | TEXT(UUID) | Unique decision identifier |
+| trade_intent_id | TEXT(UUID) | FK to TradeIntent this decision evaluated |
+| decision | TEXT | APPROVED / REJECTED / KILL_SWITCH_ACTIVE / PAUSED |
+| reasons | TEXT | JSON array of reason strings |
+| risk_score | TEXT | Decimal-encoded score |
+| checks_json | TEXT | JSON snapshot of all gate checks |
+| created_at | TEXT | ISO-8601 UTC |
 
 | ID | Decision | Deferred To |
 |----|----------|------------|

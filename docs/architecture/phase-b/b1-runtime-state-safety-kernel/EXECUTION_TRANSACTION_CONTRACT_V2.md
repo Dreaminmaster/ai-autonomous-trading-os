@@ -105,16 +105,15 @@ Recovery: Order found via query. Reconcile fills.
 
 ---
 
-## Network Error Classification
+## Network Error Classification (V3.3)
 
-| Error | Classification | Action |
-|-------|---------------|--------|
-| ConnectionRefusedError | NetworkError | Retry with backoff (max 3) |
-| TimeoutError (>30s) | Timeout | Mark AMBIGUOUS. PAUSE. Query venue. |
-| HTTP 429 Rate Limit | RateLimit | Backoff 60s. Retry once. |
-| HTTP 5xx | ServerError | Retry with backoff (max 3) |
-| HTTP 4xx (not 429) | ClientError | Mark REJECTED. Do not retry. |
-| Unknown response | NetworkError | Mark AMBIGUOUS. PAUSE. |
+| Class | Examples | Action |
+|-------|----------|--------|
+| **PRE-DISPATCH-PROVEN** | serialization failed, local validation failed, connection refused BEFORE request bytes sent (adapter must prove) | Retry allowed |
+| **POST-DISPATCH-AMBIGUOUS** | timeout, connection reset after send, unknown response, HTTP 5xx where side effect cannot be excluded | AMBIGUOUS. Query client_order_id. No blind retry. |
+| **VENUE-CONFIRMED-REJECT** | HTTP 4xx (not 429), venue says "invalid order" | REJECTED. Retry only by explicit policy decision. |
+
+**Deleted**: unconditional `HTTP 5xx → retry max 3`. Every retry requires explicit evidence.
 
 ---
 

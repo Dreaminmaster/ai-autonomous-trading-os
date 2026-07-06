@@ -47,7 +47,7 @@
 
 | AC | Description |
 |----|-------------|
-| AC1 | 14 tables with Decimal precision |
+| AC1 | Every authoritative persisted state has explicit storage mapping, constraints, keys, FK policy, Decimal precision, and migration semantics |
 | AC2 | 10 crash scenarios pass |
 | AC3 | No duplicate logical execution |
 | AC4 | Risk state survives restart |
