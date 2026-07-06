@@ -40,7 +40,6 @@ def test_migrate_twice_is_noop():
     mm = MigrationManager(db, MIGRATION_PLAN)
     assert mm.migrate() == 1
     assert mm.migrate() == 0
-    # schema_migrations should have exactly 1 row
     count = db.connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
     assert count == 1
     db.close()
@@ -130,7 +129,6 @@ def test_migration_checksum_drift_fails_closed():
     db = _make_db()
     mm = MigrationManager(db, MIGRATION_PLAN)
     mm.migrate()
-    # Tamper with the schema_migrations checksum
     db.connection.execute("UPDATE schema_migrations SET checksum = 'bad' WHERE version = 1")
     db.connection.commit()
     with pytest.raises(MigrationDriftError):
@@ -160,22 +158,140 @@ def test_migration_plan_must_be_contiguous():
 
 def test_failed_migration_rolls_back_schema_and_history():
     db = _make_db()
-    # Create a bad migration that will fail after creating a table
     bad_migration = Migration(
         version=1,
         name="bad",
-        sql="CREATE TABLE partial_x (id INTEGER PRIMARY KEY); INVALID_SQL_HERE;",
+        sql="CREATE TABLE partial_x (id INTEGER PRIMARY KEY);\nINVALID_SQL_HERE;",
     )
     mm = MigrationManager(db, [bad_migration])
     mm.bootstrap()
     with pytest.raises(MigrationApplyError):
         mm.migrate()
-    # partial_x must not exist
     tables = db.connection.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='partial_x'"
     ).fetchall()
     assert len(tables) == 0
-    # migration row must not exist
     migrations = db.connection.execute("SELECT version FROM schema_migrations").fetchall()
     assert len(migrations) == 0
+    db.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# P1: Real migration gap in DB history
+# ═══════════════════════════════════════════════════════════════
+
+def test_migration_gap_fails_closed():
+    """DB has only version 2 applied (name+checksum correct), missing v1 → fail."""
+    db = _make_db()
+    plan = (
+        Migration(version=1, name="first", sql="SELECT 1"),
+        Migration(version=2, name="second", sql="SELECT 2"),
+    )
+    mm = MigrationManager(db, plan)
+    mm.bootstrap()
+    # Insert version 2 directly — simulate v1 never applied
+    m2 = plan[1]
+    db.connection.execute(
+        "INSERT INTO schema_migrations (version, name, checksum, applied_at) "
+        "VALUES (?, ?, ?, datetime('now'))",
+        (m2.version, m2.name, m2.checksum),
+    )
+    db.connection.commit()
+    with pytest.raises(SchemaCompatibilityError):
+        mm.validate_plan()
+    db.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# P2: Non-positive applied versions
+# ═══════════════════════════════════════════════════════════════
+
+def test_applied_version_zero_fails_closed():
+    db = _make_db()
+    mm = MigrationManager(db, MIGRATION_PLAN)
+    mm.bootstrap()
+    db.connection.execute("ALTER TABLE schema_migrations RENAME TO sm_old")
+    db.connection.execute(
+        "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT, checksum TEXT, applied_at TEXT)"
+    )
+    db.connection.execute(
+        "INSERT INTO schema_migrations (version, name, checksum, applied_at) "
+        "VALUES (0, 'bad', 'abc', datetime('now'))"
+    )
+    db.connection.commit()
+    with pytest.raises(SchemaCompatibilityError):
+        mm.validate_plan()
+    db.close()
+
+
+def test_applied_negative_version_fails_closed():
+    db = _make_db()
+    mm = MigrationManager(db, MIGRATION_PLAN)
+    mm.bootstrap()
+    db.connection.execute("ALTER TABLE schema_migrations RENAME TO sm_old")
+    db.connection.execute(
+        "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT, checksum TEXT, applied_at TEXT)"
+    )
+    db.connection.execute(
+        "INSERT INTO schema_migrations (version, name, checksum, applied_at) "
+        "VALUES (-1, 'bad', 'abc', datetime('now'))"
+    )
+    db.connection.commit()
+    with pytest.raises(SchemaCompatibilityError):
+        mm.validate_plan()
+    db.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# P3: Semicolon inside SQL literal — safe parsing
+# ═══════════════════════════════════════════════════════════════
+
+def test_migration_sql_semicolon_inside_string():
+    """_iter_sql_statements must handle semicolons within string literals."""
+    from atos.runtime_migrations import _iter_sql_statements
+    sql = (
+        "CREATE TABLE x (v TEXT);\n"
+        "INSERT INTO x(v) VALUES ('a;b');\n"
+    )
+    stmts = list(_iter_sql_statements(sql))
+    assert len(stmts) == 2
+    assert stmts[0] == "CREATE TABLE x (v TEXT);"
+    assert "INSERT" in stmts[1]
+    assert "a;b" in stmts[1]
+
+
+# ═══════════════════════════════════════════════════════════════
+# P4: Deferred transaction is explicit
+# ═══════════════════════════════════════════════════════════════
+
+def test_deferred_transaction_is_explicit():
+    d = tempfile.mkdtemp()
+    path = Path(d) / "test.db"
+    db = RuntimeDatabase(path)
+    db.connect()
+    try:
+        with db.transaction(immediate=False) as conn:
+            conn.execute("CREATE TABLE t1 (id INTEGER PRIMARY KEY)")
+            conn.execute("INSERT INTO t1 VALUES (1)")
+            raise ValueError("simulated")
+    except ValueError:
+        pass
+    rows = db.connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='t1'"
+    ).fetchall()
+    assert len(rows) == 0
+    db.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# P5: connect() idempotency
+# ═══════════════════════════════════════════════════════════════
+
+def test_connect_twice_returns_same_connection():
+    d = tempfile.mkdtemp()
+    path = Path(d) / "test.db"
+    db = RuntimeDatabase(path)
+    c1 = db.connect()
+    c2 = db.connect()
+    assert c1 is c2
     db.close()

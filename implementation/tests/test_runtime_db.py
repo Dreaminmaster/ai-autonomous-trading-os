@@ -2,7 +2,6 @@
 import sqlite3
 import tempfile
 from pathlib import Path
-import pytest
 from atos.runtime_db import RuntimeDatabase, RuntimePersistenceError, DEFAULT_RUNTIME_DB_PATH
 
 
@@ -84,11 +83,10 @@ def test_transaction_rolls_back_on_exception():
             raise ValueError("simulated crash")
     except ValueError:
         pass
-    # Table should NOT exist
     rows = db.connection.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='t1'"
     ).fetchall()
-    assert len(rows) == 0, f"Table t1 should not exist after rollback: {rows}"
+    assert len(rows) == 0
     db.close()
 
 
@@ -107,4 +105,26 @@ def test_connection_property_auto_connects():
     assert db.conn is None
     _ = db.connection
     assert db.conn is not None
+    db.close()
+
+
+# P5: connect idempotency
+def test_connect_twice_returns_same_connection():
+    d = tempfile.mkdtemp()
+    path = Path(d) / "test.db"
+    db = RuntimeDatabase(path)
+    c1 = db.connect()
+    c2 = db.connect()
+    assert c1 is c2
+    db.close()
+
+
+# P6: sync + busy_timeout verified
+def test_connect_verifies_sync_and_timeout():
+    d = tempfile.mkdtemp()
+    path = Path(d) / "test.db"
+    db = RuntimeDatabase(path)
+    conn = db.connect()
+    assert conn.execute("PRAGMA synchronous").fetchone()[0] == 2
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
     db.close()

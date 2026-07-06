@@ -6,21 +6,22 @@ from hashlib import sha256
 from typing import Sequence
 
 from atos.runtime_db import RuntimeDatabase, RuntimePersistenceError
+import sqlite3
 
 
-class MigrationDefinitionError(Exception):
+class MigrationDefinitionError(RuntimePersistenceError):
     """Migration plan is malformed."""
 
 
-class MigrationDriftError(Exception):
+class MigrationDriftError(RuntimePersistenceError):
     """Already-applied migration checksum does not match code definition."""
 
 
-class SchemaCompatibilityError(Exception):
+class SchemaCompatibilityError(RuntimePersistenceError):
     """DB schema is not compatible with the current code."""
 
 
-class MigrationApplyError(Exception):
+class MigrationApplyError(RuntimePersistenceError):
     """Migration failed to apply — DB is unchanged."""
 
 
@@ -88,6 +89,22 @@ MIGRATION_PLAN: tuple[Migration, ...] = (
 )
 
 
+def _iter_sql_statements(sql):
+    """Yield complete SQL statements using sqlite3.complete_statement."""
+    buffer = ""
+    for line in sql.splitlines():
+        buffer += line + "\n"
+        if buffer.strip() and sqlite3.complete_statement(buffer):
+            stmt = buffer.strip()
+            if stmt:
+                yield stmt
+            buffer = ""
+    if buffer.strip():
+        raise MigrationDefinitionError(
+            f"Incomplete SQL statement at end of migration: {buffer[:100]}"
+        )
+
+
 class MigrationManager:
     """Manage database schema migrations.
 
@@ -100,7 +117,7 @@ class MigrationManager:
 
     BOOTSTRAP_SQL = """
         CREATE TABLE IF NOT EXISTS schema_migrations (
-            version    INTEGER PRIMARY KEY,
+            version    INTEGER PRIMARY KEY CHECK (version >= 1),
             name       TEXT NOT NULL,
             checksum   TEXT NOT NULL,
             applied_at TEXT NOT NULL
@@ -152,8 +169,10 @@ class MigrationManager:
                 raise SchemaCompatibilityError(
                     f"DB has migration version {db_ver} > code max version {code_max}"
                 )
-            if db_ver < 1 or db_ver > code_max:
-                continue
+            if db_ver < 1:
+                raise SchemaCompatibilityError(
+                    f"DB has migration version {db_ver} < 1 — not allowed"
+                )
             code_m = self.plan[db_ver - 1]
             if db_name != code_m.name or db_csum != code_m.checksum:
                 raise MigrationDriftError(
@@ -184,7 +203,7 @@ class MigrationManager:
                 try:
                     # executescript() issues implicit commits — not safe for transactions.
                     # Execute each statement separately so a failure rolls back the full transaction.
-                    for stmt in m.sql.strip().split(";"):
+                    for stmt in _iter_sql_statements(m.sql):
                         stmt = stmt.strip()
                         if stmt:
                             conn.execute(stmt)
