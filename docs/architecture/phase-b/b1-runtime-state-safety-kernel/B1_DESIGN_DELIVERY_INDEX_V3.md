@@ -1,7 +1,7 @@
 # B1 Design Delivery Index V3
 
-**Date**: 2026-07-06  
-**Version**: V3 — COMPLETE & SELF-CONTAINED  
+**B1 design baseline**: V3.3
+**Last synced commit**: (pending)
 **Live**: FORBIDDEN
 
 ---
@@ -10,7 +10,7 @@
 
 | # | Document | Description |
 |---|----------|-------------|
-| 1 | `B1_DESIGN_BUNDLE_V3.md` | Complete design: 14 state entities, idempotency V3, dispatch transaction contract V3, order lifecycle V3, recovery V3, crash matrix V3 (10 scenarios), DB precision rules, clock contract, authority hierarchy, open decisions |
+| 1 | `B1_DESIGN_BUNDLE_V3.md` | Complete design: 15 persisted entities, idempotency V3, dispatch transaction contract V3, order lifecycle V3, recovery V3, crash matrix V3 (11 scenarios), DB precision rules, clock contract, authority hierarchy, open decisions |
 | 2 | `EXECUTION_TRANSACTION_CONTRACT_V2.md` | Transaction boundary, 5-phase crash coverage, retry rules, network error classification, guarantees |
 | 3 | `B1_DESIGN_DELIVERY_INDEX_V3.md` | This index (complete superseding hierarchy) |
 | 4 | `DESIGN_CHANGELOG_V2_TO_V3.md` | Supersedes all V2 documents. 12 key changes documented. |
@@ -33,7 +33,7 @@
 
 | Phase | Scope |
 |-------|-------|
-| B4 | DB migrations: 14 tables |
+| B4 | DB migrations | Persistence migrations derived from authoritative storage mapping. All 15 entities have explicit storage, constraints, keys, FK policy, Decimal precision, migration semantics. |
 | B5 | Idempotency + dispatch registration |
 | B6 | Risk state persistence |
 | B7 | Recovery state machine |

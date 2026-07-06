@@ -1,7 +1,9 @@
 # Execution Transaction Contract V2
 
-**Version**: V2  
-**Date**: 2026-07-06  
+**Version**: V2
+**B1 design baseline**: V3.3
+**Last synced commit**: de5bbe8
+**Semantics synced to B1 V3.3**
 **Status**: DESIGN ONLY
 
 ---
@@ -27,29 +29,39 @@ Every logical execution is a transaction:
 ```
 
 ### Key Rule
-Steps 1-4 happen entirely within DB transactions. Step 5 happens AFTER commit. Step 6-7 are new transactions.
+Steps 1-4 happen entirely within DB transactions. Step 5 happens AFTER commit. Steps 6-7 are new transactions.
 
 ---
 
-## DispatchAttempt Lifecycle
+## DispatchAttempt Lifecycle (V3.3)
 
 ```
-PENDING_SUBMIT   (step 4 — committed, not yet sent)
+PRE_DISPATCH_PROVEN   (step 4 — local proof: no bytes sent)
   ↓
-SUBMITTED        (step 5 — sent, but response pending)
+DISPATCH_INITIATED    (bytes MAY have been sent. Ambiguity begins.)
   ↓
-ACCEPTED         (venue confirmed order)
+SUBMITTED             (venue acknowledged receipt — response received)
   ↓
-REJECTED         (venue rejected order)
+ACCEPTED              (venue confirmed order open)
   ↓
-TIMEOUT          (no response within deadline)
+REJECTED              (venue rejected order)
   ↓
-AMBIGUOUS        (unable to determine venue state)
+TIMEOUT               (no response within deadline)
+  ↓
+AMBIGUOUS             (unable to determine venue state conclusively)
 ```
+
+### Core Rules
+
+1. **PRE_DISPATCH_PROVEN**: Only with explicit local proof that request bytes were definitely never sent (e.g. serialization failed, connection refused before send). Safe for direct retry.
+
+2. **DISPATCH_INITIATED**: Network side effect may have occurred. Crash recovery must query venue by stable client_order_id. If conclusively found → reconcile. If unable to prove absence → AMBIGUOUS. PAUSED_RECOVERY_REQUIRED. No blind redispatch.
+
+3. **Deleted**: Old Phase B "not found → TIMEOUT → create new attempt". Only PRE_DISPATCH_PROVEN allows direct retry.
 
 ---
 
-## Crash at Each Phase
+## Crash at Each Phase (V3.3)
 
 ### Phase A: After PREPARED commit, before DISPATCH commit
 ```
@@ -58,21 +70,21 @@ Venue: Nothing
 Recovery: Intent present. Clear to proceed. Start new DispatchAttempt.
 ```
 
-### Phase B: After DISPATCH commit, before network call
+### Phase B: PRE_DISPATCH_PROVEN (local proof no bytes sent)
 ```
-DB: DispatchAttempt + ExecutionState=DISPATCH_COMMITTED
-Venue: Nothing
-Recovery: Attempt found, status=PENDING_SUBMIT. Query venue → not found.
-          Mark Attempt=TIMEOUT. Create new attempt or abandon.
+DB: DispatchAttempt(status=PRE_DISPATCH_PROVEN)
+Venue: Nothing (proven)
+Recovery: Safe to retry. Create new DispatchAttempt. No query needed.
 ```
 
-### Phase C: During network call (no response)
+### Phase C: DISPATCH_INITIATED (bytes may have been sent)
 ```
-DB: DispatchAttempt status=SUBMITTED
+DB: DispatchAttempt(status=DISPATCH_INITIATED)
 Venue: May have accepted. May not.
 Recovery: Query venue by client_order_id.
-          If found → update OrderState + reconcile.
-          If NOT found → mark AMBIGUOUS. PAUSE. No redispatch.
+    If found → reconcile. Mark Attempt=SUBMITTED/ACCEPTED.
+    If NOT found after venue consistency window → AMBIGUOUS.
+    PAUSED_RECOVERY_REQUIRED. No blind redispatch.
 ```
 
 ### Phase D: Venue accepted, response lost
@@ -80,27 +92,27 @@ Recovery: Query venue by client_order_id.
 DB: DispatchAttempt status=SUBMITTED (no response yet in our DB)
 Venue: Order exists, possibly partially filled
 Recovery: Query venue by client_order_id. Found.
-          Update OrderState + reconcile fills → Positions.
-          Mark DispatchAttempt=ACCEPTED.
+    Update OrderState + reconcile fills → Positions.
+    Mark DispatchAttempt=ACCEPTED.
 ```
 
 ### Phase E: Response received, before ACK persisted
 ```
 Recovery: Order found via query. Reconcile fills.
-          If response was seen in logs but not committed,
-          replay the same fill reconciliation.
+    If response was seen in logs but not committed,
+    replay the same fill reconciliation.
 ```
 
 ---
 
-## Retry Rules
+## Retry Rules (V3.3)
 
 | Condition | Action |
 |-----------|--------|
-| Same execution_intent_id, new DispatchAttempt | OK — retry with new attempt_id |
-| Same execution_intent_id, previous attempt AMBIGUOUS | PAUSE — must query venue first |
+| Same execution_intent_id, new DispatchAttempt, PRE_DISPATCH_PROVEN state | OK — retry with new attempt_id |
+| Same execution_intent_id, previous attempt DISPATCH_INITIATED or AMBIGUOUS | PAUSE — must query venue first |
 | Same execution_intent_id, previous attempt ACCEPTED | Do not retry. Reconcile existing order. |
-| Same execution_intent_id, previous attempt REJECTED | Retry OK if reject reason is transient (e.g. rate limit) |
+| Same execution_intent_id, previous attempt REJECTED | Retry OK if reject reason is transient; requires explicit policy decision |
 | Different execution_intent_id, same symbol/side | New execution. Not related to previous. |
 
 ---

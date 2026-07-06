@@ -1,7 +1,7 @@
-# B1 Design Bundle V3 — Complete Runtime State & Safety Kernel
+# B1 Design Bundle V3.3 — Complete Runtime State & Safety Kernel
 
-**Version**: V3.3 (B1.3 closeout)
-**Date**: 2026-07-06
+**B1 design baseline**: V3.3
+**Last synced commit**: (pending)
 **Status**: DESIGN ONLY — 0 code changes
 **Live**: FORBIDDEN
 

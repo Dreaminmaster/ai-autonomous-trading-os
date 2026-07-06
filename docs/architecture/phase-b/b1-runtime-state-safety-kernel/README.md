@@ -1,7 +1,7 @@
 # B1 — Runtime State & Safety Kernel
 
-**Version**: V3
-**Date**: 2026-07-06
+**B1 design baseline**: V3.3
+**Last synced commit**: (pending)
 **Status**: DESIGN ONLY — 0 production code changes
 **Live**: FORBIDDEN
 
@@ -13,7 +13,7 @@ The documents in this directory are the **sole authority** for Phase B B1 design
 
 | # | Document | Description |
 |---|----------|-------------|
-| 1 | `B1_DESIGN_BUNDLE_V3.md` | Complete design: 14 state entities, idempotency V3, dispatch transaction contract V3, order lifecycle V3, recovery V3, crash matrix V3 (10 scenarios), DB precision rules, clock contract, authority hierarchy, open decisions |
+| 1 | `B1_DESIGN_BUNDLE_V3.md` | Complete design: 15 persisted entities, idempotency V3, dispatch transaction contract V3, order lifecycle V3, recovery V3, crash matrix V3 (11 scenarios), DB precision rules, clock contract, authority hierarchy, open decisions |
 | 2 | `EXECUTION_TRANSACTION_CONTRACT_V2.md` | Transaction boundary, 5-phase crash coverage, retry rules, network error classification, guarantees |
 | 3 | `B1_DESIGN_DELIVERY_INDEX_V3.md` | Master index: active documents, superseded documents, implementation phases B4-B12, 6 acceptance criteria |
 | 4 | `DESIGN_CHANGELOG_V2_TO_V3.md` | 12 key changes from V2 to V3 |
@@ -35,7 +35,13 @@ All documents in `archive/` are **superseded** and marked `DO NOT IMPLEMENT`. Th
 | `archive/B1_DELIVERY_REPORT.md` | `B1_DESIGN_DELIVERY_INDEX_V3.md` |
 | `archive/B1_DESIGN_DELIVERY_INDEX.md` | `B1_DESIGN_DELIVERY_INDEX_V3.md` |
 
-## Decision
+## CONSISTENCY RULE
+
+1. **B1_DESIGN_BUNDLE_V3.md** is the **domain model authority** — all entity definitions, state machines, recovery contracts, crash scenarios.
+2. **EXECUTION_TRANSACTION_CONTRACT_V2.md** is the **dispatch semantics authority** — all transaction boundaries, error classes, retry rules.
+3. **Conflict between Bundle and Execution Contract → STOP. IMPLEMENTATION FORBIDDEN.**
+4. **B1_DESIGN_DELIVERY_INDEX_V3.md** only describes and indexes documents. It must not define different semantics.
+5. Before any implementation begins, run cross-document consistency check: all stale semantics from superseded versions must be absent from active authoritative docs.
 
 ```
 DESIGN READY: YES
