@@ -125,28 +125,14 @@ for b in best_two:
             f"{name}_la", f"{name}_la", str(policy_p)
         ], capture_output=True, text=True, timeout=Timeout, env=env)
         wrapper_rc = result.returncode
+        wrapper_rc = result.returncode
+        from atos.lookahead_contract import consume_lookahead_status
         status_path = Path("freqtrade_data/backtest_results/{}_la_lookahead_status.json".format(name))
-        if not status_path.exists():
-            b["lookahead"] = "ERROR_MISSING_EVIDENCE"
-            continue
-        st = json.loads(status_path.read_text())
-        final = st.get("final_status", "ERROR")
-        freq_rc = st.get("freqtrade_returncode", -1)
-        
-        # P2: wrapper_rc vs freqtrade_returncode contract
-        if wrapper_rc == 0 and final in ("PASS", "PASS_WITH_RC_ANOMALY"):
-            b["lookahead"] = final
-        elif wrapper_rc == 0 and final in ("FAIL", "ERROR"):
-            b["lookahead"] = "ERROR_CONTRACT:{0}".format(final)
-        elif wrapper_rc != 0 and final in ("FAIL", "ERROR"):
-            b["lookahead"] = final
-        elif wrapper_rc != 0 and final in ("PASS", "PASS_WITH_RC_ANOMALY"):
-            b["lookahead"] = "ERROR_CONTRACT_MISMATCH:{0}".format(final)
-        else:
-            b["lookahead"] = "ERROR:unknown"
+        c = consume_lookahead_status(wrapper_rc, status_path)
+        b["lookahead"] = c["lookahead"]
+        status_path.write_text(json.dumps(c, indent=2, default=str))
     except Exception as e:
-        b["lookahead"] = "CRASH:{0}".format(e)
-        b["lookahead"] = f"CRASH:{e}"
+        b["lookahead"] = "CRASH:{}".format(e)
 
 # ── Report ────────────────────────────────────────────────────
 canonical_summary = Path("freqtrade_data/backtest_results/canonical_baseline_summary.json")
