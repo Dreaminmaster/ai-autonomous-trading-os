@@ -8,7 +8,6 @@ from atos.runtime_state import RuntimeMode, RuntimeSessionStatus, RuntimeCycleSt
 from atos.runtime_state_reader import (
     RuntimeStateReader, RuntimeStateReadError, StateRecordNotFoundError,
     StateDataCorruptionError, _session_from_row, _cycle_from_row, _recovery_from_row,
-    _parse_unresolved_items, _dump_items,
 )
 
 def _migrated_db():
@@ -21,7 +20,7 @@ def _migrated_db():
 
 def _reader():
     db = _migrated_db()
-    reader = RuntimeStateReader(db.connection)
+    reader = RuntimeStateReader(db)
     # Insert test data via raw SQL (no writer needed)
     db.connection.execute("INSERT INTO runtime_sessions (session_id, started_at, mode, status) VALUES ('s1','2026-01-01T00:00Z','paper','RUNNING')")
     db.connection.execute("INSERT INTO runtime_sessions (session_id, started_at, mode, status) VALUES ('s2','2026-02-01T00:00Z','paper','STARTING')")
@@ -202,11 +201,7 @@ def test_29_empty_list_ok():
     r = _parse_unresolved_items("[]")
     assert r == ()
 
-def test_30_dump_items_none():
-    assert _dump_items(None) == "[]"
 
-def test_31_dump_items_list():
-    assert 'a' in _dump_items(["a"])
 
 def test_32_unresolved_includes_failed():
     db, reader = _reader()

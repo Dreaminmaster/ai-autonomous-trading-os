@@ -9,7 +9,7 @@ Design constraints:
 from __future__ import annotations
 
 import json
-from atos.runtime_db import RuntimePersistenceError
+from atos.runtime_db import RuntimeDatabase, RuntimePersistenceError
 from atos.runtime_state import (
     RuntimeMode, RuntimeSessionStatus, RuntimeCycleStatus, RecoveryStatus,
     RuntimeSessionRecord, RuntimeCycleRecord, RecoveryStateRecord,
@@ -53,6 +53,10 @@ def _session_from_row(row):
 def _cycle_from_row(row):
     try:
         lcs = row["last_completed_stage"]
+        if lcs is None:
+            typed_lcs = None
+        else:
+            typed_lcs = RuntimeCycleStatus(lcs)
         return RuntimeCycleRecord(
             cycle_id=row["cycle_id"],
             session_id=row["session_id"],
@@ -60,7 +64,7 @@ def _cycle_from_row(row):
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             status=RuntimeCycleStatus(row["status"]),
-            last_completed_stage=RuntimeCycleStatus(lcs) if lcs else None,
+            last_completed_stage=typed_lcs,
             last_error=row["last_error"],
         )
     except (KeyError, IndexError, TypeError, ValueError) as e:
@@ -101,13 +105,6 @@ def _parse_unresolved_items(raw):
     return tuple(decoded)
 
 
-def _dump_items(items):
-    """Canonical JSON dump for unresolved_items (used only in tests)."""
-    if items is None:
-        return "[]"
-    if not isinstance(items, list):
-        raise StateDataCorruptionError(f"items must be list, got {type(items).__name__}")
-    return json.dumps(items, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -121,13 +118,17 @@ class RuntimeStateReader:
     Does NOT run migrations. Does NOT create/update/delete/transition.
     """
 
-    def __init__(self, db_connection):
-        self._conn = db_connection
+    def __init__(self, db: RuntimeDatabase):
+        self._db = db
+
+    @property
+    def connection(self):
+        return self._db.connection
 
     # ── Session queries ───────────────────────────────────────
 
     def get_session(self, session_id):
-        row = self._conn.execute(
+        row = self.connection.execute(
             "SELECT session_id, started_at, mode, status, stopped_at, stop_reason"
             "  FROM runtime_sessions WHERE session_id = ?",
             (session_id,),
@@ -137,7 +138,7 @@ class RuntimeStateReader:
         return _session_from_row(row)
 
     def list_open_sessions(self):
-        rows = self._conn.execute(
+        rows = self.connection.execute(
             "SELECT session_id, started_at, mode, status, stopped_at, stop_reason"
             "  FROM runtime_sessions WHERE status != ?"
             "  ORDER BY started_at ASC, session_id ASC",
@@ -148,7 +149,7 @@ class RuntimeStateReader:
     # ── Cycle queries ────────────────────────────────────────
 
     def get_cycle(self, cycle_id):
-        row = self._conn.execute(
+        row = self.connection.execute(
             "SELECT cycle_id, session_id, symbol, started_at, completed_at, status, last_completed_stage, last_error"
             "  FROM runtime_cycles WHERE cycle_id = ?",
             (cycle_id,),
@@ -157,19 +158,19 @@ class RuntimeStateReader:
             raise StateRecordNotFoundError(f"cycle {cycle_id}")
         return _cycle_from_row(row)
 
-    def list_incomplete_cycles(self):
-        rows = self._conn.execute(
+    def list_incomplete_cycles(self, session_id):
+        rows = self.connection.execute(
             "SELECT cycle_id, session_id, symbol, started_at, completed_at, status, last_completed_stage, last_error"
-            "  FROM runtime_cycles WHERE status != ?"
+            "  FROM runtime_cycles WHERE session_id = ? AND status != ?"
             "  ORDER BY started_at ASC, cycle_id ASC",
-            (RuntimeCycleStatus.COMPLETED.value,),
+            (session_id, RuntimeCycleStatus.COMPLETED.value),
         ).fetchall()
         return [_cycle_from_row(r) for r in rows]
 
     # ── Recovery queries ──────────────────────────────────────
 
     def get_recovery(self, recovery_id):
-        row = self._conn.execute(
+        row = self.connection.execute(
             "SELECT recovery_id, session_id, status, unresolved_items, started_at, recovered_at"
             "  FROM recovery_states WHERE recovery_id = ?",
             (recovery_id,),
@@ -178,11 +179,11 @@ class RuntimeStateReader:
             raise StateRecordNotFoundError(f"recovery {recovery_id}")
         return _recovery_from_row(row)
 
-    def list_unresolved_recoveries(self):
-        rows = self._conn.execute(
+    def list_unresolved_recoveries(self, session_id):
+        rows = self.connection.execute(
             "SELECT recovery_id, session_id, status, unresolved_items, started_at, recovered_at"
-            "  FROM recovery_states WHERE status != ?"
+            "  FROM recovery_states WHERE session_id = ? AND status != ?"
             "  ORDER BY started_at ASC, recovery_id ASC",
-            (RecoveryStatus.RESOLVED.value,),
+            (session_id, RecoveryStatus.RESOLVED.value),
         ).fetchall()
         return [_recovery_from_row(r) for r in rows]
