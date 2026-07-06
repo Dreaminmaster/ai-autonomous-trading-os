@@ -122,13 +122,13 @@ class RuntimeStateReader:
         self._db = db
 
     @property
-    def connection(self):
+    def _connection(self):
         return self._db.connection
 
     # ── Session queries ───────────────────────────────────────
 
     def get_session(self, session_id):
-        row = self.connection.execute(
+        row = self._connection.execute(
             "SELECT session_id, started_at, mode, status, stopped_at, stop_reason"
             "  FROM runtime_sessions WHERE session_id = ?",
             (session_id,),
@@ -138,7 +138,7 @@ class RuntimeStateReader:
         return _session_from_row(row)
 
     def list_open_sessions(self):
-        rows = self.connection.execute(
+        rows = self._connection.execute(
             "SELECT session_id, started_at, mode, status, stopped_at, stop_reason"
             "  FROM runtime_sessions WHERE status != ?"
             "  ORDER BY started_at ASC, session_id ASC",
@@ -149,7 +149,7 @@ class RuntimeStateReader:
     # ── Cycle queries ────────────────────────────────────────
 
     def get_cycle(self, cycle_id):
-        row = self.connection.execute(
+        row = self._connection.execute(
             "SELECT cycle_id, session_id, symbol, started_at, completed_at, status, last_completed_stage, last_error"
             "  FROM runtime_cycles WHERE cycle_id = ?",
             (cycle_id,),
@@ -159,7 +159,7 @@ class RuntimeStateReader:
         return _cycle_from_row(row)
 
     def list_incomplete_cycles(self, session_id):
-        rows = self.connection.execute(
+        rows = self._connection.execute(
             "SELECT cycle_id, session_id, symbol, started_at, completed_at, status, last_completed_stage, last_error"
             "  FROM runtime_cycles WHERE session_id = ? AND status != ?"
             "  ORDER BY started_at ASC, cycle_id ASC",
@@ -170,7 +170,7 @@ class RuntimeStateReader:
     # ── Recovery queries ──────────────────────────────────────
 
     def get_recovery(self, recovery_id):
-        row = self.connection.execute(
+        row = self._connection.execute(
             "SELECT recovery_id, session_id, status, unresolved_items, started_at, recovered_at"
             "  FROM recovery_states WHERE recovery_id = ?",
             (recovery_id,),
@@ -180,7 +180,7 @@ class RuntimeStateReader:
         return _recovery_from_row(row)
 
     def list_unresolved_recoveries(self, session_id):
-        rows = self.connection.execute(
+        rows = self._connection.execute(
             "SELECT recovery_id, session_id, status, unresolved_items, started_at, recovered_at"
             "  FROM recovery_states WHERE session_id = ? AND status != ?"
             "  ORDER BY started_at ASC, recovery_id ASC",
