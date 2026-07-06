@@ -10,7 +10,7 @@
 
 | # | Document | Description |
 |---|----------|-------------|
-| 1 | `B1_DESIGN_BUNDLE_V3.md` | Complete design: 15 persisted entities, idempotency V3, dispatch transaction contract V3, order lifecycle V3, recovery V3, crash matrix V3 (11 scenarios), DB precision rules, clock contract, authority hierarchy, open decisions |
+| 1 | `B1_DESIGN_BUNDLE_V3.md` | Complete design: 15 persisted entities, idempotency V3, dispatch transaction contract V3, order lifecycle V3, recovery V3, crash matrix V3 (11 scenarios incl CM8a), DB precision rules, clock contract, authority hierarchy, open decisions |
 | 2 | `EXECUTION_TRANSACTION_CONTRACT_V2.md` | Transaction boundary, 5-phase crash coverage, retry rules, network error classification, guarantees |
 | 3 | `B1_DESIGN_DELIVERY_INDEX_V3.md` | This index (complete superseding hierarchy) |
 | 4 | `DESIGN_CHANGELOG_V2_TO_V3.md` | Supersedes all V2 documents. 12 key changes documented. |

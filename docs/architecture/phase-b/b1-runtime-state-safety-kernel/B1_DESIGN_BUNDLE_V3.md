@@ -85,6 +85,8 @@ Exchange-level order lifecycle.
 | price | TEXT | Decimal-encoded (0 = market) |
 | order_type | TEXT | MARKET / LIMIT |
 | status | TEXT | NEW / PENDING_SUBMIT / OPEN / PARTIALLY_FILLED / FILLED / CANCEL_REQUESTED / CANCEL_PENDING / CANCELLED / REJECTED / EXPIRED / UNKNOWN |
+
+OrderState.PENDING_SUBMIT: local order prepared. Submission NOT conclusively acknowledged. MUST NOT be used as proof that request bytes were not sent. Only DispatchAttempt.PRE_DISPATCH_PROVEN can prove absence of side effects.
 | created_at | TEXT | |
 | updated_at | TEXT | |
 
@@ -295,7 +297,7 @@ CM8 revised accordingly.
 ```
 NEW
   ↓
-PENDING_SUBMIT (DispatchAttempt committed, not yet sent)
+PENDING_SUBMIT (local order prepared, submission not conclusively acknowledged)
   ↓
 OPEN (venue accepted, order visible)
   ↓
@@ -357,7 +359,7 @@ Equity unknown → HOLD (no 1000.0 default)
 
 ---
 
-## 6. Crash Matrix (V3 — 10 scenarios)
+## 6. Crash Matrix (V3.3 — 11 scenarios)
 
 ### Previously defined (CM1-CM6)
 SIGKILL after: MARKET_ACCEPTED, PROVIDER_DECIDED, RISK_DECIDED, EXECUTION_INTENT_CREATED, EXECUTED-before-RECONCILED, RECONCILED-before-COMPLETED.
@@ -382,11 +384,13 @@ SIGKILL after: MARKET_ACCEPTED, PROVIDER_DECIDED, RISK_DECIDED, EXECUTION_INTENT
 - Persisted: DispatchAttempt(status=PRE_DISPATCH_PROVEN). Proven: no bytes sent.
 - Recovery: Safe to retry. Create new DispatchAttempt.
 
-**CM9: Venue may have accepted, response lost/timeout**
-- Persisted: DispatchAttempt (SUBMITTED status)
+**CM9: Venue may have accepted, response not yet persisted**
+- Persisted: DispatchAttempt status=DISPATCH_INITIATED (no response persisted locally)
 - External: Order may exist at venue
-- Recovery: Query venue by client_order_id. If found → reconcile. If not → mark AMBIGUOUS. PAUSE.
-- Assert: AMBIGUOUS state persisted. No blind redispatch. No cancel without evidence.
+- Recovery: Query venue by client_order_id.
+    - If found → reconcile. Transition to SUBMITTED/ACCEPTED per evidence.
+    - If not found after venue consistency window → mark AMBIGUOUS. PAUSE.
+- Assert: No blind redispatch. State = AMBIGUOUS or RECONCILED.
 
 **CM10: After PARTIALLY_FILLED, before local persistence**
 - Persisted: Previous fill state committed

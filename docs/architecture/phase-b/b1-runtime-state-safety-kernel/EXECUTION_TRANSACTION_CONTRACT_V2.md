@@ -31,6 +31,25 @@ Every logical execution is a transaction:
 ### Key Rule
 Steps 1-4 happen entirely within DB transactions. Step 5 happens AFTER commit. Steps 6-7 are new transactions.
 
+### Dispatch Transition Timing (P1)
+
+```
+A. Create DispatchAttempt(status=PRE_DISPATCH_PROVEN) → COMMIT
+   State guarantee: no request bytes sent. This is safe for retry.
+
+B. Immediately before network call:
+   UPDATE DispatchAttempt(PRE_DISPATCH_PROVEN → DISPATCH_INITIATED) → COMMIT
+   State guarantee: ambiguity window begins. Crash after this point is ambiguous.
+
+C. ONLY AFTER DISPATCH_INITIATED commit: perform network call.
+   Never: network call during DB transaction.
+   Never: PRE_DISPATCH_PROVEN crossing the send boundary.
+```
+
+Crash after DISPATCH_INITIATED commit, even before actual bytes leave the process:
+    Conservatively ambiguous. Query venue. No blind retry.
+    This is the safety cost. Accepted.
+
 ---
 
 ## DispatchAttempt Lifecycle (V3.3)
@@ -87,13 +106,14 @@ Recovery: Query venue by client_order_id.
     PAUSED_RECOVERY_REQUIRED. No blind redispatch.
 ```
 
-### Phase D: Venue accepted, response lost
+### Phase D: Venue may have accepted, response not persisted
 ```
-DB: DispatchAttempt status=SUBMITTED (no response yet in our DB)
-Venue: Order exists, possibly partially filled
-Recovery: Query venue by client_order_id. Found.
-    Update OrderState + reconcile fills → Positions.
-    Mark DispatchAttempt=ACCEPTED.
+DB: DispatchAttempt status=DISPATCH_INITIATED (response not yet persisted)
+Venue: Order may exist. May not.
+Recovery: Query venue by client_order_id.
+    If found → reconcile. Transition to SUBMITTED/ACCEPTED/FILLED per evidence.
+    If NOT found after venue consistency window → AMBIGUOUS.
+    PAUSED_RECOVERY_REQUIRED. No blind redispatch.
 ```
 
 ### Phase E: Response received, before ACK persisted
@@ -102,6 +122,24 @@ Recovery: Order found via query. Reconcile fills.
     If response was seen in logs but not committed,
     replay the same fill reconciliation.
 ```
+
+---
+
+## ExecutionState ↔ DispatchAttempt Mapping (P2)
+
+ExecutionState is an aggregate lifecycle view. DispatchAttempt is authoritative for transport truth.
+
+| ExecutionState | DispatchAttempt Status | Meaning |
+|----------------|------------------------|---------|
+| PREPARED | None or PRE_DISPATCH_PROVEN | Intent created, no dispatch yet or dispatch in proven-safe pre-send state |
+| DISPATCH_COMMITTED | DISPATCH_INITIATED | Dispatch attempt committed at the DISPATCH_INITIATED level. Ambiguity begins. |
+| DISPATCHED | SUBMITTED or ACCEPTED | Venue has acknowledged receipt |
+| ACKNOWLEDGED | ACCEPTED or FILLED | Order confirmed or filled at venue |
+| AMBIGUOUS | AMBIGUOUS | Unable to determine venue state |
+| FILLED | ACCEPTED + FillState committed | Fills reconciled |
+| TERMINAL | Any terminal DispatchAttempt status | No further action |
+
+**Conflict rule**: DispatchAttempt wins for dispatch safety. Any inconsistency between ExecutionState and DispatchAttempt → PAUSE. Do not resolve automatically.
 
 ---
 
