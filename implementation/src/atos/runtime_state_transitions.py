@@ -1,7 +1,6 @@
-"""Pure state transition policy — deterministic validation only.
+"""Pure deterministic state-transition policy.
 
-Zero dependencies: no sqlite3, no RuntimeDatabase, no filesystem, no network.
-Input: exact enum instances → output: None (valid) or InvalidStateTransitionError.
+No persistence, filesystem, clock, or network side effects.
 """
 from __future__ import annotations
 
@@ -13,11 +12,19 @@ class InvalidStateTransitionError(ValueError):
     """State transition is not allowed by the authoritative policy."""
 
 
+__all__ = (
+    "InvalidStateTransitionError",
+    "validate_session_transition",
+    "validate_cycle_transition",
+    "validate_recovery_transition",
+)
+
+
 # ═══════════════════════════════════════════════════════════════
-# Session transition graph (immutable)
+# Private transition graphs — immutable
 # ═══════════════════════════════════════════════════════════════
 
-SESSION_GRAPH = MappingProxyType({
+_SESSION_GRAPH = MappingProxyType({
     RuntimeSessionStatus.STARTING: frozenset({
         RuntimeSessionStatus.RECOVERING,
         RuntimeSessionStatus.STOPPED,
@@ -50,12 +57,7 @@ SESSION_GRAPH = MappingProxyType({
     RuntimeSessionStatus.STOPPED: frozenset(),
 })
 
-
-# ═══════════════════════════════════════════════════════════════
-# Cycle transition graph — strict forward-only chain
-# ═══════════════════════════════════════════════════════════════
-
-CYCLE_SEQUENCE = (
+_CYCLE_SEQUENCE = (
     RuntimeCycleStatus.CREATED,
     RuntimeCycleStatus.MARKET_ACCEPTED,
     RuntimeCycleStatus.ACCOUNT_ACCEPTED,
@@ -68,17 +70,12 @@ CYCLE_SEQUENCE = (
     RuntimeCycleStatus.COMPLETED,
 )
 
-CYCLE_GRAPH = MappingProxyType({
-    status: frozenset({CYCLE_SEQUENCE[i + 1]}) if i + 1 < len(CYCLE_SEQUENCE) else frozenset()
-    for i, status in enumerate(CYCLE_SEQUENCE)
+_CYCLE_GRAPH = MappingProxyType({
+    status: frozenset({_CYCLE_SEQUENCE[i + 1]}) if i + 1 < len(_CYCLE_SEQUENCE) else frozenset()
+    for i, status in enumerate(_CYCLE_SEQUENCE)
 })
 
-
-# ═══════════════════════════════════════════════════════════════
-# Recovery transition graph
-# ═══════════════════════════════════════════════════════════════
-
-RECOVERY_GRAPH = MappingProxyType({
+_RECOVERY_GRAPH = MappingProxyType({
     RecoveryStatus.PENDING: frozenset({RecoveryStatus.IN_PROGRESS}),
     RecoveryStatus.IN_PROGRESS: frozenset({RecoveryStatus.RESOLVED, RecoveryStatus.FAILED}),
     RecoveryStatus.FAILED: frozenset({RecoveryStatus.IN_PROGRESS}),
@@ -87,52 +84,43 @@ RECOVERY_GRAPH = MappingProxyType({
 
 
 # ═══════════════════════════════════════════════════════════════
-# Public validation API
+# Core validation logic
+# ═══════════════════════════════════════════════════════════════
+
+def _validate(current, target, allowed_graph, typename):
+    if type(current) is not typename or type(target) is not typename:
+        raise InvalidStateTransitionError(
+            f"expected {typename.__name__}, got {type(current).__name__} → {type(target).__name__}"
+        )
+    if current == target:
+        raise InvalidStateTransitionError(f"self-transition {current.value} → {target.value}")
+    if target not in allowed_graph.get(current, frozenset()):
+        raise InvalidStateTransitionError(f"{current.value} → {target.value}")
+
+
+# ═══════════════════════════════════════════════════════════════
+# Public API
 # ═══════════════════════════════════════════════════════════════
 
 def validate_session_transition(
     current: RuntimeSessionStatus,
     target: RuntimeSessionStatus,
 ) -> None:
-    """Raise InvalidStateTransitionError if transition is not allowed."""
-    if not isinstance(current, RuntimeSessionStatus):
-        raise TypeError(f"current must be RuntimeSessionStatus, got {type(current).__name__}")
-    if not isinstance(target, RuntimeSessionStatus):
-        raise TypeError(f"target must be RuntimeSessionStatus, got {type(target).__name__}")
-    if current == target:
-        raise InvalidStateTransitionError(f"self-transition {current.value} → {target.value}")
-    allowed = SESSION_GRAPH.get(current, frozenset())
-    if target not in allowed:
-        raise InvalidStateTransitionError(f"{current.value} → {target.value}")
+    """Validate session state transition (V3.3 authority)."""
+    _validate(current, target, _SESSION_GRAPH, RuntimeSessionStatus)
 
 
 def validate_cycle_transition(
     current: RuntimeCycleStatus,
     target: RuntimeCycleStatus,
 ) -> None:
-    """Raise InvalidStateTransitionError if transition is not allowed."""
-    if not isinstance(current, RuntimeCycleStatus):
-        raise TypeError(f"current must be RuntimeCycleStatus, got {type(current).__name__}")
-    if not isinstance(target, RuntimeCycleStatus):
-        raise TypeError(f"target must be RuntimeCycleStatus, got {type(target).__name__}")
-    if current == target:
-        raise InvalidStateTransitionError(f"self-transition {current.value} → {target.value}")
-    allowed = CYCLE_GRAPH.get(current, frozenset())
-    if target not in allowed:
-        raise InvalidStateTransitionError(f"{current.value} → {target.value}")
+    """Validate cycle state transition (strict forward-only chain)."""
+    _validate(current, target, _CYCLE_GRAPH, RuntimeCycleStatus)
 
 
 def validate_recovery_transition(
     current: RecoveryStatus,
     target: RecoveryStatus,
 ) -> None:
-    """Raise InvalidStateTransitionError if transition is not allowed."""
-    if not isinstance(current, RecoveryStatus):
-        raise TypeError(f"current must be RecoveryStatus, got {type(current).__name__}")
-    if not isinstance(target, RecoveryStatus):
-        raise TypeError(f"target must be RecoveryStatus, got {type(target).__name__}")
-    if current == target:
-        raise InvalidStateTransitionError(f"self-transition {current.value} → {target.value}")
-    allowed = RECOVERY_GRAPH.get(current, frozenset())
-    if target not in allowed:
-        raise InvalidStateTransitionError(f"{current.value} → {target.value}")
+    """Validate recovery state transition (V3.3 authority)."""
+    _validate(current, target, _RECOVERY_GRAPH, RecoveryStatus)
