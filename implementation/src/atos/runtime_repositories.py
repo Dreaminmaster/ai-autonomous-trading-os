@@ -71,7 +71,52 @@ def _parse_items(raw):
     return tuple(items)
 
 
-def _map_row(klass, conn, query, params):
+def _session_from_row(row):
+    try:
+        return RuntimeSessionRecord(
+            session_id=row["session_id"],
+            started_at=row["started_at"],
+            mode=RuntimeMode(row["mode"]),
+            status=RuntimeSessionStatus(row["status"]),
+            stopped_at=row.get("stopped_at"),
+            stop_reason=row.get("stop_reason"),
+        )
+    except (KeyError, ValueError) as e:
+        raise RepositoryDataCorruptionError(f"Corrupt session row: {e}")
+
+
+def _cycle_from_row(row):
+    try:
+        lcs = row["last_completed_stage"]
+        return RuntimeCycleRecord(
+            cycle_id=row["cycle_id"],
+            session_id=row["session_id"],
+            symbol=row["symbol"],
+            started_at=row["started_at"],
+            completed_at=row.get("completed_at"),
+            status=RuntimeCycleStatus(row["status"]),
+            last_completed_stage=RuntimeCycleStatus(lcs) if lcs else None,
+            last_error=row.get("last_error"),
+        )
+    except (KeyError, ValueError) as e:
+        raise RepositoryDataCorruptionError(f"Corrupt cycle row: {e}")
+
+
+def _recovery_from_row(row):
+    try:
+        items = _parse_items(row["unresolved_items"])
+        return RecoveryStateRecord(
+            recovery_id=row["recovery_id"],
+            session_id=row["session_id"],
+            status=RecoveryStatus(row["status"]),
+            unresolved_items=items,
+            started_at=row["started_at"],
+            recovered_at=row.get("recovered_at"),
+        )
+    except (KeyError, ValueError) as e:
+        raise RepositoryDataCorruptionError(f"Corrupt recovery row: {e}")
+
+
     row = conn.execute(query, params).fetchone()
     if row is None:
         return None
@@ -91,10 +136,17 @@ class RuntimeSessionRepository:
     def conn(self):
         return self.db.connection
 
+    def _maybe_get(self, session_id):
+        row = self.conn.execute(
+            "SELECT session_id, started_at, mode, status, stopped_at, stop_reason FROM runtime_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        return _session_from_row(row) if row else None
+
     def create(self, session_id, mode, started_at=None):
         mode = RuntimeMode(mode)
         started_at = started_at or self.clock()
-        existing = self.get(session_id)
+        existing = self._maybe_get(session_id)
         if existing:
             if existing.mode == mode and existing.started_at == started_at:
                 return existing
@@ -110,9 +162,7 @@ class RuntimeSessionRepository:
         return self.get(session_id)
 
     def get(self, session_id):
-        row = _map_row(RuntimeSessionRecord, self.conn,
-                       "SELECT session_id, started_at, mode, status, stopped_at, stop_reason FROM runtime_sessions WHERE session_id = ?",
-                       (session_id,))
+        row = self._maybe_get(session_id)
         if row is None:
             raise RecordNotFoundError(f"session {session_id}")
         return row
@@ -166,7 +216,7 @@ class RuntimeSessionRepository:
             "WHERE status != ? ORDER BY started_at ASC, session_id ASC",
             (RuntimeSessionStatus.STOPPED.value,),
         ).fetchall()
-        return [RuntimeSessionRecord(**dict(r)) for r in rows]
+        return [_session_from_row(r) for r in rows]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -201,10 +251,12 @@ class RuntimeCycleRepository:
         return self.get(cycle_id)
 
     def _maybe_get(self, cycle_id):
-        return _map_row(RuntimeCycleRecord, self.conn,
-                        "SELECT cycle_id, session_id, symbol, started_at, completed_at, status, "
-                        "last_completed_stage, last_error FROM runtime_cycles WHERE cycle_id = ?",
-                        (cycle_id,))
+        row = self.conn.execute(
+            "SELECT cycle_id, session_id, symbol, started_at, completed_at, status, "
+            "last_completed_stage, last_error FROM runtime_cycles WHERE cycle_id = ?",
+            (cycle_id,),
+        ).fetchone()
+        return _cycle_from_row(row) if row else None
 
     def get(self, cycle_id):
         row = self._maybe_get(cycle_id)
@@ -269,7 +321,7 @@ class RuntimeCycleRepository:
             "WHERE session_id=? AND status != ? ORDER BY started_at ASC, cycle_id ASC",
             (session_id, RuntimeCycleStatus.COMPLETED.value),
         ).fetchall()
-        return [RuntimeCycleRecord(**dict(r)) for r in rows]
+        return [_cycle_from_row(r) for r in rows]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -316,7 +368,7 @@ class RecoveryStateRepository:
             return None
         d = dict(row)
         d["unresolved_items"] = _parse_items(d["unresolved_items"])
-        return RecoveryStateRecord(**d)
+        return _recovery_from_row(row)
 
     def get(self, recovery_id):
         row = self._maybe_get(recovery_id)
@@ -383,7 +435,6 @@ class RecoveryStateRepository:
         for r in rows:
             d = dict(r)
             d["unresolved_items"] = _parse_items(d["unresolved_items"])
-            results.append(RecoveryStateRecord(**d))
         return results
 
 
@@ -420,21 +471,3 @@ class RuntimeStateUnitOfWork:
 # Unit of Work
 # ═══════════════════════════════════════════════════════════════
 
-class UnitOfWork:
-    """Coordinates multiple repositories within a single transaction."""
-
-    def __init__(self, db, clock=None):
-        self.db = db
-        self.sessions = RuntimeSessionRepository(db, clock)
-        self.cycles = RuntimeCycleRepository(db, clock)
-        self.recovery = RecoveryStateRepository(db, clock)
-        self._tx = None
-
-    def __enter__(self):
-        self._tx = self.db.transaction(immediate=True)
-        self._tx.__enter__()
-        return self
-
-    def __exit__(self, *args):
-        if self._tx:
-            self._tx.__exit__(*args)

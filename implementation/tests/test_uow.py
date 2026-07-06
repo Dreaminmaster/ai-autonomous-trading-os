@@ -4,7 +4,7 @@ from pathlib import Path
 from atos.runtime_db import RuntimeDatabase
 from atos.runtime_migrations import MigrationManager, MIGRATION_PLAN
 from atos.runtime_repositories import (
-    RuntimeSessionRepository, RuntimeCycleRepository, RecoveryStateRepository, UnitOfWork,
+    RuntimeSessionRepository, RuntimeCycleRepository, RecoveryStateRepository, RuntimeStateUnitOfWork,
 )
 from atos.runtime_state import RuntimeSessionStatus, RuntimeCycleStatus, RecoveryStatus
 
@@ -22,7 +22,7 @@ def _setup():
 
 def test_uow_create_session_commits():
     db, sessions = _setup()
-    with UnitOfWork(db) as uow:
+    with RuntimeStateUnitOfWork(db) as uow:
         uow.sessions.create("s1", "paper")
     s = sessions.get("s1")
     assert s.status == RuntimeSessionStatus.STARTING
@@ -32,7 +32,7 @@ def test_uow_create_session_commits():
 def test_uow_rollback_on_exception():
     db, sessions = _setup()
     try:
-        with UnitOfWork(db) as uow:
+        with RuntimeStateUnitOfWork(db) as uow:
             uow.sessions.create("s1", "paper")
             raise ValueError("boom")
     except ValueError:
@@ -53,7 +53,7 @@ def test_uow_multi_repo_atomic():
     cycles = RuntimeCycleRepository(db, clock)
     recovery = RecoveryStateRepository(db, clock)
     try:
-        with UnitOfWork(db) as uow:
+        with RuntimeStateUnitOfWork(db) as uow:
             uow.sessions.create("s1", "paper")
             uow.sessions.transition("s1", "STARTING", "RECOVERING")
             uow.sessions.transition("s1", "RECOVERING", "READY")

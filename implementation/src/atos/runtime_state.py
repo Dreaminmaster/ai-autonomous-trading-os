@@ -162,4 +162,4 @@ def utc_now() -> str:
     import datetime
     if _utc_clock is not None:
         return _utc_clock()
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
