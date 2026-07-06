@@ -125,12 +125,10 @@ for b in best_two:
             f"{name}_la", f"{name}_la", str(policy_p)
         ], capture_output=True, text=True, timeout=Timeout, env=env)
         wrapper_rc = result.returncode
-        wrapper_rc = result.returncode
         from atos.lookahead_contract import consume_lookahead_status
         status_path = Path("freqtrade_data/backtest_results/{}_la_lookahead_status.json".format(name))
         c = consume_lookahead_status(wrapper_rc, status_path)
         b["lookahead"] = c["lookahead"]
-        status_path.write_text(json.dumps(c, indent=2, default=str))
     except Exception as e:
         b["lookahead"] = "CRASH:{}".format(e)
 

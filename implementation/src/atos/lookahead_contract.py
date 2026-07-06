@@ -2,6 +2,7 @@
 
 Single source of truth for consuming structured lookahead status JSON.
 Round1 must NOT double-parse — it can only read this format.
+Canonical status JSON is IMMUTABLE — this consumer is read-only.
 """
 import json
 from pathlib import Path
@@ -10,11 +11,7 @@ from pathlib import Path
 def consume_lookahead_status(wrapper_returncode: int, status_path: Path) -> dict:
     """Consume canonical lookahead status JSON, enforcing wrapper contract.
 
-    Args:
-        wrapper_returncode: exit code from subprocess.run wrapping the
-            canonical runner (NOT the Freqtrade returncode).
-        status_path: path to <output>_lookahead_status.json written by
-            the canonical runner.
+    READ-ONLY: Never writes to status_path.
 
     Returns:
         {
@@ -33,19 +30,19 @@ def consume_lookahead_status(wrapper_returncode: int, status_path: Path) -> dict
         "contract_status": "error",
     }
 
-    # ── P2: missing status file ───────────────────────────────
+    # ── missing status file ───────────────────────────────────
     if not status_path.exists():
         DEFAULT["lookahead"] = "ERROR_MISSING_EVIDENCE"
         return DEFAULT
 
-    # ── P2: invalid / malformed JSON ──────────────────────────
+    # ── invalid / malformed JSON ──────────────────────────────
     try:
         st = json.loads(status_path.read_text())
     except (json.JSONDecodeError, OSError) as e:
         DEFAULT["lookahead"] = "ERROR_MALFORMED_EVIDENCE:{}".format(type(e).__name__)
         return DEFAULT
 
-    # ── P2: schema validation ─────────────────────────────────
+    # ── schema validation ─────────────────────────────────────
     if not isinstance(st, dict):
         DEFAULT["lookahead"] = "ERROR_BAD_SCHEMA:not_dict"
         return DEFAULT
@@ -58,20 +55,29 @@ def consume_lookahead_status(wrapper_returncode: int, status_path: Path) -> dict
     parser_status = st.get("parser_status", "ERROR")
     has_bias = st.get("has_bias")
 
-    # ── Contract enforcement ─────────────────────────────────
+    # ── P1: True contract enforcement ─────────────────────────
     if wrapper_returncode == 0 and final in ("PASS", "PASS_WITH_RC_ANOMALY"):
-        contract = "ok"
-    elif wrapper_returncode == 0 and final in ("FAIL", "ERROR"):
-        contract = "error"
-    elif wrapper_returncode != 0 and final in ("FAIL", "ERROR"):
+        # A: wrapper success + canonical PASS → accept
+        lookahead = final
         contract = "ok"
     elif wrapper_returncode != 0 and final in ("PASS", "PASS_WITH_RC_ANOMALY"):
+        # B: wrapper failed but canonical says PASS → mismatch (evidence conflict)
+        lookahead = "ERROR_CONTRACT_MISMATCH"
         contract = "mismatch"
+    elif wrapper_returncode == 0 and final in ("FAIL", "ERROR"):
+        # C: wrapper success but canonical says FAIL/ERROR → propagate
+        lookahead = "ERROR_CONTRACT:{}".format(final)
+        contract = "error"
+    elif wrapper_returncode != 0 and final in ("FAIL", "ERROR"):
+        # D: wrapper failed + canonical FAIL/ERROR → propagate
+        lookahead = final
+        contract = "ok"
     else:
+        lookahead = "ERROR_CONTRACT:unknown"
         contract = "error"
 
     return {
-        "lookahead": final,
+        "lookahead": lookahead,
         "freqtrade_returncode": freq_rc,
         "parser_status": parser_status,
         "has_bias": has_bias,
