@@ -78,10 +78,10 @@ def _session_from_row(row):
             started_at=row["started_at"],
             mode=RuntimeMode(row["mode"]),
             status=RuntimeSessionStatus(row["status"]),
-            stopped_at=row.get("stopped_at"),
-            stop_reason=row.get("stop_reason"),
+            stopped_at=row["stopped_at"],
+            stop_reason=row["stop_reason"],
         )
-    except (KeyError, ValueError) as e:
+    except (KeyError, IndexError, TypeError, ValueError) as e:
         raise RepositoryDataCorruptionError(f"Corrupt session row: {e}")
 
 
@@ -93,12 +93,12 @@ def _cycle_from_row(row):
             session_id=row["session_id"],
             symbol=row["symbol"],
             started_at=row["started_at"],
-            completed_at=row.get("completed_at"),
+            completed_at=row["completed_at"],
             status=RuntimeCycleStatus(row["status"]),
             last_completed_stage=RuntimeCycleStatus(lcs) if lcs else None,
-            last_error=row.get("last_error"),
+            last_error=row["last_error"],
         )
-    except (KeyError, ValueError) as e:
+    except (KeyError, IndexError, TypeError, ValueError) as e:
         raise RepositoryDataCorruptionError(f"Corrupt cycle row: {e}")
 
 
@@ -111,9 +111,9 @@ def _recovery_from_row(row):
             status=RecoveryStatus(row["status"]),
             unresolved_items=items,
             started_at=row["started_at"],
-            recovered_at=row.get("recovered_at"),
+            recovered_at=row["recovered_at"],
         )
-    except (KeyError, ValueError) as e:
+    except (KeyError, IndexError, TypeError, ValueError) as e:
         raise RepositoryDataCorruptionError(f"Corrupt recovery row: {e}")
 
 
@@ -127,14 +127,55 @@ def _recovery_from_row(row):
 # RuntimeSessionRepository
 # ═══════════════════════════════════════════════════════════════
 
-class RuntimeSessionRepository:
-    def __init__(self, db: RuntimeDatabase, clock: Callable[[], str] = _utc):
-        self.db = db
-        self.clock = clock
+import contextlib
+import json
 
+class InvalidRepositoryInputError(RuntimeRepositoryError):
+    """Input data does not satisfy repository invariants."""
+
+def _validate_items_input(items):
+    if items is None or not isinstance(items, list):
+        raise InvalidRepositoryInputError(f"unresolved_items must be list, got {type(items).__name__}")
+
+def _dump_items(items):
+    return json.dumps(items, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+def _parse_items(raw):
+    if not raw:
+        return tuple()
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, UnicodeError) as e:
+        raise RepositoryDataCorruptionError(f"Corrupt unresolved_items: {e}")
+    if not isinstance(parsed, list):
+        raise RepositoryDataCorruptionError(f"unresolved_items is {type(parsed).__name__}, expected list")
+    return tuple(parsed)
+
+class _RepositoryBase:
+    def __init__(self, db, clock, connection=None, owns_transaction=True):
+        self._db = db
+        self._clock = clock
+        self._connection = connection
+        self._owns = owns_transaction
     @property
     def conn(self):
-        return self.db.connection
+        if self._connection is not None:
+            return self._connection
+        return self._db.connection
+    @contextlib.contextmanager
+    def _write_scope(self):
+        if not self._owns:
+            assert self._connection is not None
+            yield self._connection
+        else:
+            with self._db.transaction(immediate=True) as conn:
+                yield conn
+    def connect(self, conn):
+        return self.__class__(self._db, self._clock, connection=conn, owns_transaction=False)
+
+class RuntimeSessionRepository(_RepositoryBase):
+    def __init__(self, db, clock=None, connection=None, owns_transaction=True):
+        super().__init__(db, clock or _utc, connection=connection, owns_transaction=owns_transaction)
 
     def _maybe_get(self, session_id):
         row = self.conn.execute(
@@ -223,14 +264,9 @@ class RuntimeSessionRepository:
 # RuntimeCycleRepository
 # ═══════════════════════════════════════════════════════════════
 
-class RuntimeCycleRepository:
-    def __init__(self, db: RuntimeDatabase, clock: Callable[[], str] = _utc):
-        self.db = db
-        self.clock = clock
-
-    @property
-    def conn(self):
-        return self.db.connection
+class RuntimeCycleRepository(_RepositoryBase):
+    def __init__(self, db, clock=None, connection=None, owns_transaction=True):
+        super().__init__(db, clock or _utc, connection=connection, owns_transaction=owns_transaction)
 
     def create(self, cycle_id, session_id, symbol, started_at=None):
         started_at = started_at or self.clock()
@@ -328,14 +364,9 @@ class RuntimeCycleRepository:
 # RecoveryStateRepository
 # ═══════════════════════════════════════════════════════════════
 
-class RecoveryStateRepository:
-    def __init__(self, db: RuntimeDatabase, clock: Callable[[], str] = _utc):
-        self.db = db
-        self.clock = clock
-
-    @property
-    def conn(self):
-        return self.db.connection
+class RecoveryStateRepository(_RepositoryBase):
+    def __init__(self, db, clock=None, connection=None, owns_transaction=True):
+        super().__init__(db, clock or _utc, connection=connection, owns_transaction=owns_transaction)
 
     def create(self, recovery_id, session_id, unresolved_items, started_at=None):
         started_at = started_at or self.clock()
@@ -431,43 +462,31 @@ class RecoveryStateRepository:
             "WHERE session_id=? AND status != ? ORDER BY started_at ASC, recovery_id ASC",
             (session_id, RecoveryStatus.RESOLVED.value),
         ).fetchall()
-        results = []
-        for r in rows:
-            d = dict(r)
-            d["unresolved_items"] = _parse_items(d["unresolved_items"])
-        return results
+        return [_recovery_from_row(r) for r in rows]
 
 
 # ═══════════════════════════════════════════════════════════════
 # RuntimeStateUnitOfWork
 # ═══════════════════════════════════════════════════════════════
 
+
 class RuntimeStateUnitOfWork:
-    """Multi-repository atomic unit of work.
+    """Coordinates multiple repositories within a single outer transaction."""
 
-    All repositories share the same connection and transaction.
-    Commit on success, rollback on exception.
-    """
-
-    def __init__(self, db: RuntimeDatabase, clock: Callable[[], str] = _utc):
+    def __init__(self, db, clock=None):
         self.db = db
         self.clock = clock
-        self._tx = None
+        self._outer_tx = None
+        self._tx_conn = None
 
     def __enter__(self):
-        self._tx = self.db.transaction(immediate=True)
-        self._tx.__enter__()
-        self.sessions = RuntimeSessionRepository(self.db, self.clock)
-        self.cycles = RuntimeCycleRepository(self.db, self.clock)
-        self.recoveries = RecoveryStateRepository(self.db, self.clock)
+        self._outer_tx = self.db.transaction(immediate=True)
+        self._tx_conn = self._outer_tx.__enter__()
+        self.sessions = RuntimeSessionRepository(self.db, self.clock, connection=self._tx_conn, owns_transaction=False)
+        self.cycles = RuntimeCycleRepository(self.db, self.clock, connection=self._tx_conn, owns_transaction=False)
+        self.recoveries = RecoveryStateRepository(self.db, self.clock, connection=self._tx_conn, owns_transaction=False)
         return self
 
     def __exit__(self, *args):
-        if self._tx:
-            self._tx.__exit__(*args)
-
-
-# ═══════════════════════════════════════════════════════════════
-# Unit of Work
-# ═══════════════════════════════════════════════════════════════
-
+        if self._outer_tx:
+            self._outer_tx.__exit__(*args)

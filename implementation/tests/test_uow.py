@@ -1,4 +1,4 @@
-"""Tests for UnitOfWork."""
+"""Tests for RuntimeStateUnitOfWork."""
 import tempfile
 from pathlib import Path
 from atos.runtime_db import RuntimeDatabase
@@ -22,7 +22,7 @@ def _setup():
 
 def test_uow_create_session_commits():
     db, sessions = _setup()
-    with RuntimeStateUnitOfWork(db) as uow:
+    with RuntimeStateRuntimeStateUnitOfWork(db) as uow:
         uow.sessions.create("s1", "paper")
     s = sessions.get("s1")
     assert s.status == RuntimeSessionStatus.STARTING
@@ -32,7 +32,7 @@ def test_uow_create_session_commits():
 def test_uow_rollback_on_exception():
     db, sessions = _setup()
     try:
-        with RuntimeStateUnitOfWork(db) as uow:
+        with RuntimeStateRuntimeStateUnitOfWork(db) as uow:
             uow.sessions.create("s1", "paper")
             raise ValueError("boom")
     except ValueError:
@@ -53,12 +53,12 @@ def test_uow_multi_repo_atomic():
     cycles = RuntimeCycleRepository(db, clock)
     recovery = RecoveryStateRepository(db, clock)
     try:
-        with RuntimeStateUnitOfWork(db) as uow:
+        with RuntimeStateRuntimeStateUnitOfWork(db) as uow:
             uow.sessions.create("s1", "paper")
             uow.sessions.transition("s1", "STARTING", "RECOVERING")
             uow.sessions.transition("s1", "RECOVERING", "READY")
             uow.cycles.create("c1", "s1", "BTC/USDT")
-            uow.recovery.create("r1", "s1")
+            uow.recoveries.create("r1", "s1")
             raise ValueError("boom")
     except ValueError:
         pass
