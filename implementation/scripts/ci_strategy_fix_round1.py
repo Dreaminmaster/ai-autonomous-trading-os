@@ -174,6 +174,8 @@ with open("validation_reports/strategy_fix_round1.md", "w") as f:
     f.write("\n## Conclusion\n\n- Live trading: FORBIDDEN\n")
 
 # ── P0R: Structured JSON evidence (consumed by evidence_summary.py) ──
+from atos.evidence_summary import write_json_atomic
+import json as _json
 baseline = results[0]
 bm_metrics = integrity_checks if 'integrity_checks' in dir() else {k: "PASS" if str(cb_data.get(k,"")) == str(baseline.get("summary",{}).get(k,baseline.get(k.replace("total_trades","trades"),""))) else "FAIL" for k in integrity_keys}
 r1_json = {
@@ -191,9 +193,7 @@ r1_json = {
         for b in best_two
     ]
 }
-import json as _json
-r1_path = Path("validation_reports/strategy_fix_round1.json")
-r1_path.write_text(_json.dumps(r1_json, indent=2))
-print(f"Round1 JSON written to {r1_path}")
+write_json_atomic("validation_reports/strategy_fix_round1.json", r1_json)
+print(f"Round1 JSON written via atomic write")
 
 print(Path("validation_reports/strategy_fix_round1.md").read_text())
