@@ -19,4 +19,4 @@ jobs:
       - name: Tests
         run: |
           cd implementation
-          pytest
+          python -m pytest

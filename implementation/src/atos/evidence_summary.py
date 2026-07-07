@@ -120,11 +120,13 @@ def _validate_round1(r1,run_id,sha,errors,freq_dir):
             elif ob!=lv_expected:
                 errors.append(f"round1 variant {vn} output_base mismatch: {ob} != {lv_expected}")
 
-def generate_summary(head_sha,run_id,atos_job,freq_job,atos_dir,freq_dir):
+def generate_summary(head_sha,run_id,atos_job,freq_job,atos_dir,freq_dir,simple_ci_job=None):
     errors=[]
     a_dir=Path(atos_dir); f_dir=Path(freq_dir)
     if atos_job!="success": errors.append(f"atos-tests: {atos_job}")
     if freq_job!="success": errors.append(f"freqtrade: {freq_job}")
+    if simple_ci_job!="success":
+        errors.append(f"simple-ci: {simple_ci_job}")
     
     am,err=_read_json(a_dir/"evidence_manifest.json")
     if err: errors.append(err)
@@ -162,6 +164,7 @@ def generate_summary(head_sha,run_id,atos_job,freq_job,atos_dir,freq_dir):
     
     s={"schema_version":SCHEMA_VERSION,"run_id":run_id,"head_sha":head_sha,
        "atos_job_result":atos_job,"freqtrade_job_result":freq_job,
+       "simple_ci_job_result": simple_ci_job,
        "gate_status":"FAIL","canonical":canonical,"round1":round1,"live":"FORBIDDEN","errors":errors}
     if summary_pass(s,errors): s["gate_status"]="PASS"
     return s,errors
@@ -170,6 +173,7 @@ def summary_pass(s,errors):
     if errors: return False
     if s.get("atos_job_result")!="success": return False
     if s.get("freqtrade_job_result")!="success": return False
+    if s.get("simple_ci_job_result")!="success": return False
     c=s.get("canonical",{})
     for k in REQUIRED_CANONICAL_KEYS:
         v=c.get(k)
@@ -194,11 +198,11 @@ def write_json_atomic(filepath, data):
 
 # ═══════ CLI ═══════
 def _cli():
-    if len(sys.argv)!=7:
-        print("Usage: python -m atos.evidence_summary <head_sha> <run_id> <atos_result> <freq_result> <atos_dir> <freq_dir>",file=sys.stderr)
+    if len(sys.argv)!=8:
+        print("Usage: python -m atos.evidence_summary <head_sha> <run_id> <atos_result> <freq_result> <simple_ci_result> <atos_dir> <freq_dir>",file=sys.stderr)
         sys.exit(2)
-    sha,run_id,aj,fj,ad,fd=sys.argv[1:7]
-    s,err=generate_summary(sha,run_id,aj,fj,ad,fd)
+    sha,run_id,aj,fj,scj,ad,fd=sys.argv[1:8]
+    s,err=generate_summary(sha,run_id,aj,fj,ad,fd,simple_ci_job=scj)
     s["gate_status"]="FAIL"
     if summary_pass(s,err): s["gate_status"]="PASS"
     write_json_atomic("validation_summary.json",s)
