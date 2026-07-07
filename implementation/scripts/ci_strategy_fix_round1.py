@@ -124,7 +124,7 @@ for b in best_two:
         result = subprocess.run([
             "python3", "scripts/run_canonical_backtest.py",
             f"{name}_la", f"{name}_la", str(policy_p)
-        ], capture_output=True, text=True, timeout=BACKTEST_TIMEOUT_S, env=env)
+        ], capture_output=True, text=True, timeout=LOOKAHEAD_WRAPPER_TIMEOUT_S, env=env)
         wrapper_rc = result.returncode
         from atos.lookahead_contract import consume_lookahead_status
         status_path = Path("freqtrade_data/backtest_results/{}_la_lookahead_status.json".format(name))

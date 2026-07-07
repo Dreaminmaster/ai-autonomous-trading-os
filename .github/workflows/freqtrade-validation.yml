@@ -27,6 +27,11 @@ jobs:
         run: |
           cd implementation
           bash scripts/validate_no_secrets.sh 2>&1 | tee no_secret_scan.log
+      - name: Generate evidence manifest (atos-tests)
+        run: |
+          cat > implementation/evidence_manifest.json << 'EOFMANIFEST'
+          {"schema_version":1,"run_id":"${GITHUB_RUN_ID}","head_sha":"${GITHUB_SHA}","job":"atos-tests"}
+          EOFMANIFEST
       - name: CLI smoke test
         run: |
           cd implementation
@@ -81,6 +86,11 @@ jobs:
         run: |
           cd implementation
           python -m pytest tests/test_no_lookahead_strategy.py::test_resolve_candle_ts_reads_only_current_row_production_path -v --no-header -s
+      - name: Generate evidence manifest (freqtrade)
+        run: |
+          cat > implementation/evidence_manifest.json << 'EOFMANIFEST'
+          {"schema_version":1,"run_id":"${GITHUB_RUN_ID}","head_sha":"${GITHUB_SHA}","job":"freqtrade"}
+          EOFMANIFEST
       - name: Canonical fresh baseline
         run: |
           cd implementation
@@ -113,68 +123,38 @@ jobs:
           cd implementation
           mkdir -p validation_reports
           python3 scripts/ci_strategy_fix_round1.py
-      - name: Generate validation summary
-        if: always()
+    
+
+
+  validation-summary:
+    runs-on: ubuntu-latest
+    needs: [atos-tests, freqtrade]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
         run: |
           cd implementation
-          COMMIT=$(git -C .. rev-parse --short HEAD)
-          cat > validation_summary.md << ENDMD
-          # Validation Report
-          **Commit:** ${COMMIT}
-          **Run:** ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-          ## Tests
-          ` + "`" + "`" + "`" + `
-          $(tail -3 pytest.log 2>/dev/null)
-          ` + "`" + "`" + "`" + `
-          ## Secret Scan
-          ` + "`" + "`" + "`" + `
-          $(tail -3 no_secret_scan.log 2>/dev/null)
-          ` + "`" + "`" + "`" + `
-          ## Data Download
-          ` + "`" + "`" + "`" + `
-          $(tail -3 download_data.log 2>/dev/null)
-          ` + "`" + "`" + "`" + `
-          ## Backtest
-          ` + "`" + "`" + "`" + `
-          $(grep "STRATEGY SUMMARY" -A5 backtest.log 2>/dev/null || echo "not found")
-          ` + "`" + "`" + "`" + `
-          ## Lookahead
-          ` + "`" + "`" + "`" + `
-          $(tail -10 lookahead_analysis.log 2>/dev/null)
-          ` + "`" + "`" + "`" + `
-          ## Conclusion
-          | Metric | Status |
-          |--------|--------|
-          | Tests | $(grep -c passed pytest.log 2>/dev/null || echo "?") |
-          | Secret leak | $(grep -q 'No secret' no_secret_scan.log 2>/dev/null && echo 'CLEAN' || echo '?') |
-          | Strategy found | $(grep -q AISupervisedStrategy freqtrade_list_strategies.log 2>/dev/null && echo 'YES' || echo '?') |
-          | Lookahead | $(grep -q 'has_bias.*No' lookahead_analysis.log 2>/dev/null && echo 'PASS' || echo '?') |
-          | Profitability | NOT PROVEN |
-          | Live trading | FORBIDDEN |
-          ENDMD
-          cat validation_summary.md
-      - name: Upload Freqtrade artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
+          python -m pip install -e '.[dev,freqtrade]'
+      - uses: actions/download-artifact@v4
+        with:
+          name: atos-validation
+          path: atos_artifacts
+      - uses: actions/download-artifact@v4
         with:
           name: freqtrade-validation
+          path: freqtrade_artifacts
+      - name: Run evidence summary
+        run: |
+          cd implementation
+          python -m atos.evidence_summary "${GITHUB_SHA}" "${GITHUB_RUN_ID}" "${{ needs.atos-tests.result }}" "${{ needs.freqtrade.result }}" ../atos_artifacts ../freqtrade_artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validation-summary
           path: |
-            implementation/pytest.log
-            implementation/no_secret_scan.log
-            implementation/freqtrade_list_strategies.log
-            implementation/download_data.log
-            implementation/backtest.log
-            implementation/lookahead_analysis.log
-            implementation/pair_format_check.log
+            implementation/validation_summary.json
             implementation/validation_summary.md
-            implementation/validation_reports/*.md
-            implementation/freqtrade_data/backtest_results/canonical_baseline*.json
-            implementation/freqtrade_data/backtest_results/canonical_baseline*.log
-            implementation/freqtrade_data/backtest_results/round1_*.json
-            implementation/freqtrade_data/backtest_results/round1_*.log
-            implementation/freqtrade_data/backtest_results/round1_*_summary.json
-            implementation/freqtrade_data/backtest_results/exp_*_policy.json
-            implementation/freqtrade_data/backtest_results/*lookahead_status.json
-            implementation/freqtrade_data/backtest_results/*.json
-          retention-days: 14
-          if-no-files-found: ignore
+          if-no-files-found: error

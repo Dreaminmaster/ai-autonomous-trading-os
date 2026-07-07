@@ -106,7 +106,10 @@ def _validate_round1(r1,run_id,sha,errors,freq_dir):
             actual_fs=la_data.get("final_status","?")
             if actual_fs!=cp_fs: errors.append(f"round1 variant {vn} fs mismatch: copied={cp_fs} actual={actual_fs}")
             la_variant=la_data.get("variant")
-            if not isinstance(la_variant,str) or not la_variant.strip(): errors.append(f"round1 variant {vn} identity mismatch: la.variant={la_variant}")
+            if not isinstance(la_variant,str) or not la_variant.strip():
+                errors.append(f"round1 variant {vn} LA variant missing/empty/bad: {type(la_variant).__name__}")
+            elif la_variant != vn:
+                errors.append(f"round1 variant {vn} identity mismatch: la.variant={la_variant} != {vn}")
 
 def generate_summary(head_sha,run_id,atos_job,freq_job,atos_dir,freq_dir):
     errors=[]
