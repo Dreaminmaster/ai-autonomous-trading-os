@@ -44,8 +44,8 @@ def test_atos_wrong_job(): m=_manifest("wrong"); _fail("atos-tests", {"evidence_
 def _la_pass():
     return {"schema_version":1,"variant":"v1_la","output_base":"v1_la","parser_status":"PASS","has_bias":False,"fatal_markers_found":[],"final_status":"PASS","freqtrade_returncode":0,"explicit_no_bias_evidence":False,"evidence_source":"table","reason":"ok","evidence_log":"/tmp/x"}
 
-def _r1():
-    return {"schema_version":1,"run_id":"run42","head_sha":"abc123","baseline_integrity":"PASS","baseline_metrics":{k:"PASS"for k in["total_trades","profit_total_pct","winrate","max_drawdown_pct","profit_factor"]},"selected_variants":[{"variant":"v1","lookahead_variant":"v1_la","lookahead_status_file":"freqtrade_data/backtest_results/v1_la_lookahead_status.json","lookahead_final_status":"PASS"}]}
+def _r1(final_status="PASS"):
+    return {"schema_version":1,"run_id":"run42","head_sha":"abc123","baseline_integrity":"PASS","baseline_metrics":{k:"PASS"for k in["total_trades","profit_total_pct","winrate","max_drawdown_pct","profit_factor"]},"selected_variants":[{"variant":"v1","lookahead_variant":"v1_la","lookahead_status_file":"freqtrade_data/backtest_results/v1_la_lookahead_status.json","lookahead_final_status":final_status}]}
 
 def test_freq_pass():
     _pass("freqtrade", {"evidence_manifest.json":_manifest("freqtrade"),"freqtrade_data/backtest_results/canonical_baseline_summary.json":{"total_trades":244},"freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json":_la_pass(),"validation_reports/strategy_fix_round1.json":_r1(),"freqtrade_data/backtest_results/v1_la_lookahead_status.json":_la_pass()})

@@ -50,7 +50,7 @@ elif mode=="freqtrade":
         enb=la.get("explicit_no_bias_evidence")
         if type(enb) is not bool: fail("la enb")
         if fs=="PASS" and (ps!="PASS" or rc!=0 or fm or hb is not False): fail("PASS contract")
-        if fs=="PASS_WITH_RC_ANOMALY" and (ps!="PASS" or rc==0 or enb is not True or fm): fail("ANOMALY contract")
+        if fs=="PASS_WITH_RC_ANOMALY" and (ps!="PASS" or rc==0 or enb is not True or fm or hb is not False): fail("ANOMALY contract")
         ob=la.get("output_base","")
         if not isinstance(ob,str) or not ob: fail("la ob")
         if ob!=lv: fail("la ob!=")
