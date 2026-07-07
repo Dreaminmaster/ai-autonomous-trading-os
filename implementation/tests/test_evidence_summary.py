@@ -17,7 +17,7 @@ def _man(run_id, sha, job):
 def _can():
     return {"total_trades":244,"profit_total_pct":-16.12,"winrate":44.67,
             "max_drawdown_pct":17.85,"profit_factor":0.75,
-            "baseline_integrity":"CONFIRMED","pair_universe_integrity":"PASS","cache_mode":"none"}
+            "baseline_integrity":"CONFIRMED","pair_universe_integrity":"PASS","cache_mode":"none","run_id":"run1"}
 
 def _la_pass():
     return {"schema_version":1,"parser_status":"PASS","has_bias":False,
@@ -29,10 +29,10 @@ def _la_anom():
             "freqtrade_returncode":1,"explicit_no_bias_evidence":True}
 
 def _r1():
-    return {"schema_version":1,"run_id":"run1","baseline_integrity":"PASS",
+    return {"schema_version":1,"run_id":"run1","head_sha":"s1","baseline_integrity":"PASS",
             "baseline_metrics":{k:"PASS" for k in
             ["total_trades","profit_total_pct","winrate","max_drawdown_pct","profit_factor"]},
-            "selected_variants":[{"variant":"v1","lookahead_final_status":"PASS"}]}
+            "selected_variants":[{"variant":"v1","lookahead_status_file":"freqtrade_data/backtest_results/v1_la_lookahead_status.json","lookahead_final_status":"PASS"}]}
 
 # P0+P3
 def test_atos_upstream_fails():
@@ -168,7 +168,8 @@ def test_full_pass():
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","freqtrade")},
            {"path":"freqtrade_data/backtest_results/canonical_baseline_summary.json","content":_can()},
            {"path":"freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json","content":_la_pass()},
-           {"path":"validation_reports/strategy_fix_round1.json","content":_r1()})
+           {"path":"validation_reports/strategy_fix_round1.json","content":_r1()},
+           {"path":"freqtrade_data/backtest_results/v1_la_lookahead_status.json","content":_la_pass()})
     s,e=generate_summary("s1","run1","success","success",d,fd)
     assert summary_pass(s,e) is True
     assert "?" not in json.dumps(s)
@@ -178,6 +179,7 @@ def test_anomaly_pass():
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","freqtrade")},
            {"path":"freqtrade_data/backtest_results/canonical_baseline_summary.json","content":_can()},
            {"path":"freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json","content":_la_anom()},
-           {"path":"validation_reports/strategy_fix_round1.json","content":_r1()})
+           {"path":"validation_reports/strategy_fix_round1.json","content":_r1()},
+           {"path":"freqtrade_data/backtest_results/v1_la_lookahead_status.json","content":_la_pass()})
     s,e=generate_summary("s1","run1","success","success",d,fd)
     assert summary_pass(s,e) is True

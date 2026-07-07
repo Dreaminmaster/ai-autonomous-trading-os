@@ -173,4 +173,27 @@ with open("validation_reports/strategy_fix_round1.md", "w") as f:
         f.write(f"- **{b['name']}**: {b.get('trades','?')} trades, {b.get('profit','?')}%, WR {b.get('winrate','?')}, LA {b.get('lookahead','?')}\n")
     f.write("\n## Conclusion\n\n- Live trading: FORBIDDEN\n")
 
+# ── P0R: Structured JSON evidence (consumed by evidence_summary.py) ──
+baseline = results[0]
+bm_metrics = integrity_checks if 'integrity_checks' in dir() else {k: "PASS" if str(cb_data.get(k,"")) == str(baseline.get("summary",{}).get(k,baseline.get(k.replace("total_trades","trades"),""))) else "FAIL" for k in integrity_keys}
+r1_json = {
+    "schema_version": 1,
+    "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+    "head_sha": os.environ.get("GITHUB_SHA", "local"),
+    "baseline_integrity": integrity,
+    "baseline_metrics": bm_metrics,
+    "selected_variants": [
+        {
+            "variant": b.get("name", "unknown"),
+            "lookahead_status_file": f"freqtrade_data/backtest_results/{b.get('name', '?')}_la_lookahead_status.json",
+            "lookahead_final_status": b.get("lookahead", "?")
+        }
+        for b in best_two
+    ]
+}
+import json as _json
+r1_path = Path("validation_reports/strategy_fix_round1.json")
+r1_path.write_text(_json.dumps(r1_json, indent=2))
+print(f"Round1 JSON written to {r1_path}")
+
 print(Path("validation_reports/strategy_fix_round1.md").read_text())
