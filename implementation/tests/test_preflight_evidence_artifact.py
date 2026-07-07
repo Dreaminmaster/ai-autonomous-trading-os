@@ -25,6 +25,7 @@ def _pass(mode, files, **kw):
 def _fail(mode, files, **kw):
     rc, out, err = _run(mode, files, **kw)
     assert rc != 0, f"expected FAIL got rc=0"
+    # optional: set self.reason or check in specific tests
 
 def _manifest(job="atos-tests"):
     return {"schema_version":1,"run_id":"run42","head_sha":"abc123","job":job}
