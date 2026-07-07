@@ -32,6 +32,10 @@ jobs:
           cat > implementation/evidence_manifest.json << 'EOFMANIFEST'
           {"schema_version":1,"run_id":"${GITHUB_RUN_ID}","head_sha":"${GITHUB_SHA}","job":"atos-tests"}
           EOFMANIFEST
+      - name: Generate evidence manifest atos-tests
+        run: |
+          cd implementation
+          python scripts/generate_evidence_manifest.py atos-tests
       - name: CLI smoke test
         run: |
           cd implementation
@@ -91,6 +95,10 @@ jobs:
           cat > implementation/evidence_manifest.json << 'EOFMANIFEST'
           {"schema_version":1,"run_id":"${GITHUB_RUN_ID}","head_sha":"${GITHUB_SHA}","job":"freqtrade"}
           EOFMANIFEST
+      - name: Generate evidence manifest freqtrade
+        run: |
+          cd implementation
+          python scripts/generate_evidence_manifest.py freqtrade
       - name: Canonical fresh baseline
         run: |
           cd implementation
