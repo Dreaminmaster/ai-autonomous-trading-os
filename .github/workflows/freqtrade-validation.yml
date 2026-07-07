@@ -27,13 +27,6 @@ jobs:
         run: |
           cd implementation
           bash scripts/validate_no_secrets.sh 2>&1 | tee no_secret_scan.log
-      - name: Generate evidence manifest (atos-tests)
-        run: |
-          cat > implementation/evidence_manifest.json << 'EOFMANIFEST'
-          {"schema_version":1,"run_id":"${GITHUB_RUN_ID}","head_sha":"${GITHUB_SHA}","job":"atos-tests"}
-          EOFMANIFEST
-      - name: Generate evidence manifest atos-tests
-        run: |
           cd implementation
           python scripts/generate_evidence_manifest.py atos-tests
       - name: CLI smoke test
@@ -51,6 +44,7 @@ jobs:
         with:
           name: atos-validation
           path: |
+            implementation/evidence_manifest.json
             implementation/pytest.log
             implementation/no_secret_scan.log
             implementation/freqtrade_data/backtest_results/walk_forward_report.json
@@ -90,13 +84,6 @@ jobs:
         run: |
           cd implementation
           python -m pytest tests/test_no_lookahead_strategy.py::test_resolve_candle_ts_reads_only_current_row_production_path -v --no-header -s
-      - name: Generate evidence manifest (freqtrade)
-        run: |
-          cat > implementation/evidence_manifest.json << 'EOFMANIFEST'
-          {"schema_version":1,"run_id":"${GITHUB_RUN_ID}","head_sha":"${GITHUB_SHA}","job":"freqtrade"}
-          EOFMANIFEST
-      - name: Generate evidence manifest freqtrade
-        run: |
           cd implementation
           python scripts/generate_evidence_manifest.py freqtrade
       - name: Canonical fresh baseline
@@ -132,7 +119,19 @@ jobs:
           mkdir -p validation_reports
           python3 scripts/ci_strategy_fix_round1.py
     
-
+      - name: Upload Freqtrade artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freqtrade-validation
+          path: |
+            implementation/evidence_manifest.json
+            implementation/freqtrade_data/backtest_results/canonical_baseline_summary.json
+            implementation/freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json
+            implementation/validation_reports/strategy_fix_round1.json
+            implementation/validation_reports/strategy_fix_round1.md
+            implementation/freqtrade_data/backtest_results/round1_*_la_lookahead_status.json
+          if-no-files-found: error
 
   validation-summary:
     runs-on: ubuntu-latest
