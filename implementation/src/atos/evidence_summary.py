@@ -91,6 +91,9 @@ def _validate_round1(r1,run_id,sha,errors,freq_dir):
             if not isinstance(v,dict): errors.append(f"round1 variant not dict: {type(v).__name__}"); continue
             vn=v.get("variant")
             if not isinstance(vn,str) or not vn.strip(): errors.append(f"round1 variant name bad: {vn}"); continue
+            lv=v.get("lookahead_variant","")
+            if not isinstance(lv,str) or not lv.strip(): errors.append(f"round1 variant {vn} lookahead_variant empty/bad")
+            elif lv!=vn+"_la": errors.append(f"round1 variant {vn} lookahead_variant contract: {lv} != {vn}_la")
             sf=v.get("lookahead_status_file")
             if not isinstance(sf,str) or not sf.strip(): errors.append(f"round1 variant {vn} status_file bad: {sf}"); continue
             cp_fs=v.get("lookahead_final_status")
@@ -106,10 +109,16 @@ def _validate_round1(r1,run_id,sha,errors,freq_dir):
             actual_fs=la_data.get("final_status","?")
             if actual_fs!=cp_fs: errors.append(f"round1 variant {vn} fs mismatch: copied={cp_fs} actual={actual_fs}")
             la_variant=la_data.get("variant")
+            lv_expected=v.get("lookahead_variant","")
             if not isinstance(la_variant,str) or not la_variant.strip():
                 errors.append(f"round1 variant {vn} LA variant missing/empty/bad: {type(la_variant).__name__}")
-            elif la_variant != vn:
-                errors.append(f"round1 variant {vn} identity mismatch: la.variant={la_variant} != {vn}")
+            elif la_variant!=lv_expected:
+                errors.append(f"round1 variant {vn} identity mismatch: la.variant={la_variant} != {lv_expected}")
+            ob=la_data.get("output_base","")
+            if not isinstance(ob,str) or not ob:
+                errors.append(f"round1 variant {vn} LA output_base empty/bad")
+            elif ob!=lv_expected:
+                errors.append(f"round1 variant {vn} output_base mismatch: {ob} != {lv_expected}")
 
 def generate_summary(head_sha,run_id,atos_job,freq_job,atos_dir,freq_dir):
     errors=[]

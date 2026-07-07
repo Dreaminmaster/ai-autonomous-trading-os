@@ -21,18 +21,18 @@ def _can():
 
 def _la_pass():
     return {"schema_version":1,"parser_status":"PASS","has_bias":False,
-            "fatal_markers_found":[],"final_status":"PASS","freqtrade_returncode":0,"explicit_no_bias_evidence":False,"variant":"v1"}
+            "fatal_markers_found":[],"final_status":"PASS","freqtrade_returncode":0,"explicit_no_bias_evidence":False,"variant":"v1_la","output_base":"v1_la"}
 
 def _la_anom():
     return {"schema_version":1,"parser_status":"PASS","has_bias":False,
             "fatal_markers_found":[],"final_status":"PASS_WITH_RC_ANOMALY",
-            "freqtrade_returncode":1,"explicit_no_bias_evidence":True,"variant":"v1"}
+            "freqtrade_returncode":1,"explicit_no_bias_evidence":True,"variant":"v1_la","output_base":"v1_la"}
 
 def _r1():
     return {"schema_version":1,"run_id":"run1","head_sha":"s1","baseline_integrity":"PASS",
             "baseline_metrics":{k:"PASS" for k in
             ["total_trades","profit_total_pct","winrate","max_drawdown_pct","profit_factor"]},
-            "selected_variants":[{"variant":"v1","lookahead_status_file":"freqtrade_data/backtest_results/v1_la_lookahead_status.json","lookahead_final_status":"PASS"}]}
+            "selected_variants":[{"variant":"v1","lookahead_variant":"v1_la","lookahead_status_file":"freqtrade_data/backtest_results/v1_la_lookahead_status.json","lookahead_final_status":"PASS"}]}
 
 # P0+P3
 def test_atos_upstream_fails():
@@ -109,7 +109,7 @@ def test_la_fake_minimal():
            {"path":"freqtrade_data/backtest_results/canonical_baseline_summary.json","content":_can()},
            {"path":"validation_reports/strategy_fix_round1.json","content":_r1()},
            {"path":"freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json",
-            "content":{"final_status":"PASS","variant":"v1"}})
+            "content":{"final_status":"PASS","variant":"v1_la","output_base":"v1_la"}})
     s,e=generate_summary("s1","run1","success","success",d,fd)
     assert summary_pass(s,e) is False
 
