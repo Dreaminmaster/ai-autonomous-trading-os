@@ -27,6 +27,8 @@ jobs:
         run: |
           cd implementation
           bash scripts/validate_no_secrets.sh 2>&1 | tee no_secret_scan.log
+      - name: Generate evidence manifest (atos-tests)
+        run: |
           cd implementation
           python scripts/generate_evidence_manifest.py atos-tests
       - name: CLI smoke test
@@ -38,6 +40,10 @@ jobs:
         run: |
           cd implementation && mkdir -p freqtrade_data/backtest_results
           python3 scripts/ci_walk_forward.py
+      - name: Preflight evidence atos-tests
+        run: |
+          cd implementation
+          python scripts/preflight_evidence_artifact.py atos-tests
       - name: Upload ATOS artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -84,6 +90,8 @@ jobs:
         run: |
           cd implementation
           python -m pytest tests/test_no_lookahead_strategy.py::test_resolve_candle_ts_reads_only_current_row_production_path -v --no-header -s
+      - name: Generate evidence manifest (freqtrade)
+        run: |
           cd implementation
           python scripts/generate_evidence_manifest.py freqtrade
       - name: Canonical fresh baseline
@@ -119,6 +127,10 @@ jobs:
           mkdir -p validation_reports
           python3 scripts/ci_strategy_fix_round1.py
     
+      - name: Preflight evidence freqtrade
+        run: |
+          cd implementation
+          python scripts/preflight_evidence_artifact.py freqtrade
       - name: Upload Freqtrade artifacts
         if: always()
         uses: actions/upload-artifact@v4
