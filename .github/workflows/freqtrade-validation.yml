@@ -45,7 +45,7 @@ jobs:
           cd implementation
           python scripts/preflight_evidence_artifact.py atos-tests
       - name: Upload ATOS artifacts
-        if: always()
+        
         uses: actions/upload-artifact@v4
         with:
           name: atos-validation
@@ -132,7 +132,7 @@ jobs:
           cd implementation
           python scripts/preflight_evidence_artifact.py freqtrade
       - name: Upload Freqtrade artifacts
-        if: always()
+        
         uses: actions/upload-artifact@v4
         with:
           name: freqtrade-validation

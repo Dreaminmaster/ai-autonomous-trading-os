@@ -188,6 +188,7 @@ r1_json = {
     "selected_variants": [
         {
             "variant": b.get("name", "unknown"),
+            "lookahead_variant": f"{b.get('name', '?')}_la",
             "lookahead_status_file": f"freqtrade_data/backtest_results/{b.get('name', '?')}_la_lookahead_status.json",
             "lookahead_final_status": b.get("lookahead", "?")
         }
