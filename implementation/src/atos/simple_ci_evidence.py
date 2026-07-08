@@ -1,7 +1,4 @@
-"""Verify Simple CI workflow status for an exact head SHA via GitHub Actions API.
-
-Fail-closed: only exact-SHA + completed + success → PASS.
-"""
+"""Verify Simple CI workflow via GitHub Actions API. Fail-closed."""
 import json, os, urllib.request, urllib.error
 
 def _api(url, token):
@@ -18,48 +15,54 @@ def _api(url, token):
         raise RuntimeError(f"GitHub API error: {e}")
 
 def verify_simple_ci_for_sha(head_sha, repo="Dreaminmaster/ai-autonomous-trading-os", token=None):
-    """Fail-closed: any issue → RuntimeError. Returns evidence dict on success."""
     if not head_sha or len(head_sha) < 7:
         raise RuntimeError(f"Invalid head_sha: {head_sha!r}")
     token = token or os.environ.get("GITHUB_TOKEN", "")
     if not token:
         raise RuntimeError("GITHUB_TOKEN not set")
-    
-    url = f"https://api.github.com/repos/{repo}/actions/runs?head_sha={head_sha}&per_page=50"
-    data = _api(url, token)
-    
-    runs = data.get("workflow_runs", [])
+
+    # Step 1: Resolve workflow ID by path
+    wf_url = f"https://api.github.com/repos/{repo}/actions/workflows"
+    wf_data = _api(wf_url, token)
+    target_path = ".github/workflows/ci.yml"
+    target_name = "CI"
+    workflow_id = None
+    for w in wf_data.get("workflows", []):
+        if w.get("path") == target_path and w.get("name") == target_name and w.get("state") == "active":
+            workflow_id = w.get("id")
+            break
+    if workflow_id is None:
+        raise RuntimeError(f"Workflow not found: {target_path} ({target_name})")
+
+    # Step 2: Get runs for exact workflow_id + head_sha
+    runs_url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow_id}/runs?head_sha={head_sha}&per_page=20"
+    runs_data = _api(runs_url, token)
+    runs = runs_data.get("workflow_runs", [])
     if not runs:
-        raise RuntimeError(f"No CI runs found for SHA {head_sha[:8]}")
-    
-    simple_ci_runs = [r for r in runs if r.get("name") == "CI"]
-    if not simple_ci_runs:
-        raise RuntimeError(f"No Simple CI run found for SHA {head_sha[:8]}")
-    
-    # Pick most recent matching run
-    best = simple_ci_runs[0]
-    for r in simple_ci_runs[1:]:
-        if r.get("created_at", "") > best.get("created_at", ""):
-            best = r
-    
-    status = best.get("status")
-    conclusion = best.get("conclusion")
-    run_id = best.get("id")
-    run_sha = best.get("head_sha")
-    
+        raise RuntimeError(f"No Simple CI runs for SHA {head_sha[:8]}")
+    if len(runs) > 1:
+        raise RuntimeError(f"Ambiguous: {len(runs)} Simple CI runs for SHA {head_sha[:8]}")
+    r = runs[0]
+    run_id = r.get("id")
+    run_sha = r.get("head_sha")
+    status = r.get("status")
+    conclusion = r.get("conclusion")
+
     if run_sha != head_sha:
         raise RuntimeError(f"Simple CI head_sha mismatch: {run_sha[:8]} != {head_sha[:8]}")
     if status != "completed":
-        raise RuntimeError(f"Simple CI run {run_id} status={status}, expected completed")
+        raise RuntimeError(f"Simple CI not completed: {status}")
     if conclusion != "success":
-        raise RuntimeError(f"Simple CI run {run_id} conclusion={conclusion}, expected success")
-    
+        raise RuntimeError(f"Simple CI not success: {conclusion}")
+
     return {
         "schema_version": 1,
-        "workflow": "CI",
+        "workflow_id": workflow_id,
+        "workflow_name": target_name,
+        "workflow_path": target_path,
         "run_id": run_id,
         "head_sha": head_sha,
-        "status": "completed",
-        "conclusion": "success",
+        "status": status,
+        "conclusion": conclusion,
         "verified": True,
     }

@@ -51,31 +51,31 @@ def test_freqtrade_upstream_fails():
 def test_atos_sha_mismatch():
     d=_mk({"path":"evidence_manifest.json","content":_man("run1","WRONG","atos-tests")})
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","freqtrade")})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 def test_freq_sha_mismatch():
     d=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","atos-tests")})
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","WRONG","freqtrade")})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 def test_run_id_mismatch():
     d=_mk({"path":"evidence_manifest.json","content":_man("WRONG","s1","atos-tests")})
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","freqtrade")})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 def test_manifest_missing():
     d=tempfile.mkdtemp()
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","freqtrade")})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 def test_manifest_invalid_json():
     d=_mk({"path":"evidence_manifest.json","content":"not json"})
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","freqtrade")})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 # P1
@@ -83,7 +83,7 @@ def test_partial_canonical_fails():
     d=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","atos-tests")})
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","freqtrade")},
            {"path":"freqtrade_data/backtest_results/canonical_baseline_summary.json","content":{"total_trades":244}})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 def test_canonical_nan():
@@ -91,7 +91,7 @@ def test_canonical_nan():
     c=_can();c["profit_total_pct"]=float("nan")
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","freqtrade")},
            {"path":"freqtrade_data/backtest_results/canonical_baseline_summary.json","content":c})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 def test_canonical_bool():
@@ -99,7 +99,7 @@ def test_canonical_bool():
     c=_can();c["total_trades"]=True
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","freqtrade")},
            {"path":"freqtrade_data/backtest_results/canonical_baseline_summary.json","content":c})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 # P5
@@ -110,7 +110,7 @@ def test_la_fake_minimal():
            {"path":"validation_reports/strategy_fix_round1.json","content":_r1()},
            {"path":"freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json",
             "content":{"final_status":"PASS","variant":"v1_la","output_base":"v1_la"}})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 def test_la_anom_no_evidence():
@@ -120,7 +120,7 @@ def test_la_anom_no_evidence():
            {"path":"freqtrade_data/backtest_results/canonical_baseline_summary.json","content":_can()},
            {"path":"validation_reports/strategy_fix_round1.json","content":_r1()},
            {"path":"freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json","content":la})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 def test_la_with_fatal():
@@ -130,7 +130,7 @@ def test_la_with_fatal():
            {"path":"freqtrade_data/backtest_results/canonical_baseline_summary.json","content":_can()},
            {"path":"validation_reports/strategy_fix_round1.json","content":_r1()},
            {"path":"freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json","content":la})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 def test_la_has_bias_true():
@@ -140,26 +140,26 @@ def test_la_has_bias_true():
            {"path":"freqtrade_data/backtest_results/canonical_baseline_summary.json","content":_can()},
            {"path":"validation_reports/strategy_fix_round1.json","content":_r1()},
            {"path":"freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json","content":la})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 # P6
 def test_root_array():
     d=_mk({"path":"evidence_manifest.json","content":"[]"})
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","freqtrade")})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 def test_root_string():
     d=_mk({"path":"evidence_manifest.json","content":"\"PASS\""})
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","freqtrade")})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 def test_root_number():
     d=_mk({"path":"evidence_manifest.json","content":"1"})
     fd=_mk({"path":"evidence_manifest.json","content":_man("run1","s1","freqtrade")})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is False
 
 # Success
@@ -170,7 +170,7 @@ def test_full_pass():
            {"path":"freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json","content":_la_pass()},
            {"path":"validation_reports/strategy_fix_round1.json","content":_r1()},
            {"path":"freqtrade_data/backtest_results/v1_la_lookahead_status.json","content":_la_pass()})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is True
     assert "?" not in json.dumps(s)
 
@@ -181,5 +181,5 @@ def test_anomaly_pass():
            {"path":"freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json","content":_la_anom()},
            {"path":"validation_reports/strategy_fix_round1.json","content":_r1()},
            {"path":"freqtrade_data/backtest_results/v1_la_lookahead_status.json","content":_la_pass()})
-    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
+    s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":99,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is True

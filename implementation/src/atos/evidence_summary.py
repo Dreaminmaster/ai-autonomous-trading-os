@@ -18,10 +18,11 @@ def _validate_simple_ci_evidence(sci, expected_head_sha):
     if not isinstance(sci, dict):
         errs.append(f"simple_ci not dict: {type(sci).__name__}")
         return errs
-    for k in ("schema_version","workflow_path","run_id","head_sha","status","conclusion","verified"):
+    for k in ("schema_version","workflow_id","workflow_path","run_id","head_sha","status","conclusion","verified"):
         if k not in sci: errs.append(f"simple_ci missing key: {k}")
     sv = sci.get("schema_version")
     if type(sv) is not int or sv != 1: errs.append(f"simple_ci schema_version not int(1): {sv}")
+    if sci.get("workflow_id") is None or type(sci.get("workflow_id")) is not int: errs.append("simple_ci workflow_id missing/wrong type")
     if sci.get("workflow_path") != ".github/workflows/ci.yml": errs.append("simple_ci wrong workflow_path")
     if sci.get("head_sha") != expected_head_sha: errs.append("simple_ci head_sha mismatch")
     if sci.get("status") != "completed": errs.append("simple_ci not completed")
