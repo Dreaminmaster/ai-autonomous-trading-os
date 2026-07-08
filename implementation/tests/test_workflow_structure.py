@@ -87,3 +87,36 @@ def test_validation_summary_fail_closed(wf):
     vs = wf["jobs"]["validation-summary"]
     has_always = any("always()" in str(s) for s in vs.get("steps",[]))
     assert not has_always
+
+def test_pytest_pipefail():
+    raw = open(WORKFLOW_PATH).read()
+    assert 'set -o pipefail; python -m pytest' in raw, 'pytest step missing pipefail'
+
+def test_secret_scan_pipefail():
+    raw = open(WORKFLOW_PATH).read()
+    assert 'set -o pipefail; bash scripts/validate_no_secrets' in raw, 'secret scan step missing pipefail'
+
+def test_atos_download_name_path():
+    import yaml; wf = yaml.safe_load(open(WORKFLOW_PATH))
+    vs = wf['jobs']['validation-summary']['steps']
+    dl = [s for s in vs if 'download-artifact' in str(s.get('uses',''))]
+    atos = [d for d in dl if d.get('with',{}).get('name')=='atos-validation']
+    assert len(atos)==1, f'atos download missing: found {len(atos)}'
+    assert atos[0]['with']['path']=='atos_artifacts'
+
+def test_freqtrade_download_name_path():
+    import yaml; wf = yaml.safe_load(open(WORKFLOW_PATH))
+    vs = wf['jobs']['validation-summary']['steps']
+    dl = [s for s in vs if 'download-artifact' in str(s.get('uses',''))]
+    freq = [d for d in dl if d.get('with',{}).get('name')=='freqtrade-validation']
+    assert len(freq)==1, f'freqtrade download missing: found {len(freq)}'
+    assert freq[0]['with']['path']=='freqtrade_artifacts'
+
+def test_validation_summary_upload():
+    import yaml; wf = yaml.safe_load(open(WORKFLOW_PATH))
+    vs = wf['jobs']['validation-summary']['steps']
+    uploads = [s for s in vs if 'upload-artifact' in str(s.get('uses',''))]
+    val = [u for u in uploads if u.get('with',{}).get('name')=='validation-summary']
+    assert len(val)==1, f'validation-summary upload missing: found {len(val)}'
+    assert val[0]['with']['if-no-files-found']=='error'
+

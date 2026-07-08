@@ -170,6 +170,8 @@ jobs:
           name: freqtrade-validation
           path: freqtrade_artifacts
       - name: Verify Simple CI
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           cd implementation
           python -c "from atos.simple_ci_evidence import verify_simple_ci_for_sha; from atos.evidence_summary import write_json_atomic; r=verify_simple_ci_for_sha('${GITHUB_SHA}'); write_json_atomic('simple_ci_evidence.json', r); print('Simple CI verified: run_id='+str(r['run_id']))"
