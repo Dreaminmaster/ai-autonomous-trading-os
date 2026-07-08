@@ -147,6 +147,9 @@ jobs:
 
   validation-summary:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     needs: [atos-tests, freqtrade]
     if: always()
     steps:
@@ -166,10 +169,15 @@ jobs:
         with:
           name: freqtrade-validation
           path: freqtrade_artifacts
+      - name: Verify Simple CI
+        run: |
+          cd implementation
+          python -c "from atos.simple_ci_evidence import verify_simple_ci_for_sha; r=verify_simple_ci_for_sha('${GITHUB_SHA}'); print(r['conclusion'])"
       - name: Run evidence summary
         run: |
           cd implementation
-          python -m atos.evidence_summary "${GITHUB_SHA}" "${GITHUB_RUN_ID}" "${{ needs.atos-tests.result }}" "${{ needs.freqtrade.result }}" "" ../atos_artifacts ../freqtrade_artifacts
+          SCI_RESULT=$(python -c "from atos.simple_ci_evidence import verify_simple_ci_for_sha; print(verify_simple_ci_for_sha('${GITHUB_SHA}')['conclusion'])")
+          python -m atos.evidence_summary "${GITHUB_SHA}" "${GITHUB_RUN_ID}" "${{ needs.atos-tests.result }}" "${{ needs.freqtrade.result }}" "${SCI_RESULT}" ../atos_artifacts ../freqtrade_artifacts
       - uses: actions/upload-artifact@v4
         with:
           name: validation-summary
