@@ -22,11 +22,11 @@ jobs:
       - name: Run pytest
         run: |
           cd implementation
-          python -m pytest -v --tb=long 2>&1 | tee pytest.log
+          set -o pipefail; python -m pytest -v --tb=long 2>&1 | tee pytest.log
       - name: Secret leakage scan
         run: |
           cd implementation
-          bash scripts/validate_no_secrets.sh 2>&1 | tee no_secret_scan.log
+          set -o pipefail; bash scripts/validate_no_secrets.sh 2>&1 | tee no_secret_scan.log
       - name: Generate evidence manifest (atos-tests)
         run: |
           cd implementation

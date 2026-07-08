@@ -23,6 +23,8 @@ def _validate_simple_ci_evidence(sci, expected_head_sha):
     sv = sci.get("schema_version")
     if type(sv) is not int or sv != 1: errs.append(f"simple_ci schema_version not int(1): {sv}")
     if sci.get("workflow_id") is None or type(sci.get("workflow_id")) is not int: errs.append("simple_ci workflow_id missing/wrong type")
+    EXPECTED_CI_WORKFLOW_ID = 305746223  # .github/workflows/ci.yml
+    if sci.get("workflow_id") != EXPECTED_CI_WORKFLOW_ID: errs.append(f"simple_ci wrong workflow_id: {sci.get("workflow_id")} != {EXPECTED_CI_WORKFLOW_ID}")
     if sci.get("workflow_path") != ".github/workflows/ci.yml": errs.append("simple_ci wrong workflow_path")
     if sci.get("head_sha") != expected_head_sha: errs.append("simple_ci head_sha mismatch")
     if sci.get("status") != "completed": errs.append("simple_ci not completed")
