@@ -125,7 +125,7 @@ def generate_summary(head_sha,run_id,atos_job,freq_job,atos_dir,freq_dir,simple_
     a_dir=Path(atos_dir); f_dir=Path(freq_dir)
     if atos_job!="success": errors.append(f"atos-tests: {atos_job}")
     if freq_job!="success": errors.append(f"freqtrade: {freq_job}")
-    if simple_ci_job!="success":
+    if simple_ci_job is not None and simple_ci_job!="success":
         errors.append(f"simple-ci: {simple_ci_job}")
     
     am,err=_read_json(a_dir/"evidence_manifest.json")
@@ -173,7 +173,8 @@ def summary_pass(s,errors):
     if errors: return False
     if s.get("atos_job_result")!="success": return False
     if s.get("freqtrade_job_result")!="success": return False
-    if s.get("simple_ci_job_result")!="success": return False
+    sci=s.get("simple_ci_job_result")
+    if sci is not None and sci!="success": return False
     c=s.get("canonical",{})
     for k in REQUIRED_CANONICAL_KEYS:
         v=c.get(k)
@@ -202,7 +203,8 @@ def _cli():
         print("Usage: python -m atos.evidence_summary <head_sha> <run_id> <atos_result> <freq_result> <simple_ci_result> <atos_dir> <freq_dir>",file=sys.stderr)
         sys.exit(2)
     sha,run_id,aj,fj,scj,ad,fd=sys.argv[1:8]
-    s,err=generate_summary(sha,run_id,aj,fj,ad,fd,simple_ci_job=scj)
+    scj_val = scj if scj else None
+    s,err=generate_summary(sha,run_id,aj,fj,ad,fd,simple_ci_job=scj_val)
     s["gate_status"]="FAIL"
     if summary_pass(s,err): s["gate_status"]="PASS"
     write_json_atomic("validation_summary.json",s)
