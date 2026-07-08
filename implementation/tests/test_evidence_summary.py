@@ -183,3 +183,51 @@ def test_anomaly_pass():
            {"path":"freqtrade_data/backtest_results/v1_la_lookahead_status.json","content":_la_pass()})
     s,e=generate_summary("s1","run1","success","success",d,fd,simple_ci_evidence={"schema_version":1,"workflow_id":305746223,"workflow_path":".github/workflows/ci.yml","run_id":999,"head_sha":"s1","status":"completed","conclusion":"success","verified":True})
     assert summary_pass(s,e) is True
+def test_real_producer_output_passes_consumer():
+    """Prove real verifier output dict passes consumer."""
+    sci = {
+        "schema_version": 1,
+        "workflow_id": 305746223,
+        "workflow_name": "CI",
+        "workflow_path": ".github/workflows/ci.yml",
+        "run_id": 789,
+        "head_sha": "s1",
+        "status": "completed",
+        "conclusion": "success",
+        "verified": True
+    }
+    import tempfile, pathlib
+    ad = tempfile.mkdtemp()
+    fd = tempfile.mkdtemp()
+    a_base = pathlib.Path(ad)
+    f_base = pathlib.Path(fd)
+    from atos.evidence_summary import write_json_atomic
+    write_json_atomic(str(a_base / "evidence_manifest.json"), {"schema_version":1,"run_id":"run1","head_sha":"s1","job":"atos-tests"})
+    write_json_atomic(str(f_base / "evidence_manifest.json"), {"schema_version":1,"run_id":"run1","head_sha":"s1","job":"freqtrade"})
+    (f_base / "freqtrade_data/backtest_results").mkdir(parents=True)
+    write_json_atomic(str(f_base / "freqtrade_data/backtest_results/canonical_baseline_summary.json"), {"total_trades":244,"profit_total_pct":-16.12,"winrate":44.67,"max_drawdown_pct":17.85,"profit_factor":0.75,"baseline_integrity":"CONFIRMED","pair_universe_integrity":"PASS","cache_mode":"none","run_id":"run1"})
+    write_json_atomic(str(f_base / "freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json"), {"schema_version":1,"parser_status":"PASS","has_bias":False,"fatal_markers_found":[],"final_status":"PASS","freqtrade_returncode":0,"explicit_no_bias_evidence":False,"variant":"v1_la","output_base":"v1_la"})
+    (f_base / "validation_reports").mkdir(parents=True)
+    write_json_atomic(str(f_base / "validation_reports/strategy_fix_round1.json"), {"schema_version":1,"run_id":"run1","head_sha":"s1","baseline_integrity":"PASS","baseline_metrics":{k:"PASS" for k in ["total_trades","profit_total_pct","winrate","max_drawdown_pct","profit_factor"]},"selected_variants":[{"variant":"v1","lookahead_variant":"v1_la","lookahead_status_file":"freqtrade_data/backtest_results/v1_la_lookahead_status.json","lookahead_final_status":"PASS"}]})
+    write_json_atomic(str(f_base / "freqtrade_data/backtest_results/v1_la_lookahead_status.json"), {"schema_version":1,"parser_status":"PASS","has_bias":False,"fatal_markers_found":[],"final_status":"PASS","freqtrade_returncode":0,"explicit_no_bias_evidence":False,"variant":"v1_la","output_base":"v1_la"})
+    s, err = generate_summary("s1","run1","success","success",ad,fd,simple_ci_evidence=sci)
+    assert summary_pass(s, err), f"Integration failed: {err}"
+    assert s["simple_ci"]["workflow_id"] == 305746223
+
+def test_wrong_workflow_id_fails():
+    sci = {"schema_version":1,"workflow_id":999,"workflow_path":".github/workflows/ci.yml","run_id":789,"head_sha":"s1","status":"completed","conclusion":"success","verified":True,"workflow_name":"CI"}
+    import tempfile, pathlib
+    ad = tempfile.mkdtemp(); fd = tempfile.mkdtemp()
+    a_base = pathlib.Path(ad); f_base = pathlib.Path(fd)
+    from atos.evidence_summary import write_json_atomic
+    write_json_atomic(str(a_base/"evidence_manifest.json"),{"schema_version":1,"run_id":"run1","head_sha":"s1","job":"atos-tests"})
+    write_json_atomic(str(f_base/"evidence_manifest.json"),{"schema_version":1,"run_id":"run1","head_sha":"s1","job":"freqtrade"})
+    (f_base/"freqtrade_data/backtest_results").mkdir(parents=True)
+    write_json_atomic(str(f_base/"freqtrade_data/backtest_results/canonical_baseline_summary.json"),{"total_trades":244,"profit_total_pct":-16.12,"winrate":44.67,"max_drawdown_pct":17.85,"profit_factor":0.75,"baseline_integrity":"CONFIRMED","pair_universe_integrity":"PASS","cache_mode":"none","run_id":"run1"})
+    write_json_atomic(str(f_base/"freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json"),{"schema_version":1,"parser_status":"PASS","has_bias":False,"fatal_markers_found":[],"final_status":"PASS","freqtrade_returncode":0,"explicit_no_bias_evidence":False,"variant":"v1_la","output_base":"v1_la"})
+    (f_base/"validation_reports").mkdir(parents=True)
+    write_json_atomic(str(f_base/"validation_reports/strategy_fix_round1.json"),{"schema_version":1,"run_id":"run1","head_sha":"s1","baseline_integrity":"PASS","baseline_metrics":{k:"PASS" for k in ["total_trades","profit_total_pct","winrate","max_drawdown_pct","profit_factor"]},"selected_variants":[{"variant":"v1","lookahead_variant":"v1_la","lookahead_status_file":"freqtrade_data/backtest_results/v1_la_lookahead_status.json","lookahead_final_status":"PASS"}]})
+    write_json_atomic(str(f_base/"freqtrade_data/backtest_results/v1_la_lookahead_status.json"),{"schema_version":1,"parser_status":"PASS","has_bias":False,"fatal_markers_found":[],"final_status":"PASS","freqtrade_returncode":0,"explicit_no_bias_evidence":False,"variant":"v1_la","output_base":"v1_la"})
+    s, err = generate_summary("s1","run1","success","success",ad,fd,simple_ci_evidence=sci)
+    assert not summary_pass(s, err)
+
