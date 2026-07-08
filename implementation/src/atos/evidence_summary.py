@@ -13,6 +13,22 @@ VALID_LA_FINAL = frozenset({"PASS","PASS_WITH_RC_ANOMALY"})
 LA_REQUIRED_KEYS = ("schema_version","parser_status","has_bias","fatal_markers_found","final_status","freqtrade_returncode","explicit_no_bias_evidence")
 MANIFEST_REQUIRED_KEYS = ("schema_version","run_id","head_sha","job")
 
+def _validate_simple_ci_evidence(sci, expected_head_sha):
+    errs = []
+    if not isinstance(sci, dict):
+        errs.append(f"simple_ci not dict: {type(sci).__name__}")
+        return errs
+    for k in ("schema_version","workflow_path","run_id","head_sha","status","conclusion","verified"):
+        if k not in sci: errs.append(f"simple_ci missing key: {k}")
+    sv = sci.get("schema_version")
+    if type(sv) is not int or sv != 1: errs.append(f"simple_ci schema_version not int(1): {sv}")
+    if sci.get("workflow_path") != ".github/workflows/ci.yml": errs.append("simple_ci wrong workflow_path")
+    if sci.get("head_sha") != expected_head_sha: errs.append("simple_ci head_sha mismatch")
+    if sci.get("status") != "completed": errs.append("simple_ci not completed")
+    if sci.get("conclusion") != "success": errs.append("simple_ci not success")
+    if sci.get("verified") is not True: errs.append("simple_ci verified is not True")
+    return errs
+
 def _read_json(path):
     p=Path(path)
     if not p.exists(): return None,f"MISSING:{path}"
@@ -120,13 +136,14 @@ def _validate_round1(r1,run_id,sha,errors,freq_dir):
             elif ob!=lv_expected:
                 errors.append(f"round1 variant {vn} output_base mismatch: {ob} != {lv_expected}")
 
-def generate_summary(head_sha,run_id,atos_job,freq_job,atos_dir,freq_dir,simple_ci_job=None):
+def generate_summary(head_sha,run_id,atos_job,freq_job,atos_dir,freq_dir,simple_ci_evidence=None):
     errors=[]
     a_dir=Path(atos_dir); f_dir=Path(freq_dir)
     if atos_job!="success": errors.append(f"atos-tests: {atos_job}")
     if freq_job!="success": errors.append(f"freqtrade: {freq_job}")
-    if simple_ci_job is not None and simple_ci_job!="success":
-        errors.append(f"simple-ci: {simple_ci_job}")
+    if simple_ci_evidence is not None:
+        sci_errs = _validate_simple_ci_evidence(simple_ci_evidence, head_sha)
+        errors.extend(sci_errs)
     
     am,err=_read_json(a_dir/"evidence_manifest.json")
     if err: errors.append(err)
@@ -164,7 +181,7 @@ def generate_summary(head_sha,run_id,atos_job,freq_job,atos_dir,freq_dir,simple_
     
     s={"schema_version":SCHEMA_VERSION,"run_id":run_id,"head_sha":head_sha,
        "atos_job_result":atos_job,"freqtrade_job_result":freq_job,
-       "simple_ci_job_result": simple_ci_job,
+       "simple_ci": simple_ci_evidence,
        "gate_status":"FAIL","canonical":canonical,"round1":round1,"live":"FORBIDDEN","errors":errors}
     if summary_pass(s,errors): s["gate_status"]="PASS"
     return s,errors
@@ -173,8 +190,10 @@ def summary_pass(s,errors):
     if errors: return False
     if s.get("atos_job_result")!="success": return False
     if s.get("freqtrade_job_result")!="success": return False
-    sci=s.get("simple_ci_job_result")
-    if sci is not None and sci!="success": return False
+    sci=s.get("simple_ci")
+    if sci is None: return False
+    if sci.get("verified") is not True: return False
+    if sci.get("head_sha") != s.get("head_sha"): return False
     c=s.get("canonical",{})
     for k in REQUIRED_CANONICAL_KEYS:
         v=c.get(k)
@@ -202,9 +221,12 @@ def _cli():
     if len(sys.argv)!=8:
         print("Usage: python -m atos.evidence_summary <head_sha> <run_id> <atos_result> <freq_result> <simple_ci_result> <atos_dir> <freq_dir>",file=sys.stderr)
         sys.exit(2)
-    sha,run_id,aj,fj,scj,ad,fd=sys.argv[1:8]
-    scj_val = scj if scj else None
-    s,err=generate_summary(sha,run_id,aj,fj,ad,fd,simple_ci_job=scj_val)
+    sha,run_id,aj,fj,ad,fd=sys.argv[1:7]
+    sci_evidence_path = sys.argv[7] if len(sys.argv)>7 else None
+    sci_evidence = None
+    if sci_evidence_path:
+        sci_evidence = json.loads(Path(sci_evidence_path).read_text())
+    s,err=generate_summary(sha,run_id,aj,fj,ad,fd,simple_ci_evidence=sci_evidence)
     s["gate_status"]="FAIL"
     if summary_pass(s,err): s["gate_status"]="PASS"
     write_json_atomic("validation_summary.json",s)

@@ -166,19 +166,14 @@ jobs:
           name: atos-validation
           path: atos_artifacts
       - uses: actions/download-artifact@v4
-        with:
-          name: freqtrade-validation
-          path: freqtrade_artifacts
       - name: Verify Simple CI
         run: |
           cd implementation
-          python -c "from atos.simple_ci_evidence import verify_simple_ci_for_sha; r=verify_simple_ci_for_sha('${GITHUB_SHA}'); print(r['conclusion'])"
+          python -c "from atos.simple_ci_evidence import verify_simple_ci_for_sha; from atos.evidence_summary import write_json_atomic; r=verify_simple_ci_for_sha('${GITHUB_SHA}'); write_json_atomic('simple_ci_evidence.json', r); print('Simple CI verified: run_id='+str(r['run_id']))"
       - name: Run evidence summary
         run: |
           cd implementation
-          SCI_RESULT=$(python -c "from atos.simple_ci_evidence import verify_simple_ci_for_sha; print(verify_simple_ci_for_sha('${GITHUB_SHA}')['conclusion'])")
-          python -m atos.evidence_summary "${GITHUB_SHA}" "${GITHUB_RUN_ID}" "${{ needs.atos-tests.result }}" "${{ needs.freqtrade.result }}" "${SCI_RESULT}" ../atos_artifacts ../freqtrade_artifacts
-      - uses: actions/upload-artifact@v4
+          python -m atos.evidence_summary "${GITHUB_SHA}" "${GITHUB_RUN_ID}" "${{ needs.atos-tests.result }}" "${{ needs.freqtrade.result }}" ../atos_artifacts ../freqtrade_artifacts simple_ci_evidence.json
         with:
           name: validation-summary
           path: |
