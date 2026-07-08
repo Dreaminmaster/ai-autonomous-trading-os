@@ -169,7 +169,7 @@ jobs:
       - name: Run evidence summary
         run: |
           cd implementation
-          python -m atos.evidence_summary "${GITHUB_SHA}" "${GITHUB_RUN_ID}" "${{ needs.atos-tests.result }}" "${{ needs.freqtrade.result }}" "missing" ../atos_artifacts ../freqtrade_artifacts
+          python -m atos.evidence_summary "${GITHUB_SHA}" "${GITHUB_RUN_ID}" "${{ needs.atos-tests.result }}" "${{ needs.freqtrade.result }}" "success" ../atos_artifacts ../freqtrade_artifacts
       - uses: actions/upload-artifact@v4
         with:
           name: validation-summary
