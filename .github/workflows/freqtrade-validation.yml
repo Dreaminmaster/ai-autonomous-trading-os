@@ -22,11 +22,15 @@ jobs:
       - name: Run pytest
         run: |
           cd implementation
-          python -m pytest -v --tb=long 2>&1 | tee pytest.log
+          set -o pipefail; python -m pytest -v --tb=long 2>&1 | tee pytest.log
       - name: Secret leakage scan
         run: |
           cd implementation
-          bash scripts/validate_no_secrets.sh 2>&1 | tee no_secret_scan.log
+          set -o pipefail; bash scripts/validate_no_secrets.sh 2>&1 | tee no_secret_scan.log
+      - name: Generate evidence manifest (atos-tests)
+        run: |
+          cd implementation
+          python scripts/generate_evidence_manifest.py atos-tests
       - name: CLI smoke test
         run: |
           cd implementation
@@ -36,12 +40,17 @@ jobs:
         run: |
           cd implementation && mkdir -p freqtrade_data/backtest_results
           python3 scripts/ci_walk_forward.py
+      - name: Preflight evidence atos-tests
+        run: |
+          cd implementation
+          python scripts/preflight_evidence_artifact.py atos-tests
       - name: Upload ATOS artifacts
-        if: always()
+        
         uses: actions/upload-artifact@v4
         with:
           name: atos-validation
           path: |
+            implementation/evidence_manifest.json
             implementation/pytest.log
             implementation/no_secret_scan.log
             implementation/freqtrade_data/backtest_results/walk_forward_report.json
@@ -81,6 +90,10 @@ jobs:
         run: |
           cd implementation
           python -m pytest tests/test_no_lookahead_strategy.py::test_resolve_candle_ts_reads_only_current_row_production_path -v --no-header -s
+      - name: Generate evidence manifest (freqtrade)
+        run: |
+          cd implementation
+          python scripts/generate_evidence_manifest.py freqtrade
       - name: Canonical fresh baseline
         run: |
           cd implementation
@@ -113,68 +126,63 @@ jobs:
           cd implementation
           mkdir -p validation_reports
           python3 scripts/ci_strategy_fix_round1.py
-      - name: Generate validation summary
-        if: always()
+    
+      - name: Preflight evidence freqtrade
         run: |
           cd implementation
-          COMMIT=$(git -C .. rev-parse --short HEAD)
-          cat > validation_summary.md << ENDMD
-          # Validation Report
-          **Commit:** ${COMMIT}
-          **Run:** ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-          ## Tests
-          ` + "`" + "`" + "`" + `
-          $(tail -3 pytest.log 2>/dev/null)
-          ` + "`" + "`" + "`" + `
-          ## Secret Scan
-          ` + "`" + "`" + "`" + `
-          $(tail -3 no_secret_scan.log 2>/dev/null)
-          ` + "`" + "`" + "`" + `
-          ## Data Download
-          ` + "`" + "`" + "`" + `
-          $(tail -3 download_data.log 2>/dev/null)
-          ` + "`" + "`" + "`" + `
-          ## Backtest
-          ` + "`" + "`" + "`" + `
-          $(grep "STRATEGY SUMMARY" -A5 backtest.log 2>/dev/null || echo "not found")
-          ` + "`" + "`" + "`" + `
-          ## Lookahead
-          ` + "`" + "`" + "`" + `
-          $(tail -10 lookahead_analysis.log 2>/dev/null)
-          ` + "`" + "`" + "`" + `
-          ## Conclusion
-          | Metric | Status |
-          |--------|--------|
-          | Tests | $(grep -c passed pytest.log 2>/dev/null || echo "?") |
-          | Secret leak | $(grep -q 'No secret' no_secret_scan.log 2>/dev/null && echo 'CLEAN' || echo '?') |
-          | Strategy found | $(grep -q AISupervisedStrategy freqtrade_list_strategies.log 2>/dev/null && echo 'YES' || echo '?') |
-          | Lookahead | $(grep -q 'has_bias.*No' lookahead_analysis.log 2>/dev/null && echo 'PASS' || echo '?') |
-          | Profitability | NOT PROVEN |
-          | Live trading | FORBIDDEN |
-          ENDMD
-          cat validation_summary.md
+          python scripts/preflight_evidence_artifact.py freqtrade
       - name: Upload Freqtrade artifacts
-        if: always()
+        
         uses: actions/upload-artifact@v4
         with:
           name: freqtrade-validation
           path: |
-            implementation/pytest.log
-            implementation/no_secret_scan.log
-            implementation/freqtrade_list_strategies.log
-            implementation/download_data.log
-            implementation/backtest.log
-            implementation/lookahead_analysis.log
-            implementation/pair_format_check.log
+            implementation/evidence_manifest.json
+            implementation/freqtrade_data/backtest_results/canonical_baseline_summary.json
+            implementation/freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json
+            implementation/validation_reports/strategy_fix_round1.json
+            implementation/validation_reports/strategy_fix_round1.md
+            implementation/freqtrade_data/backtest_results/round1_*_la_lookahead_status.json
+          if-no-files-found: error
+
+  validation-summary:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    needs: [atos-tests, freqtrade]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: |
+          cd implementation
+          python -m pip install -e '.[dev,freqtrade]'
+      - uses: actions/download-artifact@v4
+        with:
+          name: atos-validation
+          path: atos_artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: freqtrade-validation
+          path: freqtrade_artifacts
+      - name: Verify Simple CI
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          cd implementation
+          python -c "from atos.simple_ci_evidence import verify_simple_ci_for_sha; from atos.evidence_summary import write_json_atomic; r=verify_simple_ci_for_sha('${GITHUB_SHA}'); write_json_atomic('simple_ci_evidence.json', r); print('Simple CI verified: run_id='+str(r['run_id']))"
+      - name: Run evidence summary
+        run: |
+          cd implementation
+          python -m atos.evidence_summary "${GITHUB_SHA}" "${GITHUB_RUN_ID}" "${{ needs.atos-tests.result }}" "${{ needs.freqtrade.result }}" ../atos_artifacts ../freqtrade_artifacts simple_ci_evidence.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validation-summary
+          path: |
+            implementation/validation_summary.json
             implementation/validation_summary.md
-            implementation/validation_reports/*.md
-            implementation/freqtrade_data/backtest_results/canonical_baseline*.json
-            implementation/freqtrade_data/backtest_results/canonical_baseline*.log
-            implementation/freqtrade_data/backtest_results/round1_*.json
-            implementation/freqtrade_data/backtest_results/round1_*.log
-            implementation/freqtrade_data/backtest_results/round1_*_summary.json
-            implementation/freqtrade_data/backtest_results/exp_*_policy.json
-            implementation/freqtrade_data/backtest_results/*lookahead_status.json
-            implementation/freqtrade_data/backtest_results/*.json
-          retention-days: 14
-          if-no-files-found: ignore
+          if-no-files-found: error

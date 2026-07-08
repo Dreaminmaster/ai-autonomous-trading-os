@@ -8,7 +8,8 @@ os.chdir(IMPL_DIR)
 
 VALIDATION_POLICY = "config/policy.validation.json"
 TIMERANGE = os.environ.get("TIMERANGE", "20250101-20250701")
-Timeout = 900  # 15 min per variant
+BACKTEST_TIMEOUT_S = 900
+LOOKAHEAD_WRAPPER_TIMEOUT_S = 2700  # must exceed canonical inner la timeout (2100s)
 
 VARIANTS = [
     ("round1_1_baseline_current", None),
@@ -61,7 +62,7 @@ for name, overrides in VARIANTS:
         result = subprocess.run([
             "python3", "scripts/run_canonical_backtest.py",
             name, name, str(policy_path.resolve())
-        ], capture_output=True, text=True, timeout=Timeout)
+        ], capture_output=True, text=True, timeout=BACKTEST_TIMEOUT_S)
         print((result.stdout or "(no stdout)")[-200:], flush=True)
         if result.stderr:
             print(f"STDERR: {(result.stderr)[:200]}", flush=True)
@@ -123,7 +124,7 @@ for b in best_two:
         result = subprocess.run([
             "python3", "scripts/run_canonical_backtest.py",
             f"{name}_la", f"{name}_la", str(policy_p)
-        ], capture_output=True, text=True, timeout=Timeout, env=env)
+        ], capture_output=True, text=True, timeout=LOOKAHEAD_WRAPPER_TIMEOUT_S, env=env)
         wrapper_rc = result.returncode
         from atos.lookahead_contract import consume_lookahead_status
         status_path = Path("freqtrade_data/backtest_results/{}_la_lookahead_status.json".format(name))
@@ -172,5 +173,29 @@ with open("validation_reports/strategy_fix_round1.md", "w") as f:
     for b in best_two:
         f.write(f"- **{b['name']}**: {b.get('trades','?')} trades, {b.get('profit','?')}%, WR {b.get('winrate','?')}, LA {b.get('lookahead','?')}\n")
     f.write("\n## Conclusion\n\n- Live trading: FORBIDDEN\n")
+
+# ── P0R: Structured JSON evidence (consumed by evidence_summary.py) ──
+from atos.evidence_summary import write_json_atomic
+import json as _json
+baseline = results[0]
+bm_metrics = integrity_checks if 'integrity_checks' in dir() else {k: "PASS" if str(cb_data.get(k,"")) == str(baseline.get("summary",{}).get(k,baseline.get(k.replace("total_trades","trades"),""))) else "FAIL" for k in integrity_keys}
+r1_json = {
+    "schema_version": 1,
+    "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+    "head_sha": os.environ.get("GITHUB_SHA", "local"),
+    "baseline_integrity": integrity,
+    "baseline_metrics": bm_metrics,
+    "selected_variants": [
+        {
+            "variant": b.get("name", "unknown"),
+            "lookahead_variant": f"{b.get('name', '?')}_la",
+            "lookahead_status_file": f"freqtrade_data/backtest_results/{b.get('name', '?')}_la_lookahead_status.json",
+            "lookahead_final_status": b.get("lookahead", "?")
+        }
+        for b in best_two
+    ]
+}
+write_json_atomic("validation_reports/strategy_fix_round1.json", r1_json)
+print(f"Round1 JSON written via atomic write")
 
 print(Path("validation_reports/strategy_fix_round1.md").read_text())
