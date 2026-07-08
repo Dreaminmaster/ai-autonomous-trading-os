@@ -222,7 +222,7 @@ def write_json_atomic(filepath, data):
 # ═══════ CLI ═══════
 def _cli():
     if len(sys.argv)!=8:
-        print("Usage: python -m atos.evidence_summary <head_sha> <run_id> <atos_result> <freq_result> <atos_dir> <freq_dir> [simple_ci_evidence.json]",file=sys.stderr)
+        print("Usage: python -m atos.evidence_summary <head_sha> <run_id> <atos_result> <freq_result> <atos_dir> <freq_dir> <simple_ci_evidence.json>",file=sys.stderr)
         sys.exit(2)
     sha,run_id,aj,fj,ad,fd=sys.argv[1:7]
     sci_evidence_path = sys.argv[7] if len(sys.argv)>7 else None
