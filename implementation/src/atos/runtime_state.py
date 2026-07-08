@@ -34,6 +34,10 @@ class RuntimeCycleStatus(StrEnum):
     COMPLETED = "COMPLETED"
 
 
+def _utc():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 class RecoveryStatus(StrEnum):
     PENDING = "PENDING"
     IN_PROGRESS = "IN_PROGRESS"
