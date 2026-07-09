@@ -36,15 +36,14 @@ def _normalize_utc(at_utc):
 
 class CycleJournalRepository:
     def __init__(self, db, clock=None):
-        from atos.runtime_state import _utc; _ = _utc
-        self._db = db
-        self._clock = clock or _utc
-        self._connection = None
-        self._owns = True
+        self._db=db
+        self._clock=clock
+        self._connection=None
+        self._owns=True
     def connect(self, conn):
-        r = CycleJournalRepository(self._db, self._clock)
-        r._connection = conn
-        r._owns = False
+        r=CycleJournalRepository(self._db,self._clock)
+        r._connection=conn
+        r._owns=False
         return r
     @property
     def conn(self):
@@ -58,23 +57,21 @@ class CycleJournalRepository:
             with self._db.transaction(immediate=True) as conn:
                 yield conn
     def record_transition(self, cycle_id, from_state, to_state, recorded_at, conn=None):
-        sv = stage.value if hasattr(stage, 'value') else str(stage)
+        fv=str(from_state.value) if hasattr(from_state,"value") else str(from_state)
+        tv=str(to_state.value) if hasattr(to_state,"value") else str(to_state)
+        if not isinstance(recorded_at,str) or not recorded_at.endswith("Z"):
+            raise RuntimeStateWriteError("recorded_at must be UTC Z: "+repr(recorded_at))
         if conn is not None:
-            conn.execute('INSERT INTO cycle_journal (cycle_id, session_id, symbol, stage, recorded_at) VALUES (?,?,?,?,?)', (cycle_id, session_id, symbol, sv, recorded_at))
-            return
-        with self._write_scope() as conn_x:
-            conn_x.execute('INSERT INTO cycle_journal (cycle_id, session_id, symbol, stage, recorded_at) VALUES (?,?,?,?,?)', (cycle_id, session_id, symbol, sv, recorded_at))
+            conn.execute("INSERT INTO cycle_journal (cycle_id, from_state, to_state, recorded_at) VALUES (?,?,?,?)",(cycle_id,fv,tv,recorded_at))
+        else:
+            with self._write_scope() as cx:
+                cx.execute("INSERT INTO cycle_journal (cycle_id, from_state, to_state, recorded_at) VALUES (?,?,?,?)",(cycle_id,fv,tv,recorded_at))
     def get_journal(self, cycle_id):
-        return self.conn.execute('SELECT journal_id, cycle_id, from_state, to_state, recorded_at FROM cycle_journal WHERE cycle_id=? ORDER BY journal_id ASC', (cycle_id,)).fetchall()
-    
+        rows=self.conn.execute("SELECT journal_id, cycle_id, from_state, to_state, recorded_at FROM cycle_journal WHERE cycle_id=? ORDER BY journal_id ASC",(cycle_id,)).fetchall()
+        from atos.runtime_state import JournalRecord, RuntimeCycleStatus
+        return [JournalRecord(journal_id=int(r["journal_id"]),cycle_id=r["cycle_id"],from_state=RuntimeCycleStatus(r["from_state"]),to_state=RuntimeCycleStatus(r["to_state"]),recorded_at=r["recorded_at"]) for r in rows]
     def get_unreconciled_cycles_for_session(self, session_id):
-        return self.conn.execute(
-            "SELECT DISTINCT cj.cycle_id FROM cycle_journal cj JOIN runtime_cycles rc ON cj.cycle_id=rc.cycle_id WHERE rc.session_id=? AND cj.to_state NOT IN (?,?) ORDER BY cj.cycle_id",
-            (session_id, 'RECONCILED', 'COMPLETED')
-        ).fetchall()
-
-    def get_session_timeline(self, session_id):
-        return self.conn.execute('SELECT journal_id, cycle_id, from_state, to_state, recorded_at FROM cycle_journal WHERE session_id=? ORDER BY recorded_at ASC, journal_id ASC', (session_id,)).fetchall()
+        return self.conn.execute("SELECT DISTINCT cj.cycle_id FROM cycle_journal cj JOIN runtime_cycles rc ON cj.cycle_id=rc.cycle_id WHERE rc.session_id=? AND cj.to_state NOT IN (?,?) ORDER BY cj.cycle_id",(session_id,"RECONCILED","COMPLETED")).fetchall()
 
 
 class RuntimeStateWriter:

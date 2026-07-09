@@ -67,7 +67,7 @@ class RuntimeCycleRecord:
     last_error: str | None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class JournalRecord:
     journal_id: int
     cycle_id: str
