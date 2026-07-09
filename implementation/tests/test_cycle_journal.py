@@ -160,27 +160,46 @@ def test_no_standalone_mutation():
     assert hasattr(ci,"_append_transition")
 
 # H1: True journal append boundary failure
-def test_append_failure_at_journal_boundary():
+
+class CommitFailProxy:
+    def __init__(self, real):
+        self._real = real
+        self.commit_called = False
+        self.rollback_called = False
+    def execute(self, *a, **kw):
+        return self._real.execute(*a, **kw)
+    def commit(self):
+        self.commit_called = True
+        raise RuntimeError("injected commit failure")
+    def rollback(self):
+        self.rollback_called = True
+        self._real.rollback()
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+def test_commit_phase_failure_proxy():
     db=_db2();sid,cid=_cy(db)
     before=db.connection.execute("SELECT status FROM runtime_cycles WHERE cycle_id=?",(cid,)).fetchone()["status"]
+    proxy=CommitFailProxy(db.conn)
+    db.conn=proxy
     w=RuntimeStateWriter(db)
-    orig_append=CycleJournalRepository._append_transition
-    def _fail(s,conn,*a,**kw): raise RuntimeError("injected journal append failure")
     try:
-        CycleJournalRepository._append_transition=_fail
         w.transition_cycle(cid,C.CREATED,C.MARKET_ACCEPTED,at_utc="2026-07-01T00:00:10Z")
         assert False
     except RuntimeError: pass
-    finally: CycleJournalRepository._append_transition=orig_append
+    assert proxy.commit_called
+    assert proxy.rollback_called
     after=db.connection.execute("SELECT status FROM runtime_cycles WHERE cycle_id=?",(cid,)).fetchone()["status"]
     assert after==before
     assert len(CycleJournalRepository(db).get_journal(cid))==0
 
-# H3: True concurrency with real file-backed overlap
+
+
 def test_concurrency_real_overlap():
     import tempfile, pathlib, threading
     from atos.runtime_db import RuntimeDatabase
     from atos.runtime_migrations import MigrationManager, MIGRATION_PLAN
+    from atos.runtime_state_writer import ConcurrentStateTransitionError
     d=tempfile.mkdtemp()
     p=pathlib.Path(d)/"test.db"
     db1=RuntimeDatabase(p); db1.connect()
@@ -192,6 +211,7 @@ def test_concurrency_real_overlap():
     db1.close()
     barrier=threading.Barrier(2,timeout=5)
     results=[]
+    errors=[]
     def contender():
         db=RuntimeDatabase(p); db.connect()
         w=RuntimeStateWriter(db)
@@ -199,19 +219,26 @@ def test_concurrency_real_overlap():
         try:
             w.transition_cycle("c1",C.CREATED,C.MARKET_ACCEPTED,at_utc="2026-07-01T00:00:10Z")
             results.append("winner")
-        except Exception:
+        except ConcurrentStateTransitionError:
             results.append("loser")
+        except Exception as e:
+            errors.append(type(e).__name__)
     t1=threading.Thread(target=contender)
     t2=threading.Thread(target=contender)
     t1.start();t2.start()
     t1.join();t2.join()
+    assert errors==[],f"Unexpected errors: {errors}"
     assert "winner" in results
     assert results.count("winner")==1
     assert results.count("loser")==1
     db_check=RuntimeDatabase(p); db_check.connect()
-    assert len(CycleJournalRepository(db_check).get_journal("c1"))==1
+    j=CycleJournalRepository(db_check).get_journal("c1")
+    assert len(j)==1
+    assert j[0].to_state==C.MARKET_ACCEPTED
+    final_state=db_check.connection.execute("SELECT status FROM runtime_cycles WHERE cycle_id='c1'").fetchone()["status"]
+    assert final_state=="MARKET_ACCEPTED"
 
-# H4: Full v1→v2 with RecoveryState preserved
+
 def test_v1_to_v2_full_preservation():
     import tempfile, pathlib
     from atos.runtime_db import RuntimeDatabase
