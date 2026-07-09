@@ -1,5 +1,6 @@
 """Atomic persisted state transition executor."""
 from __future__ import annotations
+import contextlib
 from datetime import datetime, timedelta, timezone
 from atos.runtime_db import RuntimeDatabase, RuntimePersistenceError
 from atos.runtime_state import RuntimeSessionStatus, RuntimeCycleStatus, RecoveryStatus
@@ -7,7 +8,7 @@ from atos.runtime_state_reader import RuntimeStateReader, StateRecordNotFoundErr
 from atos.runtime_state_transitions import InvalidStateTransitionError
 from atos.runtime_state_transitions import validate_session_transition, validate_cycle_transition, validate_recovery_transition
 
-__all__ = ("RuntimeStateWriter", "ConcurrentStateTransitionError", "RuntimeStateWriteError")
+__all__ = ("RuntimeStateWriter", "CycleJournalRepository", "ConcurrentStateTransitionError", "RuntimeStateWriteError")
 
 class RuntimeStateWriteError(RuntimePersistenceError):
     """Base for all write-layer errors."""
@@ -32,6 +33,40 @@ def _normalize_utc(at_utc):
     if parsed.utcoffset() != timedelta(0):
         raise RuntimeStateWriteError(f"Non-UTC offset rejected: {at_utc!r}")
     return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+class CycleJournalRepository:
+    def __init__(self, db, clock=None):
+        self._db=db
+        self._clock=clock
+        self._connection=None
+        self._owns=True
+    def connect(self, conn):
+        r=CycleJournalRepository(self._db,self._clock)
+        r._connection=conn
+        r._owns=False
+        return r
+    @property
+    def conn(self):
+        return self._connection if self._connection is not None else self._db.connection
+    @contextlib.contextmanager
+    def _write_scope(self):
+        if not self._owns:
+            assert self._connection is not None
+            yield self._connection
+        else:
+            with self._db.transaction(immediate=True) as conn:
+                yield conn
+    def _append_transition(self, conn, cycle_id, from_state, to_state, recorded_at):
+        fv=str(from_state.value) if hasattr(from_state,"value") else str(from_state)
+        tv=str(to_state.value) if hasattr(to_state,"value") else str(to_state)
+        if not isinstance(recorded_at,str) or not recorded_at.endswith("Z"):
+            raise RuntimeStateWriteError(f"recorded_at must be UTC Z: {recorded_at!r}")
+        conn.execute("INSERT INTO cycle_journal (cycle_id, from_state, to_state, recorded_at) VALUES (?,?,?,?)",(cycle_id,fv,tv,recorded_at))
+
+    def get_journal(self, cycle_id):
+        rows=self.conn.execute("SELECT journal_id, cycle_id, from_state, to_state, recorded_at FROM cycle_journal WHERE cycle_id=? ORDER BY journal_id ASC",(cycle_id,)).fetchall()
+        from atos.runtime_state import JournalRecord, RuntimeCycleStatus
+        return [JournalRecord(journal_id=int(r["journal_id"]),cycle_id=r["cycle_id"],from_state=RuntimeCycleStatus(r["from_state"]),to_state=RuntimeCycleStatus(r["to_state"]),recorded_at=r["recorded_at"]) for r in rows]
 
 class RuntimeStateWriter:
     def __init__(self, db: RuntimeDatabase):
@@ -99,6 +134,11 @@ class RuntimeStateWriter:
             if cur.rowcount != 1:
                 raise ConcurrentStateTransitionError(f"cycle {cycle_id}: CAS rowcount {cur.rowcount}")
             result = self._reader.get_cycle(cycle_id)
+            CycleJournalRepository(self._db, clock=lambda: at_norm)._append_transition(conn=conn,
+                cycle_id=result.cycle_id,
+                from_state=actual, to_state=target,
+    recorded_at=at_norm,
+            )
         return result
 
     def transition_recovery(self, recovery_id, expected_current, target, *, at_utc):

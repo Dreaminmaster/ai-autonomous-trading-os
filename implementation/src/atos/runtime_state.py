@@ -34,6 +34,10 @@ class RuntimeCycleStatus(StrEnum):
     COMPLETED = "COMPLETED"
 
 
+def _utc():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 class RecoveryStatus(StrEnum):
     PENDING = "PENDING"
     IN_PROGRESS = "IN_PROGRESS"
@@ -62,6 +66,14 @@ class RuntimeCycleRecord:
     last_completed_stage: RuntimeCycleStatus | None
     last_error: str | None
 
+
+@dataclass(frozen=True, slots=True)
+class JournalRecord:
+    journal_id: int
+    cycle_id: str
+    from_state: RuntimeCycleStatus
+    to_state: RuntimeCycleStatus
+    recorded_at: str
 
 @dataclass(frozen=True, slots=True)
 class RecoveryStateRecord:

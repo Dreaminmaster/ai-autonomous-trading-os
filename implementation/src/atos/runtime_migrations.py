@@ -84,8 +84,40 @@ CREATE INDEX idx_recovery_session_status ON recovery_states(session_id, status);
 """
 
 
+_MIGRATION_0002_SQL = """
+CREATE TABLE cycle_journal (
+    journal_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    cycle_id     TEXT NOT NULL REFERENCES runtime_cycles(cycle_id) ON DELETE RESTRICT,
+    session_id   TEXT NOT NULL REFERENCES runtime_sessions(session_id) ON DELETE RESTRICT,
+    symbol       TEXT NOT NULL,
+    stage        TEXT NOT NULL CHECK (stage IN (
+        'CREATED','MARKET_ACCEPTED','ACCOUNT_ACCEPTED',
+        'CANDIDATES_READY','PROVIDER_DECIDED','RISK_DECIDED',
+        'EXECUTION_INTENT_CREATED','EXECUTED','RECONCILED','COMPLETED'
+    )),
+    recorded_at  TEXT NOT NULL,
+    notes        TEXT NULL
+);
+CREATE INDEX idx_cycle_journal_cycle ON cycle_journal(cycle_id, journal_id);
+CREATE INDEX idx_cycle_journal_session ON cycle_journal(session_id, recorded_at);
+"""
+
+
+
+_MIGRATION_0002_SQL = """
+CREATE TABLE cycle_journal (
+    journal_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    cycle_id     TEXT NOT NULL REFERENCES runtime_cycles(cycle_id) ON DELETE RESTRICT,
+    from_state   TEXT NOT NULL,
+    to_state     TEXT NOT NULL,
+    recorded_at  TEXT NOT NULL
+);
+CREATE INDEX idx_cycle_journal_cycle ON cycle_journal(cycle_id, journal_id);
+"""
+
 MIGRATION_PLAN: tuple[Migration, ...] = (
     Migration(version=1, name="runtime_session_cycle_recovery", sql=_MIGRATION_0001_SQL),
+    Migration(version=2, name="cycle_journal", sql=_MIGRATION_0002_SQL),
 )
 
 
