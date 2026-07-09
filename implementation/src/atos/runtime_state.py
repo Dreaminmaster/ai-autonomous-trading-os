@@ -45,7 +45,7 @@ class RecoveryStatus(StrEnum):
     FAILED = "FAILED"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class RuntimeSessionRecord:
     session_id: str
     started_at: str
@@ -55,7 +55,7 @@ class RuntimeSessionRecord:
     stop_reason: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class RuntimeCycleRecord:
     cycle_id: str
     session_id: str
@@ -67,7 +67,14 @@ class RuntimeCycleRecord:
     last_error: str | None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
+class JournalRecord:
+    journal_id: int
+    cycle_id: str
+    from_state: RuntimeCycleStatus
+    to_state: RuntimeCycleStatus
+    recorded_at: str
+
 class RecoveryStateRecord:
     recovery_id: str
     session_id: str

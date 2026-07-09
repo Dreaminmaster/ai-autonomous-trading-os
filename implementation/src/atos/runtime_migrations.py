@@ -103,6 +103,18 @@ CREATE INDEX idx_cycle_journal_session ON cycle_journal(session_id, recorded_at)
 """
 
 
+
+_MIGRATION_0002_SQL = """
+CREATE TABLE cycle_journal (
+    journal_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    cycle_id     TEXT NOT NULL REFERENCES runtime_cycles(cycle_id) ON DELETE RESTRICT,
+    from_state   TEXT NOT NULL,
+    to_state     TEXT NOT NULL,
+    recorded_at  TEXT NOT NULL
+);
+CREATE INDEX idx_cycle_journal_cycle ON cycle_journal(cycle_id, journal_id);
+"""
+
 MIGRATION_PLAN: tuple[Migration, ...] = (
     Migration(version=1, name="runtime_session_cycle_recovery", sql=_MIGRATION_0001_SQL),
     Migration(version=2, name="cycle_journal", sql=_MIGRATION_0002_SQL),

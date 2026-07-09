@@ -57,7 +57,7 @@ class CycleJournalRepository:
         else:
             with self._db.transaction(immediate=True) as conn:
                 yield conn
-    def record_transition(self, cycle_id, session_id, symbol, stage, recorded_at, conn=None):
+    def record_transition(self, cycle_id, from_state, to_state, recorded_at, conn=None):
         sv = stage.value if hasattr(stage, 'value') else str(stage)
         if conn is not None:
             conn.execute('INSERT INTO cycle_journal (cycle_id, session_id, symbol, stage, recorded_at) VALUES (?,?,?,?,?)', (cycle_id, session_id, symbol, sv, recorded_at))
@@ -65,9 +65,16 @@ class CycleJournalRepository:
         with self._write_scope() as conn_x:
             conn_x.execute('INSERT INTO cycle_journal (cycle_id, session_id, symbol, stage, recorded_at) VALUES (?,?,?,?,?)', (cycle_id, session_id, symbol, sv, recorded_at))
     def get_journal(self, cycle_id):
-        return self.conn.execute('SELECT journal_id, cycle_id, session_id, symbol, stage, recorded_at, notes FROM cycle_journal WHERE cycle_id=? ORDER BY journal_id ASC', (cycle_id,)).fetchall()
+        return self.conn.execute('SELECT journal_id, cycle_id, from_state, to_state, recorded_at FROM cycle_journal WHERE cycle_id=? ORDER BY journal_id ASC', (cycle_id,)).fetchall()
+    
+    def get_unreconciled_cycles_for_session(self, session_id):
+        return self.conn.execute(
+            "SELECT DISTINCT cj.cycle_id FROM cycle_journal cj JOIN runtime_cycles rc ON cj.cycle_id=rc.cycle_id WHERE rc.session_id=? AND cj.to_state NOT IN (?,?) ORDER BY cj.cycle_id",
+            (session_id, 'RECONCILED', 'COMPLETED')
+        ).fetchall()
+
     def get_session_timeline(self, session_id):
-        return self.conn.execute('SELECT journal_id, cycle_id, session_id, symbol, stage, recorded_at, notes FROM cycle_journal WHERE session_id=? ORDER BY recorded_at ASC, journal_id ASC', (session_id,)).fetchall()
+        return self.conn.execute('SELECT journal_id, cycle_id, from_state, to_state, recorded_at FROM cycle_journal WHERE session_id=? ORDER BY recorded_at ASC, journal_id ASC', (session_id,)).fetchall()
 
 
 class RuntimeStateWriter:
@@ -137,8 +144,8 @@ class RuntimeStateWriter:
                 raise ConcurrentStateTransitionError(f"cycle {cycle_id}: CAS rowcount {cur.rowcount}")
             result = self._reader.get_cycle(cycle_id)
             CycleJournalRepository(self._db, clock=lambda: at_norm).record_transition(
-                cycle_id=result.cycle_id, session_id=result.session_id,
-                symbol=result.symbol, stage=actual,
+                cycle_id=result.cycle_id,
+                from_state=actual, to_state=target,
                 recorded_at=at_norm, conn=conn,
             )
         return result
