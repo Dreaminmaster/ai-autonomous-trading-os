@@ -67,9 +67,6 @@ class CycleJournalRepository:
         rows=self.conn.execute("SELECT journal_id, cycle_id, from_state, to_state, recorded_at FROM cycle_journal WHERE cycle_id=? ORDER BY journal_id ASC",(cycle_id,)).fetchall()
         from atos.runtime_state import JournalRecord, RuntimeCycleStatus
         return [JournalRecord(journal_id=int(r["journal_id"]),cycle_id=r["cycle_id"],from_state=RuntimeCycleStatus(r["from_state"]),to_state=RuntimeCycleStatus(r["to_state"]),recorded_at=r["recorded_at"]) for r in rows]
-    def get_unreconciled_cycles_for_session(self, session_id):
-        return self.conn.execute("SELECT DISTINCT cj.cycle_id FROM cycle_journal cj JOIN runtime_cycles rc ON cj.cycle_id=rc.cycle_id WHERE rc.session_id=? AND cj.to_state NOT IN (?,?) ORDER BY cj.cycle_id",(session_id,"RECONCILED","COMPLETED")).fetchall()
-
 
 class RuntimeStateWriter:
     def __init__(self, db: RuntimeDatabase):

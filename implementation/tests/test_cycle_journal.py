@@ -89,3 +89,72 @@ def test_t12_persistence():
 def test_frozen():
     j=JournalRecord(1,"c1",C.CREATED,C.MARKET_ACCEPTED,"2026-07-01T00:00:10Z")
     with pytest.raises(Exception): j.from_state=C.EXECUTED
+
+def test_v1_to_v2_upgrade():
+    import tempfile, pathlib
+    from atos.runtime_db import RuntimeDatabase
+    from atos.runtime_migrations import MigrationManager, MIGRATION_PLAN
+    d=tempfile.mkdtemp()
+    db=RuntimeDatabase(pathlib.Path(d)/"test.db")
+    db.connect()
+    plan_v1=(MIGRATION_PLAN[0],)
+    MigrationManager(db,plan_v1).migrate()
+    db.connection.execute("INSERT INTO runtime_sessions VALUES ('s1','t','paper','STARTING',NULL,NULL)")
+    db.connection.execute("INSERT INTO runtime_cycles (cycle_id,session_id,symbol,started_at,status) VALUES ('c1','s1','BTC','t','CREATED')")
+    db.connection.commit()
+    db.close()
+    db2=RuntimeDatabase(pathlib.Path(d)/"test.db")
+    db2.connect()
+    MigrationManager(db2,tuple(m for m in MIGRATION_PLAN if m.version<=2)).migrate()
+    db2.connection.commit()
+    s=db2.connection.execute("SELECT session_id FROM runtime_sessions WHERE session_id='s1'").fetchone()
+    assert s is not None
+    c=db2.connection.execute("SELECT cycle_id FROM runtime_cycles WHERE cycle_id='c1'").fetchone()
+    assert c is not None
+    tables=[r['name'] for r in db2.connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%cycle_journal%'").fetchall()]
+    assert any('cycle_journal' in t for t in tables)
+
+def test_journal_append_failure_rollback():
+    db=_db2();sid,cid=_cy(db)
+    w=RuntimeStateWriter(db)
+    orig=w._reader.get_cycle
+    try:
+        def _blow(*a,**kw):raise RuntimeError("injected")
+        w._reader.get_cycle=_blow
+        w.transition_cycle(cid,C.CREATED,C.MARKET_ACCEPTED,at_utc="2026-07-01T00:00:10Z")
+        assert False
+    except RuntimeError:pass
+    finally:w._reader.get_cycle=orig
+    assert len(CycleJournalRepository(db).get_journal(cid))==0
+
+def test_commit_failure_no_partial():
+    db=_db2();sid,cid=_cy(db)
+    before=db.connection.execute("SELECT status FROM runtime_cycles WHERE cycle_id=?",(cid,)).fetchone()["status"]
+    w=RuntimeStateWriter(db)
+    orig=w._db.transaction
+    def _bad(*a,**kw):
+        class Bad: __enter__=lambda s: (_ for _ in ()).throw(RuntimeError("commit fail")); __exit__=lambda s,*_:None
+        return Bad()
+    try:
+        w._db.transaction=_bad
+        w.transition_cycle(cid,C.CREATED,C.MARKET_ACCEPTED,at_utc="2026-07-01T00:00:10Z")
+        assert False
+    except RuntimeError:pass
+    finally:w._db.transaction=orig
+    after=db.connection.execute("SELECT status FROM runtime_cycles WHERE cycle_id=?",(cid,)).fetchone()["status"]
+    assert after==before
+    assert len(CycleJournalRepository(db).get_journal(cid))==0
+
+def test_concurrency_one_winner():
+    db=_db2();sid,cid=_cy(db)
+    w1=RuntimeStateWriter(db)
+    w2=RuntimeStateWriter(db)
+    w1.transition_cycle(cid,C.CREATED,C.MARKET_ACCEPTED,at_utc="2026-07-01T00:00:10Z")
+    try:w2.transition_cycle(cid,C.CREATED,C.MARKET_ACCEPTED,at_utc="2026-07-01T00:00:10Z");assert False
+    except:pass
+    assert len(CycleJournalRepository(db).get_journal(cid))==1
+
+def test_no_standalone_mutation():
+    ci=CycleJournalRepository(_db2())
+    assert not hasattr(ci,"record_transition")
+    assert hasattr(ci,"_append_transition")
