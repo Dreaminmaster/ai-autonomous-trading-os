@@ -261,3 +261,19 @@ def test_v1_to_v2_full_preservation():
     tables=[r['name'] for r in db2.connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%cycle_journal%'").fetchall()]
     assert any('cycle_journal' in t for t in tables)
     assert db2.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]>=2
+
+def test_append_failure_at_journal_boundary():
+    db=_db2();sid,cid=_cy(db)
+    before=db.connection.execute("SELECT status FROM runtime_cycles WHERE cycle_id=?",(cid,)).fetchone()["status"]
+    w=RuntimeStateWriter(db)
+    orig_append=CycleJournalRepository._append_transition
+    def _fail(s,conn,*a,**kw): raise RuntimeError("injected journal append failure")
+    try:
+        CycleJournalRepository._append_transition=_fail
+        w.transition_cycle(cid,C.CREATED,C.MARKET_ACCEPTED,at_utc="2026-07-01T00:00:10Z")
+        assert False
+    except RuntimeError: pass
+    finally: CycleJournalRepository._append_transition=orig_append
+    after=db.connection.execute("SELECT status FROM runtime_cycles WHERE cycle_id=?",(cid,)).fetchone()["status"]
+    assert after==before
+    assert len(CycleJournalRepository(db).get_journal(cid))==0
