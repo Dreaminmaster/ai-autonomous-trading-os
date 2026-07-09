@@ -56,16 +56,13 @@ class CycleJournalRepository:
         else:
             with self._db.transaction(immediate=True) as conn:
                 yield conn
-    def record_transition(self, cycle_id, from_state, to_state, recorded_at, conn=None):
+    def _append_transition(self, conn, cycle_id, from_state, to_state, recorded_at):
         fv=str(from_state.value) if hasattr(from_state,"value") else str(from_state)
         tv=str(to_state.value) if hasattr(to_state,"value") else str(to_state)
         if not isinstance(recorded_at,str) or not recorded_at.endswith("Z"):
-            raise RuntimeStateWriteError("recorded_at must be UTC Z: "+repr(recorded_at))
-        if conn is not None:
-            conn.execute("INSERT INTO cycle_journal (cycle_id, from_state, to_state, recorded_at) VALUES (?,?,?,?)",(cycle_id,fv,tv,recorded_at))
-        else:
-            with self._write_scope() as cx:
-                cx.execute("INSERT INTO cycle_journal (cycle_id, from_state, to_state, recorded_at) VALUES (?,?,?,?)",(cycle_id,fv,tv,recorded_at))
+            raise RuntimeStateWriteError(f"recorded_at must be UTC Z: {recorded_at!r}")
+        conn.execute("INSERT INTO cycle_journal (cycle_id, from_state, to_state, recorded_at) VALUES (?,?,?,?)",(cycle_id,fv,tv,recorded_at))
+
     def get_journal(self, cycle_id):
         rows=self.conn.execute("SELECT journal_id, cycle_id, from_state, to_state, recorded_at FROM cycle_journal WHERE cycle_id=? ORDER BY journal_id ASC",(cycle_id,)).fetchall()
         from atos.runtime_state import JournalRecord, RuntimeCycleStatus
@@ -140,10 +137,10 @@ class RuntimeStateWriter:
             if cur.rowcount != 1:
                 raise ConcurrentStateTransitionError(f"cycle {cycle_id}: CAS rowcount {cur.rowcount}")
             result = self._reader.get_cycle(cycle_id)
-            CycleJournalRepository(self._db, clock=lambda: at_norm).record_transition(
+            CycleJournalRepository(self._db, clock=lambda: at_norm)._append_transition(conn=conn,
                 cycle_id=result.cycle_id,
                 from_state=actual, to_state=target,
-                recorded_at=at_norm, conn=conn,
+    recorded_at=at_norm,
             )
         return result
 
