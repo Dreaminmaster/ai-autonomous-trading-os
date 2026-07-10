@@ -155,7 +155,7 @@ CREATE TABLE execution_intents (
     symbol                   TEXT NOT NULL,
     action                   TEXT NOT NULL CHECK (action IN ('BUY','SELL')),
     notional                 TEXT NOT NULL,
-    normalized_intent_hash   TEXT NOT NULL CHECK (length(normalized_intent_hash)=64 AND normalized_intent_hash = lower(normalized_intent_hash)),
+    normalized_intent_hash   TEXT NOT NULL CHECK (length(normalized_intent_hash) = 64 AND normalized_intent_hash NOT GLOB "*[^0-9a-f]*" AND normalized_intent_hash = lower(normalized_intent_hash)),
     created_at               TEXT NOT NULL,
     FOREIGN KEY (risk_decision_id, trade_intent_id) REFERENCES risk_decisions(risk_decision_id, trade_intent_id) ON DELETE RESTRICT
 );
