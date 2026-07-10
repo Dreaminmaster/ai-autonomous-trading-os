@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   exact-full-validation:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
       TARGET_SHA: 4337b1bc471c16708782e450e11cc3fdfe6e6a0a
@@ -35,14 +35,12 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install implementation dependencies
+      - name: Install ATOS dev dependencies
         shell: bash
         run: |
           set -euo pipefail
-          cd implementation
           python -m pip install --upgrade pip
-          python -m pip install -e '.[dev,freqtrade]'
-          python -c "import freqtrade; print('Freqtrade', freqtrade.__version__)"
+          python -m pip install -e 'implementation[dev]'
 
       - name: Py compile
         shell: bash
@@ -56,15 +54,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd implementation
-          python -c "from atos.runtime_migrations import MIGRATION_PLAN; from atos.runtime_db import RuntimeDatabase; print([m.version for m in MIGRATION_PLAN])"
+          PYTHONPATH=implementation/src python - <<'PY'
+          from atos.runtime_migrations import MIGRATION_PLAN
+          from atos.runtime_db import RuntimeDatabase
+          assert [m.version for m in MIGRATION_PLAN] == [1, 2, 3]
+          print([m.version for m in MIGRATION_PLAN])
+          PY
 
       - name: ATOS full pytest
         shell: bash
         run: |
           set -euo pipefail
-          cd implementation
-          python -m pytest -v --tb=long 2>&1 | tee pytest.log
+          python -m pytest -q implementation/tests --tb=short 2>&1 | tee implementation/pytest.log
 
       - name: Secret leakage scan
         shell: bash
@@ -104,6 +105,14 @@ jobs:
           cp pytest.log ../atos_artifacts/pytest.log
           cp no_secret_scan.log ../atos_artifacts/no_secret_scan.log
           cp freqtrade_data/backtest_results/walk_forward_report.json ../atos_artifacts/freqtrade_data/backtest_results/walk_forward_report.json
+
+      - name: Install Freqtrade dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd implementation
+          python -m pip install -e '.[freqtrade]'
+          python -c "import freqtrade; print('Freqtrade', freqtrade.__version__)"
 
       - name: Setup Freqtrade
         shell: bash
