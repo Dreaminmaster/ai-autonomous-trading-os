@@ -261,3 +261,24 @@ def test_hash_uppercase_fail():
 def test_hash_g_char_fail():
     db=_db();_ins_session(db);_ins_cycle(db);_ins_ti(db);_ins_rd(db);db.connection.commit()
     with pytest.raises(sqlite3.IntegrityError): db.connection.execute("INSERT INTO execution_intents VALUES ('eh4','t1','r1','c1','BTC','BUY','100','"+"a"*63+"g"+"','t')")
+
+# Upgraded exact info contracts
+TI=[(0,'trade_intent_id','TEXT',0,None,1),(1,'symbol','TEXT',1,None,0),(2,'action','TEXT',1,None,0),(3,'confidence','TEXT',1,None,0),(4,'thesis','TEXT',1,None,0),(5,'evidence','TEXT',1,None,0),(6,'position_size_pct','TEXT',1,None,0),(7,'stop_loss_pct','TEXT',1,None,0),(8,'take_profit_pct','TEXT',1,None,0),(9,'invalidation_conditions','TEXT',1,None,0),(10,'selected_strategy_ids','TEXT',1,None,0),(11,'created_at','TEXT',1,None,0)]
+RD2=[(0,'risk_decision_id','TEXT',0,None,1),(1,'trade_intent_id','TEXT',1,None,0),(2,'decision','TEXT',1,None,0),(3,'reasons','TEXT',1,None,0),(4,'risk_score','TEXT',1,None,0),(5,'checks_json','TEXT',1,None,0),(6,'created_at','TEXT',1,None,0)]
+EI2=[(0,'execution_intent_id','TEXT',0,None,1),(1,'trade_intent_id','TEXT',1,None,0),(2,'risk_decision_id','TEXT',1,None,0),(3,'cycle_id','TEXT',1,None,0),(4,'symbol','TEXT',1,None,0),(5,'action','TEXT',1,None,0),(6,'notional','TEXT',1,None,0),(7,'normalized_intent_hash','TEXT',1,None,0),(8,'created_at','TEXT',1,None,0)]
+DA2=[(0,'attempt_id','TEXT',0,None,1),(1,'execution_intent_id','TEXT',1,None,0),(2,'client_order_id','TEXT',1,None,0),(3,'venue','TEXT',1,None,0),(4,'account_scope','TEXT',1,None,0),(5,'status','TEXT',1,None,0),(6,'attempt_no','INTEGER',1,None,0),(7,'created_at','TEXT',1,None,0),(8,'dispatch_started_at','TEXT',0,None,0),(9,'response_received_at','TEXT',0,None,0),(10,'error_class','TEXT',0,None,0)]
+ES2=[(0,'execution_intent_id','TEXT',0,None,1),(1,'status','TEXT',1,None,0),(2,'last_attempt_id','TEXT',0,None,0),(3,'retry_count','INTEGER',1,"0",0),(4,'state_started_at','TEXT',1,None,0),(5,'updated_at','TEXT',1,None,0)]
+def test_f2_full_ti(): assert [tuple(c) for c in _db().connection.execute("PRAGMA table_info(trade_intents)").fetchall()]==TI
+def test_f2_full_ei(): assert [tuple(c) for c in _db().connection.execute("PRAGMA table_info(execution_intents)").fetchall()]==EI2
+def test_f2_full_es(): assert [tuple(c) for c in _db().connection.execute("PRAGMA table_info(execution_states)").fetchall()]==ES2
+def test_f3_idx_cols():
+    ix=lambda n:[r["name"] for r in _db().connection.execute("PRAGMA index_info("+n+")").fetchall()]
+    assert ix("idx_risk_decisions_trade_intent")==["trade_intent_id"]
+    assert ix("idx_execution_intents_cycle")==["cycle_id"]
+    assert ix("idx_dispatch_attempts_client_order")==["client_order_id"]
+    assert ix("idx_execution_states_status")==["status"]
+@pytest.mark.parametrize("h,ok",[("a"*64,True),("0123456789abcdef"*4,True),("a"*65,False),("_"+"a"*63,False),("z"+"a"*63,False)])
+def test_f5_missing_cases(h,ok):
+    db=_db();_ins_session(db);_ins_cycle(db);_ins_ti(db);_ins_rd(db);db.connection.commit()
+    if ok: db.connection.execute("INSERT INTO execution_intents VALUES (?,?,?,?,?,?,?,?,?)",("e_"+h[:8],"t1","r1","c1","BTC","BUY","100",h,"t"))
+    else: pytest.raises(sqlite3.IntegrityError,db.connection.execute,"INSERT INTO execution_intents VALUES (?,?,?,?,?,?,?,?,?)",("e_"+h[:8],"t1","r1","c1","BTC","BUY","100",h,"t"))
