@@ -191,35 +191,46 @@ def test_t4b_exact_row_preservation():
 
 def test_t31a_ti_columns():
     db=_db();cols=db.connection.execute("PRAGMA table_info(trade_intents)").fetchall()
-    names=[c[1] for c in cols]
-    assert names==['trade_intent_id','symbol','action','confidence','thesis','evidence','position_size_pct','stop_loss_pct','take_profit_pct','invalidation_conditions','selected_strategy_ids','created_at']
+    expected=[("trade_intent_id",0,1),("symbol",1,0),("action",1,0),("confidence",1,0),("thesis",1,0),("evidence",1,0),("position_size_pct",1,0),("stop_loss_pct",1,0),("take_profit_pct",1,0),("invalidation_conditions",1,0),("selected_strategy_ids",1,0),("created_at",1,0)]
+    assert [(c[1],c[3],c[5]) for c in cols]==expected
 
 def test_t31b_rd_columns():
     db=_db();cols=db.connection.execute("PRAGMA table_info(risk_decisions)").fetchall()
-    assert [c[1] for c in cols]==['risk_decision_id','trade_intent_id','decision','reasons','risk_score','checks_json','created_at']
+    expected=[("risk_decision_id",0,1),("trade_intent_id",1,0),("decision",1,0),("reasons",1,0),("risk_score",1,0),("checks_json",1,0),("created_at",1,0)]
+    assert [(c[1],c[3],c[5]) for c in cols]==expected
 
 def test_t31c_ei_columns():
     db=_db();cols=db.connection.execute("PRAGMA table_info(execution_intents)").fetchall()
-    assert [c[1] for c in cols]==['execution_intent_id','trade_intent_id','risk_decision_id','cycle_id','symbol','action','notional','normalized_intent_hash','created_at']
+    expected=[("execution_intent_id",0,1),("trade_intent_id",1,0),("risk_decision_id",1,0),("cycle_id",1,0),("symbol",1,0),("action",1,0),("notional",1,0),("normalized_intent_hash",1,0),("created_at",1,0)]
+    assert [(c[1],c[3],c[5]) for c in cols]==expected
 
 def test_t31d_da_columns():
     db=_db();cols=db.connection.execute("PRAGMA table_info(dispatch_attempts)").fetchall()
-    assert [c[1] for c in cols]==['attempt_id','execution_intent_id','client_order_id','venue','account_scope','status','attempt_no','created_at','dispatch_started_at','response_received_at','error_class']
+    expected=[("attempt_id",0,1),("execution_intent_id",1,0),("client_order_id",1,0),("venue",1,0),("account_scope",1,0),("status",1,0),("attempt_no",1,0),("created_at",1,0),("dispatch_started_at",0,0),("response_received_at",0,0),("error_class",0,0)]
+    assert [(c[1],c[3],c[5]) for c in cols]==expected
 
 def test_t31e_es_columns():
     db=_db();cols=db.connection.execute("PRAGMA table_info(execution_states)").fetchall()
-    assert [c[1] for c in cols]==['execution_intent_id','status','last_attempt_id','retry_count','state_started_at','updated_at']
+    expected=[("execution_intent_id",0,1),("status",1,0),("last_attempt_id",0,0),("retry_count",1,0),("state_started_at",1,0),("updated_at",1,0)]
+    assert [(c[1],c[3],c[5]) for c in cols]==expected
+    assert cols[3]["dflt_value"]=="0"
 
 def test_t32a_rd_fk():
-    db=_db();fks=[dict(f) for f in db.connection.execute("PRAGMA foreign_key_list(risk_decisions)").fetchall()]
-    assert any(f['table']=='trade_intents' for f in fks)
+    db=_db();fks=db.connection.execute("PRAGMA foreign_key_list(risk_decisions)").fetchall()
+    fk=next(f for f in fks if f["from"]=="trade_intent_id")
+    assert fk["table"]=="trade_intents" and fk["to"]=="trade_intent_id"
 
-def test_t32b_ei_fk():
+def test_t32b_ei_fks():
     db=_db();fks=db.connection.execute("PRAGMA foreign_key_list(execution_intents)").fetchall()
-    by_id={}
-    for f in fks: by_id.setdefault(f['id'],[]).append(f)
-    comp=[g for g in by_id.values() if len(g)==2]
-    assert len(comp)>=1
+    by_src={f["from"]:f for f in fks}
+    assert by_src["trade_intent_id"]["table"]=="trade_intents"
+    assert by_src["cycle_id"]["table"]=="runtime_cycles"
+    by_id={};[by_id.setdefault(f["id"],[]).append(f) for f in fks]
+    comp=[g for g in by_id.values() if len(g)==2 and {f["from"] for f in g}=={"risk_decision_id","trade_intent_id"}]
+    assert len(comp)==1
+    g=sorted(comp[0],key=lambda f:f["seq"])
+    assert g[0]["from"]=="risk_decision_id" and g[0]["to"]=="risk_decision_id"
+    assert g[1]["from"]=="trade_intent_id" and g[1]["to"]=="trade_intent_id"
 
 def test_t33_indexes():
     db=_db()
