@@ -1,0 +1,135 @@
+name: B4.2A Exact Head Validation
+
+on:
+  pull_request:
+    branches:
+      - ci/b4.2a-exact-head-base
+
+permissions:
+  contents: read
+
+jobs:
+  exact-head-validation:
+    runs-on: ubuntu-24.04
+    env:
+      TARGET_SHA: 4337b1bc471c16708782e450e11cc3fdfe6e6a0a
+      EXPECTED_V1: b039c238f7d11bcd2fe09e33422a32ad0728147d01c34ffef759fae32fba0b1d
+      EXPECTED_V2: f2e8d13f91b7681f4a379c1fb7cff3b5cb12726dd3ebbdd93063b30fda192cca
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 1
+
+      - name: Verify exact HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          echo "target=$TARGET_SHA"
+          echo "actual=$actual"
+          test "$actual" = "$TARGET_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install implementation dev dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e 'implementation[dev]'
+
+      - name: Py compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            implementation/src/atos/runtime_migrations.py \
+            implementation/tests/test_execution_persistence_schema.py
+
+      - name: Import smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=implementation/src python - <<'PY'
+          from atos.runtime_migrations import MIGRATION_PLAN
+          assert [m.version for m in MIGRATION_PLAN] == [1, 2, 3]
+          PY
+
+      - name: Targeted B4.2A tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -q implementation/tests/test_execution_persistence_schema.py --tb=short | tee exact-head-targeted.log
+
+      - name: Migration regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -q implementation/tests/test_runtime_migrations.py --tb=short | tee exact-head-migrations.log
+
+      - name: Full pytest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -q implementation/tests --tb=short | tee exact-head-full.log
+
+      - name: Exact SHA and checksum manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=implementation/src python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from atos.runtime_migrations import MIGRATION_PLAN
+
+          target = os.environ['TARGET_SHA']
+          actual = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          v1 = hashlib.sha256(MIGRATION_PLAN[0].sql.encode()).hexdigest()
+          v2 = hashlib.sha256(MIGRATION_PLAN[1].sql.encode()).hexdigest()
+          expected_v1 = os.environ['EXPECTED_V1']
+          expected_v2 = os.environ['EXPECTED_V2']
+
+          assert actual == target, (actual, target)
+          assert v1 == expected_v1, (v1, expected_v1)
+          assert v2 == expected_v2, (v2, expected_v2)
+
+          manifest = {
+              'schema_version': 1,
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'target_sha': target,
+              'actual_sha': actual,
+              'v1_checksum': v1,
+              'v2_checksum': v2,
+              'live': 'FORBIDDEN',
+          }
+          with open('exact-head-manifest.json', 'w', encoding='utf-8') as f:
+              json.dump(manifest, f, indent=2, sort_keys=True)
+              f.write('\n')
+          print(json.dumps(manifest, indent=2, sort_keys=True))
+          PY
+
+      - name: Verify no tracked modifications
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+
+      - name: Upload exact-head evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-2a-exact-head-validation
+          path: |
+            exact-head-manifest.json
+            exact-head-targeted.log
+            exact-head-migrations.log
+            exact-head-full.log
+          if-no-files-found: warn
+          retention-days: 14
