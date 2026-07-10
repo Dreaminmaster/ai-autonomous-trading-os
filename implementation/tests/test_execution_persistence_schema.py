@@ -164,3 +164,89 @@ def test_t29_ei_update():
 def test_t30_ei_delete():
     db=_db(); _setup_graph(db)
     pytest.raises(sqlite3.IntegrityError, db.connection.execute, "DELETE FROM execution_intents WHERE execution_intent_id='e1'")
+
+# R2: exact v2->v3 row preservation
+def test_t4b_exact_row_preservation():
+    d=tempfile.mkdtemp();p=pathlib.Path(d)/"test.db"
+    db=RuntimeDatabase(p);db.connect()
+    MigrationManager(db,tuple(m for m in MIGRATION_PLAN if m.version<=2)).migrate()
+    db.connection.execute("INSERT INTO runtime_sessions VALUES ('s1','t','paper','STARTING',NULL,NULL)")
+    db.connection.execute("INSERT INTO runtime_cycles VALUES ('c1','s1','BTC','t',NULL,'CREATED',NULL,NULL)")
+    db.connection.execute("INSERT INTO recovery_states VALUES ('r1','s1','PENDING','[]','t',NULL)")
+    db.connection.execute("INSERT INTO cycle_journal (cycle_id,from_state,to_state,recorded_at) VALUES ('c1','CREATED','MARKET_ACCEPTED','2026-01-01T00:00:00Z')")
+    db.connection.commit()
+    s_b=db.connection.execute("SELECT * FROM runtime_sessions WHERE session_id='s1'").fetchone()
+    c_b=db.connection.execute("SELECT * FROM runtime_cycles WHERE cycle_id='c1'").fetchone()
+    r_b=db.connection.execute("SELECT * FROM recovery_states WHERE recovery_id='r1'").fetchone()
+    j_b=db.connection.execute("SELECT * FROM cycle_journal WHERE cycle_id='c1'").fetchone()
+    db.close()
+    db2=RuntimeDatabase(p);db2.connect()
+    MigrationManager(db2,tuple(m for m in MIGRATION_PLAN if m.version<=3)).migrate();db2.connection.commit()
+    assert db2.connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]==3
+    assert tuple(db2.connection.execute("SELECT * FROM runtime_sessions WHERE session_id='s1'").fetchone())==tuple(s_b)
+    assert tuple(db2.connection.execute("SELECT * FROM runtime_cycles WHERE cycle_id='c1'").fetchone())==tuple(c_b)
+    assert tuple(db2.connection.execute("SELECT * FROM recovery_states WHERE recovery_id='r1'").fetchone())==tuple(r_b)
+    assert tuple(db2.connection.execute("SELECT * FROM cycle_journal WHERE cycle_id='c1'").fetchone())==tuple(j_b)
+
+
+def test_t31a_ti_columns():
+    db=_db();cols=db.connection.execute("PRAGMA table_info(trade_intents)").fetchall()
+    names=[c[1] for c in cols]
+    assert names==['trade_intent_id','symbol','action','confidence','thesis','evidence','position_size_pct','stop_loss_pct','take_profit_pct','invalidation_conditions','selected_strategy_ids','created_at']
+
+def test_t31b_rd_columns():
+    db=_db();cols=db.connection.execute("PRAGMA table_info(risk_decisions)").fetchall()
+    assert [c[1] for c in cols]==['risk_decision_id','trade_intent_id','decision','reasons','risk_score','checks_json','created_at']
+
+def test_t31c_ei_columns():
+    db=_db();cols=db.connection.execute("PRAGMA table_info(execution_intents)").fetchall()
+    assert [c[1] for c in cols]==['execution_intent_id','trade_intent_id','risk_decision_id','cycle_id','symbol','action','notional','normalized_intent_hash','created_at']
+
+def test_t31d_da_columns():
+    db=_db();cols=db.connection.execute("PRAGMA table_info(dispatch_attempts)").fetchall()
+    assert [c[1] for c in cols]==['attempt_id','execution_intent_id','client_order_id','venue','account_scope','status','attempt_no','created_at','dispatch_started_at','response_received_at','error_class']
+
+def test_t31e_es_columns():
+    db=_db();cols=db.connection.execute("PRAGMA table_info(execution_states)").fetchall()
+    assert [c[1] for c in cols]==['execution_intent_id','status','last_attempt_id','retry_count','state_started_at','updated_at']
+
+def test_t32a_rd_fk():
+    db=_db();fks=[dict(f) for f in db.connection.execute("PRAGMA foreign_key_list(risk_decisions)").fetchall()]
+    assert any(f['table']=='trade_intents' for f in fks)
+
+def test_t32b_ei_fk():
+    db=_db();fks=db.connection.execute("PRAGMA foreign_key_list(execution_intents)").fetchall()
+    by_id={}
+    for f in fks: by_id.setdefault(f['id'],[]).append(f)
+    comp=[g for g in by_id.values() if len(g)==2]
+    assert len(comp)>=1
+
+def test_t33_indexes():
+    db=_db()
+    ix=[r[0] for r in db.connection.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()]
+    for n in ['idx_risk_decisions_trade_intent','idx_execution_intents_cycle','idx_execution_intents_trade_intent','idx_dispatch_attempts_execution','idx_dispatch_attempts_client_order','idx_execution_states_status']:
+        assert n in ix
+
+def test_t34a_v1_checksum():
+    import hashlib
+    assert hashlib.sha256(MIGRATION_PLAN[0].sql.encode()).hexdigest()=="b039c238f7d11bcd2fe09e33422a32ad0728147d01c34ffef759fae32fba0b1d"
+
+def test_t34b_v2_checksum():
+    import hashlib
+    assert hashlib.sha256(MIGRATION_PLAN[1].sql.encode()).hexdigest()=="f2e8d13f91b7681f4a379c1fb7cff3b5cb12726dd3ebbdd93063b30fda192cca"
+
+def test_hash_64_lower():
+    db=_db();_ins_session(db);_ins_cycle(db);_ins_ti(db);_ins_rd(db);db.connection.commit()
+    db.connection.execute("INSERT INTO execution_intents VALUES ('eh1','t1','r1','c1','BTC','BUY','100','"+"a"*64+"','t')")
+
+def test_hash_63_fail():
+    db=_db();_ins_session(db);_ins_cycle(db);_ins_ti(db);_ins_rd(db);db.connection.commit()
+    with pytest.raises(sqlite3.IntegrityError): db.connection.execute("INSERT INTO execution_intents VALUES ('eh2','t1','r1','c1','BTC','BUY','100','"+"a"*63+"','t')")
+
+def test_hash_uppercase_fail():
+    db=_db();_ins_session(db);_ins_cycle(db);_ins_ti(db);_ins_rd(db);db.connection.commit()
+    with pytest.raises(sqlite3.IntegrityError): db.connection.execute("INSERT INTO execution_intents VALUES ('eh3','t1','r1','c1','BTC','BUY','100','"+"A"+"a"*63+"','t')")
+
+def test_hash_g_char_fail():
+    db=_db();_ins_session(db);_ins_cycle(db);_ins_ti(db);_ins_rd(db);db.connection.commit()
+    with pytest.raises(sqlite3.IntegrityError): db.connection.execute("INSERT INTO execution_intents VALUES ('eh4','t1','r1','c1','BTC','BUY','100','"+"a"*63+"g"+"','t')")
