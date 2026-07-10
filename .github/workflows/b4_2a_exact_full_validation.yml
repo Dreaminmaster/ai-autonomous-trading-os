@@ -14,6 +14,7 @@ jobs:
     timeout-minutes: 240
     env:
       TARGET_SHA: 4337b1bc471c16708782e450e11cc3fdfe6e6a0a
+      CANDIDATE_BRANCH: feat/b4.2a-execution-persistence-schema
     steps:
       - name: Checkout exact candidate SHA
         uses: actions/checkout@v4
@@ -219,7 +220,7 @@ jobs:
           cp validation_reports/strategy_fix_round1.md ../freqtrade_artifacts/validation_reports/strategy_fix_round1.md
           cp freqtrade_data/backtest_results/round1_*_la_lookahead_status.json ../freqtrade_artifacts/freqtrade_data/backtest_results/
 
-      - name: Verify Simple CI for exact candidate SHA
+      - name: Bind Simple CI evidence to exact candidate push
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -227,13 +228,80 @@ jobs:
           set -euo pipefail
           cd implementation
           python - <<'PY'
+          import json
           import os
-          from atos.simple_ci_evidence import verify_simple_ci_for_sha
+          import urllib.request
           from atos.evidence_summary import write_json_atomic
+
           target = os.environ['TARGET_SHA']
-          result = verify_simple_ci_for_sha(target)
+          branch = os.environ['CANDIDATE_BRANCH']
+          token = os.environ['GITHUB_TOKEN']
+          repo = os.environ['GITHUB_REPOSITORY']
+          headers = {
+              'Authorization': 'Bearer ' + token,
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+          }
+
+          def api(url):
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.loads(response.read())
+
+          workflows = api(f'https://api.github.com/repos/{repo}/actions/workflows').get('workflows', [])
+          matches = [
+              w for w in workflows
+              if w.get('path') == '.github/workflows/ci.yml'
+              and w.get('name') == 'CI'
+              and w.get('state') == 'active'
+          ]
+          if len(matches) != 1:
+              raise RuntimeError(f'Expected exactly one active CI workflow, got {len(matches)}')
+          workflow_id = matches[0]['id']
+          runs = api(
+              f'https://api.github.com/repos/{repo}/actions/workflows/{workflow_id}/runs?head_sha={target}&per_page=100'
+          ).get('workflow_runs', [])
+          candidates = [
+              r for r in runs
+              if r.get('head_sha') == target
+              and r.get('event') == 'push'
+              and r.get('head_branch') == branch
+          ]
+          if len(candidates) != 1:
+              brief = [
+                  {
+                      'id': r.get('id'),
+                      'event': r.get('event'),
+                      'head_branch': r.get('head_branch'),
+                      'head_sha': r.get('head_sha'),
+                      'status': r.get('status'),
+                      'conclusion': r.get('conclusion'),
+                  }
+                  for r in candidates
+              ]
+              raise RuntimeError(f'Expected exactly one exact candidate push CI run, got {len(candidates)}: {brief}')
+          run = candidates[0]
+          if run.get('status') != 'completed':
+              raise RuntimeError(f"Simple CI not completed: {run.get('status')}")
+          if run.get('conclusion') != 'success':
+              raise RuntimeError(f"Simple CI not successful: {run.get('conclusion')}")
+
+          result = {
+              'schema_version': 1,
+              'workflow_id': workflow_id,
+              'workflow_name': 'CI',
+              'workflow_path': '.github/workflows/ci.yml',
+              'run_id': run['id'],
+              'head_sha': target,
+              'status': run['status'],
+              'conclusion': run['conclusion'],
+              'verified': True,
+              'selection_policy': 'exact workflow + exact SHA + push event + exact candidate branch',
+              'selected_event': run['event'],
+              'selected_head_branch': run['head_branch'],
+          }
           write_json_atomic('simple_ci_evidence.json', result)
-          print('Simple CI verified:', result)
+          print(json.dumps(result, indent=2, sort_keys=True))
           PY
 
       - name: Run exact evidence summary
@@ -259,6 +327,7 @@ jobs:
           PY
 
       - name: Upload exact full evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: b4-2a-exact-full-validation
@@ -276,5 +345,5 @@ jobs:
             freqtrade_artifacts/freqtrade_data/backtest_results/round1_*_la_lookahead_status.json
             freqtrade_artifacts/validation_reports/strategy_fix_round1.json
             freqtrade_artifacts/validation_reports/strategy_fix_round1.md
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90
