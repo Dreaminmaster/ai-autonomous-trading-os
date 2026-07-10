@@ -18,12 +18,18 @@ def test_runner_rejects_stale_existing_json():
 
 def test_runner_accepts_fresh_new_json():
     """Runner must accept JSON created after run_started_ns."""
+    import os, time
     results_dir = Path(tempfile.mkdtemp())
     js = results_dir / "backtest-result-fresh.json"
-    run_started_ns = int(__import__("time").time_ns())
     js.write_text('{"strategy": {"total_trades": 42}}')
+    # Set mtime deterministically: 2 seconds after run_started_ns
+    run_started_ns = int(time.time_ns())
+    fresh_mtime_ns = run_started_ns + 2_000_000_000  # +2 seconds
+    os.utime(js, ns=(fresh_mtime_ns, fresh_mtime_ns))
     js_stat = js.stat()
-    assert js_stat.st_mtime_ns >= run_started_ns, "fresh file should be accepted"
+    assert js_stat.st_mtime_ns >= run_started_ns, (
+        f"fresh file should be accepted: mtime {js_stat.st_mtime_ns} >= run_started {run_started_ns}"
+    )
 
 def test_variant_results_are_isolated():
     """Each variant must have its own isolated results dir."""
