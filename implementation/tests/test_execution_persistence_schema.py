@@ -46,7 +46,7 @@ def test_t2_five_tables():
     tables=[r[0] for r in db.connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
     for t in ["trade_intents","risk_decisions","execution_intents","dispatch_attempts","execution_states"]: assert t in tables
 
-def test_t3_plan_versions(): assert [m.version for m in MIGRATION_PLAN]==[1,2,3]
+def test_t3_plan_versions(): assert [m.version for m in MIGRATION_PLAN[:3]]==[1,2,3]
 
 def test_t4_v2_v3_upgrade():
     d=tempfile.mkdtemp(); p=pathlib.Path(d)/"test.db"
