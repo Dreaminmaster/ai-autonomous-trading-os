@@ -2,8 +2,7 @@ name: B4.2A Post-Merge Gate
 
 on:
   pull_request:
-    branches:
-      - ci/b4.2a-post-merge-base
+    branches: [ci/b4.2a-post-merge-base]
   workflow_dispatch:
 
 permissions:
@@ -26,191 +25,172 @@ jobs:
           fetch-depth: 1
 
       - name: Verify exact merge HEAD
-        shell: bash
-        run: |
-          set -euo pipefail
-          actual="$(git rev-parse HEAD)"
-          echo "target=$TARGET_SHA"
-          echo "actual=$actual"
-          test "$actual" = "$TARGET_SHA"
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
-      - name: Verify post-merge workflows and artifacts
-        shell: bash
+      - name: Probe exact post-merge evidence
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           python - <<'PY'
-          import io
-          import json
-          import os
-          import sys
-          import time
-          import urllib.error
-          import urllib.request
-          import zipfile
+          import io, json, os, time, urllib.request, zipfile
           from pathlib import Path
 
-          repo = os.environ['REPOSITORY']
-          target = os.environ['TARGET_SHA']
-          branch = os.environ['TARGET_BRANCH']
-          token = os.environ['GITHUB_TOKEN']
-          api = f'https://api.github.com/repos/{repo}'
+          repo = os.environ["REPOSITORY"]
+          target = os.environ["TARGET_SHA"]
+          branch = os.environ["TARGET_BRANCH"]
+          token = os.environ["GITHUB_TOKEN"]
+          api = f"https://api.github.com/repos/{repo}"
           out = {
-              'schema_version': 1,
-              'target_sha': target,
-              'target_branch': branch,
-              'gate_status': 'FAIL',
-              'live': 'FORBIDDEN',
-              'errors': [],
+              "schema_version": 1,
+              "target_sha": target,
+              "target_branch": branch,
+              "gate_status": "FAIL",
+              "live": "FORBIDDEN",
+              "errors": [],
           }
 
-          def request_json(url):
-              req = urllib.request.Request(url)
-              req.add_header('Authorization', 'Bearer ' + token)
-              req.add_header('Accept', 'application/vnd.github+json')
-              req.add_header('X-GitHub-Api-Version', '2022-11-28')
-              with urllib.request.urlopen(req, timeout=60) as r:
-                  return json.loads(r.read())
+          def req(url, *, as_json=True):
+              q = urllib.request.Request(url)
+              q.add_header("Authorization", "Bearer " + token)
+              q.add_header("Accept", "application/vnd.github+json")
+              q.add_header("X-GitHub-Api-Version", "2022-11-28")
+              with urllib.request.urlopen(q, timeout=120) as r:
+                  raw = r.read()
+              return json.loads(raw) if as_json else raw
 
-          def request_bytes(url):
-              req = urllib.request.Request(url)
-              req.add_header('Authorization', 'Bearer ' + token)
-              req.add_header('Accept', 'application/vnd.github+json')
-              req.add_header('X-GitHub-Api-Version', '2022-11-28')
-              with urllib.request.urlopen(req, timeout=120) as r:
-                  return r.read()
+          def workflow_id(path, name):
+              data = req(api + "/actions/workflows?per_page=100")
+              found = [
+                  w for w in data.get("workflows", [])
+                  if w.get("path") == path
+                  and w.get("name") == name
+                  and w.get("state") == "active"
+              ]
+              if len(found) != 1:
+                  raise RuntimeError(f"workflow lookup failed: {path}: {found}")
+              return found[0]["id"]
 
-          def resolve_workflow(path, name):
-              data = request_json(api + '/actions/workflows?per_page=100')
-              matches = [w for w in data.get('workflows', [])
-                         if w.get('path') == path and w.get('name') == name and w.get('state') == 'active']
-              if len(matches) != 1:
-                  raise RuntimeError(f'workflow resolution failed for {path}: {matches}')
-              return matches[0]
-
-          def wait_exact_push_run(workflow_id, label):
+          def wait_run(wid, label):
               deadline = time.time() + 10800
               while time.time() < deadline:
-                  data = request_json(
-                      f'{api}/actions/workflows/{workflow_id}/runs?head_sha={target}&per_page=50'
+                  data = req(f"{api}/actions/workflows/{wid}/runs?head_sha={target}&per_page=50")
+                  found = [
+                      r for r in data.get("workflow_runs", [])
+                      if r.get("head_sha") == target
+                      and r.get("event") == "push"
+                      and r.get("head_branch") == branch
+                  ]
+                  if len(found) > 1:
+                      raise RuntimeError(f"{label}: ambiguous runs {[r.get('id') for r in found]}")
+                  if not found:
+                      print(f"{label}: waiting for run", flush=True)
+                      time.sleep(30)
+                      continue
+                  run = found[0]
+                  print(
+                      f"{label}: id={run.get('id')} status={run.get('status')} "
+                      f"conclusion={run.get('conclusion')}",
+                      flush=True,
                   )
-                  matches = [r for r in data.get('workflow_runs', [])
-                             if r.get('head_sha') == target
-                             and r.get('event') == 'push'
-                             and r.get('head_branch') == branch]
-                  if len(matches) > 1:
-                      raise RuntimeError(f'{label}: ambiguous exact push runs: {[r.get("id") for r in matches]}')
-                  if not matches:
-                      print(f'{label}: waiting for exact push run...', flush=True)
+                  if run.get("status") != "completed":
                       time.sleep(30)
                       continue
-                  run = matches[0]
-                  print(f'{label}: run={run.get("id")} status={run.get("status")} conclusion={run.get("conclusion")}', flush=True)
-                  if run.get('status') != 'completed':
-                      time.sleep(30)
-                      continue
-                  if run.get('conclusion') != 'success':
-                      raise RuntimeError(f'{label}: exact push run failed: {run}')
+                  if run.get("conclusion") != "success":
+                      raise RuntimeError(f"{label}: failed run {run}")
                   return run
-              raise RuntimeError(f'{label}: timeout waiting for exact push run')
+              raise RuntimeError(f"{label}: timeout")
 
-          def wait_artifacts(run_id, required_names):
+          def wait_artifacts(run_id):
+              required = {"atos-validation", "freqtrade-validation", "validation-summary"}
               deadline = time.time() + 600
               while time.time() < deadline:
-                  data = request_json(f'{api}/actions/runs/{run_id}/artifacts?per_page=100')
-                  artifacts = {a.get('name'): a for a in data.get('artifacts', []) if not a.get('expired')}
-                  missing = [name for name in required_names if name not in artifacts]
-                  if not missing:
-                      return artifacts
-                  print(f'artifacts: waiting for {missing}', flush=True)
+                  data = req(f"{api}/actions/runs/{run_id}/artifacts?per_page=100")
+                  arts = {
+                      a["name"]: a
+                      for a in data.get("artifacts", [])
+                      if not a.get("expired")
+                  }
+                  if required.issubset(arts):
+                      return arts
+                  print(f"waiting artifacts: {sorted(required - set(arts))}", flush=True)
                   time.sleep(15)
-              raise RuntimeError(f'artifacts missing after timeout: {required_names}')
+              raise RuntimeError("required artifacts missing")
 
-          def read_json_from_artifact(artifact, suffix):
-              raw = request_bytes(artifact['archive_download_url'])
+          def artifact_json(artifact, suffix):
+              raw = req(artifact["archive_download_url"], as_json=False)
               with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                  names = zf.namelist()
-                  matches = [n for n in names if n.endswith(suffix)]
-                  if len(matches) != 1:
-                      raise RuntimeError(f'artifact {artifact.get("name")} expected one {suffix}, got {matches}')
-                  return json.loads(zf.read(matches[0]))
+                  names = [n for n in zf.namelist() if n.endswith(suffix)]
+                  if len(names) != 1:
+                      raise RuntimeError(
+                          f"{artifact['name']}: expected one {suffix}, got {names}"
+                      )
+                  return json.loads(zf.read(names[0]))
 
           try:
-              ci_wf = resolve_workflow('.github/workflows/ci.yml', 'CI')
-              ft_wf = resolve_workflow('.github/workflows/freqtrade-validation.yml', 'Freqtrade Validation')
-              ci_run = wait_exact_push_run(ci_wf['id'], 'CI')
-              ft_run = wait_exact_push_run(ft_wf['id'], 'Freqtrade Validation')
-              out['ci'] = {
-                  'workflow_id': ci_wf['id'],
-                  'run_id': ci_run['id'],
-                  'status': ci_run['status'],
-                  'conclusion': ci_run['conclusion'],
-                  'head_sha': ci_run['head_sha'],
-                  'head_branch': ci_run['head_branch'],
-                  'event': ci_run['event'],
-              }
-              out['freqtrade_validation'] = {
-                  'workflow_id': ft_wf['id'],
-                  'run_id': ft_run['id'],
-                  'status': ft_run['status'],
-                  'conclusion': ft_run['conclusion'],
-                  'head_sha': ft_run['head_sha'],
-                  'head_branch': ft_run['head_branch'],
-                  'event': ft_run['event'],
-              }
-
-              artifacts = wait_artifacts(
-                  ft_run['id'],
-                  ['atos-validation', 'freqtrade-validation', 'validation-summary'],
+              ci = wait_run(workflow_id(".github/workflows/ci.yml", "CI"), "CI")
+              ft = wait_run(
+                  workflow_id(
+                      ".github/workflows/freqtrade-validation.yml",
+                      "Freqtrade Validation",
+                  ),
+                  "Freqtrade Validation",
               )
-              summary = read_json_from_artifact(artifacts['validation-summary'], 'validation_summary.json')
-              atos_manifest = read_json_from_artifact(artifacts['atos-validation'], 'evidence_manifest.json')
-              freq_manifest = read_json_from_artifact(artifacts['freqtrade-validation'], 'evidence_manifest.json')
-              canonical = read_json_from_artifact(
-                  artifacts['freqtrade-validation'],
-                  'canonical_baseline_summary.json',
+              arts = wait_artifacts(ft["id"])
+              summary = artifact_json(arts["validation-summary"], "validation_summary.json")
+              atos_manifest = artifact_json(arts["atos-validation"], "evidence_manifest.json")
+              freq_manifest = artifact_json(
+                  arts["freqtrade-validation"], "evidence_manifest.json"
               )
-              lookahead = read_json_from_artifact(
-                  artifacts['freqtrade-validation'],
-                  'canonical_baseline_la_lookahead_status.json',
+              canonical = artifact_json(
+                  arts["freqtrade-validation"], "canonical_baseline_summary.json"
               )
-              round1 = read_json_from_artifact(
-                  artifacts['freqtrade-validation'],
-                  'strategy_fix_round1.json',
+              lookahead = artifact_json(
+                  arts["freqtrade-validation"],
+                  "canonical_baseline_la_lookahead_status.json",
+              )
+              round1 = artifact_json(
+                  arts["freqtrade-validation"], "strategy_fix_round1.json"
               )
 
-              assert summary['head_sha'] == target, summary
-              assert summary['gate_status'] == 'PASS', summary
-              assert summary['errors'] == [], summary
-              assert summary['live'] == 'FORBIDDEN', summary
-              assert atos_manifest['head_sha'] == target, atos_manifest
-              assert freq_manifest['head_sha'] == target, freq_manifest
-              assert atos_manifest['run_id'] == str(ft_run['id']), atos_manifest
-              assert freq_manifest['run_id'] == str(ft_run['id']), freq_manifest
-              assert canonical['run_id'] == str(ft_run['id']), canonical
-              assert canonical['baseline_integrity'] == 'CONFIRMED', canonical
-              assert canonical['pair_universe_integrity'] == 'PASS', canonical
-              assert canonical['cache_mode'] == 'none', canonical
-              assert lookahead['final_status'] in ('PASS', 'PASS_WITH_RC_ANOMALY'), lookahead
-              assert lookahead['has_bias'] is False, lookahead
-              assert round1['head_sha'] == target, round1
-              assert round1['run_id'] == str(ft_run['id']), round1
-              assert round1['baseline_integrity'] == 'PASS', round1
+              assert summary["head_sha"] == target
+              assert summary["gate_status"] == "PASS"
+              assert summary["errors"] == []
+              assert summary["live"] == "FORBIDDEN"
+              assert atos_manifest["head_sha"] == target
+              assert freq_manifest["head_sha"] == target
+              assert atos_manifest["run_id"] == str(ft["id"])
+              assert freq_manifest["run_id"] == str(ft["id"])
+              assert canonical["run_id"] == str(ft["id"])
+              assert canonical["baseline_integrity"] == "CONFIRMED"
+              assert canonical["pair_universe_integrity"] == "PASS"
+              assert canonical["cache_mode"] == "none"
+              assert lookahead["final_status"] in ("PASS", "PASS_WITH_RC_ANOMALY")
+              assert lookahead["has_bias"] is False
+              assert round1["head_sha"] == target
+              assert round1["run_id"] == str(ft["id"])
+              assert round1["baseline_integrity"] == "PASS"
 
-              out['validation_summary'] = summary
-              out['canonical'] = canonical
-              out['lookahead'] = lookahead
-              out['round1'] = round1
-              out['artifact_ids'] = {name: a['id'] for name, a in artifacts.items()
-              out['gate_status'] = 'PASS'
+              out.update({
+                  "gate_status": "PASS",
+                  "ci_run_id": ci["id"],
+                  "freqtrade_run_id": ft["id"],
+                  "artifact_ids": {k: v["id"] for k, v in arts.items()},
+                  "validation_summary": summary,
+                  "canonical": canonical,
+                  "lookahead": lookahead,
+                  "round1": round1,
+              })
           except Exception as exc:
-              out['errors'].append(f'{type(exc).__name__}: {exc}')
-              Path('b4_2a_post_merge_gate.json').write_text(json.dumps(out, indent=2, sort_keys=True) + '\n')
+              out["errors"].append(f"{type(exc).__name__}: {exc}")
+          finally:
+              Path("b4_2a_post_merge_gate.json").write_text(
+                  json.dumps(out, indent=2, sort_keys=True) + "\n"
+              )
               print(json.dumps(out, indent=2, sort_keys=True))
-              raise
 
-          Path('b4_2a_post_merge_gate.json').write_text(json.dumps(out, indent=2, sort_keys=True) + '\n')
-          print(json.dumps(out, indent=2, sort_keys=True))
+          if out["gate_status"] != "PASS":
+              raise SystemExit(1)
           PY
 
       - name: Upload post-merge evidence
@@ -221,3 +201,14 @@ jobs:
           path: b4_2a_post_merge_gate.json
           if-no-files-found: error
           retention-days: 90
+
+      - name: Enforce post-merge PASS
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("b4_2a_post_merge_gate.json"))
+          assert data["gate_status"] == "PASS", data
+          assert data["errors"] == [], data
+          assert data["live"] == "FORBIDDEN", data
+          PY
