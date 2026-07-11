@@ -84,24 +84,6 @@ CREATE INDEX idx_recovery_session_status ON recovery_states(session_id, status);
 """
 
 
-_MIGRATION_0002_SQL = """
-CREATE TABLE cycle_journal (
-    journal_id   INTEGER PRIMARY KEY AUTOINCREMENT,
-    cycle_id     TEXT NOT NULL REFERENCES runtime_cycles(cycle_id) ON DELETE RESTRICT,
-    session_id   TEXT NOT NULL REFERENCES runtime_sessions(session_id) ON DELETE RESTRICT,
-    symbol       TEXT NOT NULL,
-    stage        TEXT NOT NULL CHECK (stage IN (
-        'CREATED','MARKET_ACCEPTED','ACCOUNT_ACCEPTED',
-        'CANDIDATES_READY','PROVIDER_DECIDED','RISK_DECIDED',
-        'EXECUTION_INTENT_CREATED','EXECUTED','RECONCILED','COMPLETED'
-    )),
-    recorded_at  TEXT NOT NULL,
-    notes        TEXT NULL
-);
-CREATE INDEX idx_cycle_journal_cycle ON cycle_journal(cycle_id, journal_id);
-CREATE INDEX idx_cycle_journal_session ON cycle_journal(session_id, recorded_at);
-"""
-
 
 
 _MIGRATION_0002_SQL = """
@@ -115,9 +97,89 @@ CREATE TABLE cycle_journal (
 CREATE INDEX idx_cycle_journal_cycle ON cycle_journal(cycle_id, journal_id);
 """
 
+_MIGRATION_0003_SQL = """
+CREATE TABLE trade_intents (
+    trade_intent_id          TEXT PRIMARY KEY,
+    symbol                   TEXT NOT NULL,
+    action                   TEXT NOT NULL CHECK (action IN ('BUY','SELL','HOLD')),
+    confidence               TEXT NOT NULL,
+    thesis                   TEXT NOT NULL,
+    evidence                 TEXT NOT NULL,
+    position_size_pct        TEXT NOT NULL,
+    stop_loss_pct            TEXT NOT NULL,
+    take_profit_pct          TEXT NOT NULL,
+    invalidation_conditions  TEXT NOT NULL,
+    selected_strategy_ids    TEXT NOT NULL,
+    created_at               TEXT NOT NULL
+);
+CREATE TRIGGER trg_trade_intents_no_update BEFORE UPDATE ON trade_intents BEGIN SELECT RAISE(ABORT,'trade_intents are immutable'); END;
+CREATE TRIGGER trg_trade_intents_no_delete BEFORE DELETE ON trade_intents BEGIN SELECT RAISE(ABORT,'trade_intents are immutable'); END;
+
+CREATE TABLE risk_decisions (
+    risk_decision_id  TEXT PRIMARY KEY,
+    trade_intent_id   TEXT NOT NULL REFERENCES trade_intents(trade_intent_id) ON DELETE RESTRICT,
+    decision          TEXT NOT NULL CHECK (decision IN ('APPROVED','REJECTED','KILL_SWITCH_ACTIVE','PAUSED')),
+    reasons           TEXT NOT NULL,
+    risk_score        TEXT NOT NULL,
+    checks_json       TEXT NOT NULL,
+    created_at        TEXT NOT NULL,
+    UNIQUE(risk_decision_id, trade_intent_id)
+);
+CREATE INDEX idx_risk_decisions_trade_intent ON risk_decisions(trade_intent_id);
+CREATE TRIGGER trg_risk_decisions_no_update BEFORE UPDATE ON risk_decisions BEGIN SELECT RAISE(ABORT,'risk_decisions are immutable'); END;
+CREATE TRIGGER trg_risk_decisions_no_delete BEFORE DELETE ON risk_decisions BEGIN SELECT RAISE(ABORT,'risk_decisions are immutable'); END;
+
+CREATE TABLE execution_intents (
+    execution_intent_id      TEXT PRIMARY KEY,
+    trade_intent_id          TEXT NOT NULL REFERENCES trade_intents(trade_intent_id) ON DELETE RESTRICT,
+    risk_decision_id         TEXT NOT NULL,
+    cycle_id                 TEXT NOT NULL REFERENCES runtime_cycles(cycle_id) ON DELETE RESTRICT,
+    symbol                   TEXT NOT NULL,
+    action                   TEXT NOT NULL CHECK (action IN ('BUY','SELL')),
+    notional                 TEXT NOT NULL,
+    normalized_intent_hash   TEXT NOT NULL CHECK (length(normalized_intent_hash) = 64 AND normalized_intent_hash NOT GLOB '*[^0-9a-f]*' AND normalized_intent_hash = lower(normalized_intent_hash)),
+    created_at               TEXT NOT NULL,
+    FOREIGN KEY (risk_decision_id, trade_intent_id) REFERENCES risk_decisions(risk_decision_id, trade_intent_id) ON DELETE RESTRICT
+);
+CREATE INDEX idx_execution_intents_cycle ON execution_intents(cycle_id);
+CREATE INDEX idx_execution_intents_trade_intent ON execution_intents(trade_intent_id);
+CREATE TRIGGER trg_execution_intents_no_update BEFORE UPDATE ON execution_intents BEGIN SELECT RAISE(ABORT,'execution_intents are immutable'); END;
+CREATE TRIGGER trg_execution_intents_no_delete BEFORE DELETE ON execution_intents BEGIN SELECT RAISE(ABORT,'execution_intents are immutable'); END;
+
+CREATE TABLE dispatch_attempts (
+    attempt_id           TEXT PRIMARY KEY,
+    execution_intent_id  TEXT NOT NULL REFERENCES execution_intents(execution_intent_id) ON DELETE RESTRICT,
+    client_order_id      TEXT NOT NULL,
+    venue                TEXT NOT NULL,
+    account_scope        TEXT NOT NULL,
+    status               TEXT NOT NULL CHECK (status IN ('PRE_DISPATCH_PROVEN','DISPATCH_INITIATED','SUBMITTED','ACCEPTED','REJECTED','TIMEOUT','AMBIGUOUS')),
+    attempt_no           INTEGER NOT NULL CHECK (attempt_no >= 1),
+    created_at           TEXT NOT NULL,
+    dispatch_started_at  TEXT NULL,
+    response_received_at TEXT NULL,
+    error_class          TEXT NULL,
+    UNIQUE(execution_intent_id, attempt_no),
+    UNIQUE(execution_intent_id, attempt_id)
+);
+CREATE INDEX idx_dispatch_attempts_execution ON dispatch_attempts(execution_intent_id);
+CREATE INDEX idx_dispatch_attempts_client_order ON dispatch_attempts(client_order_id);
+
+CREATE TABLE execution_states (
+    execution_intent_id  TEXT PRIMARY KEY REFERENCES execution_intents(execution_intent_id) ON DELETE RESTRICT,
+    status               TEXT NOT NULL CHECK (status IN ('PREPARED','DISPATCH_COMMITTED','DISPATCHED','ACKNOWLEDGED','AMBIGUOUS','FILLED','TERMINAL')),
+    last_attempt_id      TEXT NULL,
+    retry_count          INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+    state_started_at     TEXT NOT NULL,
+    updated_at           TEXT NOT NULL,
+    FOREIGN KEY (execution_intent_id, last_attempt_id) REFERENCES dispatch_attempts(execution_intent_id, attempt_id) ON DELETE RESTRICT
+);
+CREATE INDEX idx_execution_states_status ON execution_states(status);
+"""
+
 MIGRATION_PLAN: tuple[Migration, ...] = (
     Migration(version=1, name="runtime_session_cycle_recovery", sql=_MIGRATION_0001_SQL),
     Migration(version=2, name="cycle_journal", sql=_MIGRATION_0002_SQL),
+    Migration(version=3, name="execution_transaction_persistence", sql=_MIGRATION_0003_SQL),
 )
 
 
