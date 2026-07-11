@@ -176,10 +176,162 @@ CREATE TABLE execution_states (
 CREATE INDEX idx_execution_states_status ON execution_states(status);
 """
 
+_MIGRATION_0004_SQL = """
+CREATE UNIQUE INDEX uq_dispatch_attempts_owner_scope
+ON dispatch_attempts(execution_intent_id, attempt_id, venue, account_scope);
+
+CREATE TABLE order_states (
+    venue                TEXT NOT NULL,
+    account_scope        TEXT NOT NULL,
+    order_id             TEXT NOT NULL,
+    execution_intent_id  TEXT NOT NULL,
+    attempt_id           TEXT NOT NULL,
+    client_order_id      TEXT NOT NULL,
+    symbol               TEXT NOT NULL,
+    side                 TEXT NOT NULL CHECK (side IN ('BUY','SELL')),
+    quantity             TEXT NOT NULL,
+    price                TEXT NOT NULL,
+    order_type           TEXT NOT NULL CHECK (order_type IN ('MARKET','LIMIT')),
+    status               TEXT NOT NULL CHECK (status IN (
+        'NEW','PENDING_SUBMIT','OPEN','PARTIALLY_FILLED','FILLED',
+        'CANCEL_REQUESTED','CANCEL_PENDING','CANCELLED',
+        'REJECTED','EXPIRED','UNKNOWN'
+    )),
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL,
+    PRIMARY KEY (venue, account_scope, order_id),
+    UNIQUE (venue, account_scope, client_order_id),
+    FOREIGN KEY (execution_intent_id, attempt_id, venue, account_scope)
+        REFERENCES dispatch_attempts(execution_intent_id, attempt_id, venue, account_scope)
+        ON DELETE RESTRICT
+);
+CREATE INDEX idx_order_states_execution
+ON order_states(execution_intent_id, attempt_id);
+CREATE INDEX idx_order_states_client_order
+ON order_states(client_order_id);
+CREATE INDEX idx_order_states_status
+ON order_states(status);
+CREATE TRIGGER trg_order_states_identity_immutable
+BEFORE UPDATE ON order_states
+WHEN NEW.venue IS NOT OLD.venue
+  OR NEW.account_scope IS NOT OLD.account_scope
+  OR NEW.order_id IS NOT OLD.order_id
+  OR NEW.execution_intent_id IS NOT OLD.execution_intent_id
+  OR NEW.attempt_id IS NOT OLD.attempt_id
+  OR NEW.client_order_id IS NOT OLD.client_order_id
+  OR NEW.symbol IS NOT OLD.symbol
+  OR NEW.side IS NOT OLD.side
+  OR NEW.quantity IS NOT OLD.quantity
+  OR NEW.price IS NOT OLD.price
+  OR NEW.order_type IS NOT OLD.order_type
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT,'order_states identity and payload are immutable'); END;
+CREATE TRIGGER trg_order_states_no_delete
+BEFORE DELETE ON order_states BEGIN SELECT RAISE(ABORT,'order_states cannot be deleted'); END;
+
+CREATE TABLE fill_states (
+    venue          TEXT NOT NULL,
+    account_scope  TEXT NOT NULL,
+    fill_id        TEXT NOT NULL,
+    order_id       TEXT NOT NULL,
+    quantity       TEXT NOT NULL,
+    price          TEXT NOT NULL,
+    fee            TEXT NOT NULL,
+    fee_currency   TEXT NOT NULL,
+    timestamp      TEXT NOT NULL,
+    PRIMARY KEY (venue, account_scope, fill_id),
+    FOREIGN KEY (venue, account_scope, order_id)
+        REFERENCES order_states(venue, account_scope, order_id)
+        ON DELETE RESTRICT
+);
+CREATE INDEX idx_fill_states_order_time
+ON fill_states(venue, account_scope, order_id, timestamp);
+CREATE TRIGGER trg_fill_states_no_update
+BEFORE UPDATE ON fill_states BEGIN SELECT RAISE(ABORT,'fill_states are immutable'); END;
+CREATE TRIGGER trg_fill_states_no_delete
+BEFORE DELETE ON fill_states BEGIN SELECT RAISE(ABORT,'fill_states are immutable'); END;
+
+CREATE TABLE position_states (
+    position_id      TEXT PRIMARY KEY,
+    venue            TEXT NOT NULL,
+    account_scope    TEXT NOT NULL,
+    symbol           TEXT NOT NULL,
+    side             TEXT NOT NULL CHECK (side IN ('LONG','SHORT')),
+    quantity         TEXT NOT NULL,
+    avg_entry_price  TEXT NOT NULL,
+    realized_pnl     TEXT NOT NULL,
+    unrealized_pnl   TEXT NOT NULL,
+    status           TEXT NOT NULL CHECK (status IN ('OPEN','CLOSED')),
+    opened_at        TEXT NOT NULL,
+    closed_at        TEXT NULL,
+    updated_at       TEXT NOT NULL,
+    CHECK (
+        (status = 'OPEN' AND closed_at IS NULL)
+        OR (status = 'CLOSED' AND closed_at IS NOT NULL)
+    )
+);
+CREATE UNIQUE INDEX uq_position_states_one_open
+ON position_states(venue, account_scope, symbol, side)
+WHERE status = 'OPEN';
+CREATE INDEX idx_position_states_scope_symbol
+ON position_states(venue, account_scope, symbol, side);
+CREATE INDEX idx_position_states_status
+ON position_states(status);
+CREATE TRIGGER trg_position_states_identity_immutable
+BEFORE UPDATE ON position_states
+WHEN NEW.position_id IS NOT OLD.position_id
+  OR NEW.venue IS NOT OLD.venue
+  OR NEW.account_scope IS NOT OLD.account_scope
+  OR NEW.symbol IS NOT OLD.symbol
+  OR NEW.side IS NOT OLD.side
+  OR NEW.opened_at IS NOT OLD.opened_at
+BEGIN SELECT RAISE(ABORT,'position_states identity and scope are immutable'); END;
+CREATE TRIGGER trg_position_states_no_delete
+BEFORE DELETE ON position_states BEGIN SELECT RAISE(ABORT,'position_states cannot be deleted'); END;
+
+CREATE TABLE position_accounting_details (
+    event_id                   TEXT PRIMARY KEY,
+    position_id                TEXT NOT NULL REFERENCES position_states(position_id) ON DELETE RESTRICT,
+    source_fill_venue          TEXT NOT NULL,
+    source_fill_account_scope  TEXT NOT NULL,
+    source_fill_id             TEXT NOT NULL,
+    source_fill_event_no       INTEGER NOT NULL CHECK (source_fill_event_no >= 1),
+    event_type                 TEXT NOT NULL CHECK (event_type IN ('OPEN','INCREASE','REDUCE','CLOSE')),
+    delta_qty                  TEXT NOT NULL,
+    price                      TEXT NOT NULL,
+    fee                        TEXT NOT NULL,
+    realized_pnl               TEXT NOT NULL,
+    timestamp                  TEXT NOT NULL,
+    UNIQUE (
+        source_fill_venue,
+        source_fill_account_scope,
+        source_fill_id,
+        source_fill_event_no
+    ),
+    FOREIGN KEY (source_fill_venue, source_fill_account_scope, source_fill_id)
+        REFERENCES fill_states(venue, account_scope, fill_id)
+        ON DELETE RESTRICT
+);
+CREATE INDEX idx_position_accounting_position_time
+ON position_accounting_details(position_id, timestamp);
+CREATE INDEX idx_position_accounting_fill
+ON position_accounting_details(
+    source_fill_venue,
+    source_fill_account_scope,
+    source_fill_id,
+    source_fill_event_no
+);
+CREATE TRIGGER trg_position_accounting_no_update
+BEFORE UPDATE ON position_accounting_details BEGIN SELECT RAISE(ABORT,'position_accounting_details are immutable'); END;
+CREATE TRIGGER trg_position_accounting_no_delete
+BEFORE DELETE ON position_accounting_details BEGIN SELECT RAISE(ABORT,'position_accounting_details are immutable'); END;
+"""
+
 MIGRATION_PLAN: tuple[Migration, ...] = (
     Migration(version=1, name="runtime_session_cycle_recovery", sql=_MIGRATION_0001_SQL),
     Migration(version=2, name="cycle_journal", sql=_MIGRATION_0002_SQL),
     Migration(version=3, name="execution_transaction_persistence", sql=_MIGRATION_0003_SQL),
+    Migration(version=4, name="order_fill_position_persistence", sql=_MIGRATION_0004_SQL),
 )
 
 
