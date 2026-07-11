@@ -1,0 +1,149 @@
+name: B4.3B1 Exact Evidence Summary
+
+on:
+  pull_request:
+    branches:
+      - ci/b4-3b1-exact-summary-base-v2
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  exact-summary:
+    runs-on: ubuntu-24.04
+    env:
+      TARGET_SHA: ab462274cff69dd1ff14b71c67f921f3d85d4990
+      TARGET_BRANCH: feat/b4.3b1-typed-accounting-policy
+      FORMAL_RUN_ID: "29156143053"
+      SIMPLE_CI_RUN_ID: "29156143044"
+      REPO: Dreaminmaster/ai-autonomous-trading-os
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+
+      - name: Verify exact HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install evidence dependencies
+        run: python -m pip install -e implementation
+
+      - name: Download formal ATOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: atos-validation
+          path: evidence/atos
+          repository: ${{ env.REPO }}
+          run-id: ${{ env.FORMAL_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download formal Freqtrade artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: freqtrade-validation
+          path: evidence/freqtrade
+          repository: ${{ env.REPO }}
+          run-id: ${{ env.FORMAL_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bind exact Simple CI and formal artifacts
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, urllib.request
+          repo=os.environ['REPO']
+          sha=os.environ['TARGET_SHA']
+          branch=os.environ['TARGET_BRANCH']
+          run_id=int(os.environ['SIMPLE_CI_RUN_ID'])
+          token=os.environ['GITHUB_TOKEN']
+          def api(url):
+              req=urllib.request.Request(url, headers={
+                  'Authorization': f'Bearer {token}',
+                  'Accept': 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+              })
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.loads(r.read())
+          run=api(f'https://api.github.com/repos/{repo}/actions/runs/{run_id}')
+          expected={
+              'id': run_id,
+              'head_sha': sha,
+              'head_branch': branch,
+              'event': 'push',
+              'status': 'completed',
+              'conclusion': 'success',
+          }
+          for key,val in expected.items():
+              if run.get(key) != val:
+                  raise SystemExit(f'Simple CI mismatch {key}: {run.get(key)!r} != {val!r}')
+          workflows=api(f'https://api.github.com/repos/{repo}/actions/workflows')
+          wf=next((w for w in workflows.get('workflows',[]) if w.get('path')=='.github/workflows/ci.yml' and w.get('name')=='CI' and w.get('state')=='active'),None)
+          if not wf or wf.get('id') != 305746223:
+              raise SystemExit(f'Unexpected CI workflow: {wf}')
+          evidence={
+              'schema_version':1,
+              'workflow_id':305746223,
+              'workflow_name':'CI',
+              'workflow_path':'.github/workflows/ci.yml',
+              'run_id':run_id,
+              'head_sha':sha,
+              'status':'completed',
+              'conclusion':'success',
+              'verified':True,
+          }
+          with open('simple_ci_evidence.json','w') as f:
+              json.dump(evidence,f,indent=2)
+          for p,job in [('evidence/atos/evidence_manifest.json','atos-tests'),('evidence/freqtrade/evidence_manifest.json','freqtrade')]:
+              with open(p) as f: m=json.load(f)
+              if m.get('run_id') != int(os.environ['FORMAL_RUN_ID']):
+                  raise SystemExit(f'{p} run mismatch: {m}')
+              if m.get('head_sha') != sha or m.get('job') != job:
+                  raise SystemExit(f'{p} provenance mismatch: {m}')
+          PY
+
+      - name: Run canonical evidence summary
+        run: |
+          python -m atos.evidence_summary \
+            "$TARGET_SHA" "$FORMAL_RUN_ID" success success \
+            evidence/atos evidence/freqtrade simple_ci_evidence.json
+
+      - name: Enforce exact PASS
+        run: |
+          python - <<'PY'
+          import json
+          s=json.load(open('validation_summary.json'))
+          assert s['head_sha']=='ab462274cff69dd1ff14b71c67f921f3d85d4990', s
+          assert s['run_id']==29156143053, s
+          assert s['gate_status']=='PASS', s
+          assert s['errors']==[], s
+          assert s['live']=='FORBIDDEN', s
+          assert s['simple_ci']['run_id']==29156143044, s
+          assert s['simple_ci']['verified'] is True, s
+          PY
+
+      - name: Verify no tracked modifications
+        run: test -z "$(git status --porcelain)"
+
+      - name: Upload exact summary evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3b1-exact-evidence-summary
+          path: |
+            validation_summary.json
+            validation_summary.md
+            simple_ci_evidence.json
+          if-no-files-found: error
+          retention-days: 90
