@@ -14,6 +14,7 @@ from typing import Any, Sequence
 
 from atos.lifecycle_types import (
     AccountingEvent,
+    AccountingEventType,
     AccountingPlan,
     DispatchAttemptStatus,
     ExecutionStatus,
@@ -44,6 +45,8 @@ from atos.lifecycle_types import (
     utc_text,
 )
 from atos.runtime_db import RuntimeDatabase
+
+_ZERO = Decimal("0")
 
 
 @dataclass(slots=True)
@@ -92,6 +95,38 @@ def _decimal_from_text(value: str, field_name: str) -> Decimal:
     if not parsed.is_finite():
         raise LifecycleInvariantError(f"{field_name} must be finite")
     return parsed
+
+
+def _event_id(command: FillApplicationCommand, event_no: int) -> str:
+    return deterministic_id(
+        "pae_",
+        (
+            "B4.3B:PAE:V1",
+            command.venue,
+            command.account_scope,
+            command.fill_id,
+            str(event_no),
+        ),
+    )
+
+
+def _position_id(
+    command: FillApplicationCommand,
+    side: PositionSide,
+    event_no: int,
+) -> str:
+    return deterministic_id(
+        "pos_",
+        (
+            "B4.3B:POSITION:NETTING_V1",
+            command.venue,
+            command.account_scope,
+            command.symbol,
+            side.value,
+            command.fill_id,
+            str(event_no),
+        ),
+    )
 
 
 class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter):
@@ -196,6 +231,251 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
             raise error
         raise error from cause
 
+    @staticmethod
+    def _validate_plan(
+        command: FillApplicationCommand,
+        order_side: OrderSide,
+        open_positions: Sequence[PositionSnapshot],
+        plan: AccountingPlan,
+    ) -> None:
+        """Reject a corrupt injected policy before the first authoritative write."""
+        if not isinstance(plan, AccountingPlan):
+            raise LifecycleInvariantError("accounting policy must return AccountingPlan")
+
+        snapshots = {position.position_id: position for position in open_positions}
+        expected_sign = Decimal("1") if order_side is OrderSide.BUY else Decimal("-1")
+        target_side = PositionSide.LONG if order_side is OrderSide.BUY else PositionSide.SHORT
+        opposite_side = (
+            PositionSide.SHORT if order_side is OrderSide.BUY else PositionSide.LONG
+        )
+        total_abs_delta = _ZERO
+        total_fee = _ZERO
+        position_ids: list[str] = []
+
+        for event, mutation in zip(plan.events, plan.positions, strict=True):
+            if event.event_id != _event_id(command, event.event_no):
+                raise LifecycleInvariantError("policy produced a non-deterministic event_id")
+            if event.timestamp != command.occurred_at:
+                raise LifecycleInvariantError("policy event timestamp must equal occurred_at")
+            if event.price != command.price:
+                raise LifecycleInvariantError("policy event price must equal fill price")
+            if event.delta_qty * expected_sign <= 0:
+                raise LifecycleInvariantError("policy event delta direction contradicts order side")
+            total_abs_delta += abs(event.delta_qty)
+            total_fee += event.fee
+
+            expected_fee = command.fee if event.event_no == 1 else _ZERO
+            if event.fee != expected_fee:
+                raise LifecycleInvariantError("policy fee attribution is not deterministic")
+            if event.event_type in (
+                AccountingEventType.OPEN,
+                AccountingEventType.INCREASE,
+            ) and event.realized_pnl != 0:
+                raise LifecycleInvariantError(
+                    "OPEN/INCREASE event realized_pnl must be zero"
+                )
+
+            if (
+                mutation.venue != command.venue
+                or mutation.account_scope != command.account_scope
+                or mutation.symbol != command.symbol
+            ):
+                raise LifecycleInvariantError(
+                    "policy position mutation scope does not match fill scope"
+                )
+            if mutation.updated_at != command.recorded_at:
+                raise LifecycleInvariantError(
+                    "policy position updated_at must equal recorded_at"
+                )
+            if mutation.unrealized_pnl != 0:
+                raise LifecycleInvariantError(
+                    "policy position unrealized_pnl must be zero without a mark"
+                )
+
+            if event.event_type is AccountingEventType.OPEN:
+                if (
+                    mutation.kind is not PositionMutationKind.INSERT
+                    or mutation.status is not PositionStatus.OPEN
+                    or mutation.side is not target_side
+                    or mutation.opened_at != command.occurred_at
+                    or mutation.closed_at is not None
+                    or mutation.position_id
+                    != _position_id(command, mutation.side, event.event_no)
+                    or mutation.quantity != abs(event.delta_qty)
+                    or mutation.avg_entry_price != command.price
+                    or mutation.realized_pnl != 0
+                ):
+                    raise LifecycleInvariantError("invalid OPEN position mutation")
+            else:
+                if mutation.kind is not PositionMutationKind.UPDATE:
+                    raise LifecycleInvariantError(
+                        "non-OPEN accounting event must update an existing position"
+                    )
+                previous = snapshots.get(mutation.position_id)
+                if previous is None:
+                    raise LifecycleInvariantError(
+                        "policy update does not target an authoritative open snapshot"
+                    )
+                if (
+                    mutation.venue != previous.venue
+                    or mutation.account_scope != previous.account_scope
+                    or mutation.symbol != previous.symbol
+                    or mutation.side is not previous.side
+                    or mutation.opened_at != previous.opened_at
+                ):
+                    raise LifecycleInvariantError(
+                        "policy update changed immutable position identity"
+                    )
+
+                if event.event_type is AccountingEventType.INCREASE:
+                    if (
+                        mutation.side is not target_side
+                        or mutation.status is not PositionStatus.OPEN
+                        or mutation.closed_at is not None
+                        or mutation.quantity - previous.quantity
+                        != abs(event.delta_qty)
+                        or mutation.realized_pnl != previous.realized_pnl
+                    ):
+                        raise LifecycleInvariantError("invalid INCREASE position mutation")
+                elif event.event_type is AccountingEventType.REDUCE:
+                    if (
+                        mutation.side is not opposite_side
+                        or mutation.status is not PositionStatus.OPEN
+                        or mutation.closed_at is not None
+                        or previous.quantity - mutation.quantity
+                        != abs(event.delta_qty)
+                        or mutation.avg_entry_price != previous.avg_entry_price
+                        or mutation.realized_pnl
+                        != previous.realized_pnl + event.realized_pnl
+                    ):
+                        raise LifecycleInvariantError("invalid REDUCE position mutation")
+                elif event.event_type is AccountingEventType.CLOSE:
+                    if (
+                        mutation.side is not opposite_side
+                        or mutation.status is not PositionStatus.CLOSED
+                        or mutation.quantity != 0
+                        or mutation.closed_at != command.occurred_at
+                        or previous.quantity != abs(event.delta_qty)
+                        or mutation.avg_entry_price != previous.avg_entry_price
+                        or mutation.realized_pnl
+                        != previous.realized_pnl + event.realized_pnl
+                    ):
+                        raise LifecycleInvariantError("invalid CLOSE position mutation")
+                else:
+                    raise LifecycleInvariantError("unknown accounting event type")
+
+            position_ids.append(mutation.position_id)
+
+        if total_abs_delta != command.quantity:
+            raise LifecycleInvariantError("policy event deltas do not consume fill quantity")
+        if total_fee != command.fee:
+            raise LifecycleInvariantError("policy event fees do not equal fill fee")
+        if len(plan.events) == 2:
+            if plan.events[0].event_type is not AccountingEventType.CLOSE:
+                raise LifecycleInvariantError(
+                    "two-event zero crossing must close the opposite position first"
+                )
+            if plan.events[1].event_type not in (
+                AccountingEventType.OPEN,
+                AccountingEventType.INCREASE,
+            ):
+                raise LifecycleInvariantError(
+                    "zero-crossing second event must OPEN or INCREASE"
+                )
+            if len(set(position_ids)) != 2:
+                raise LifecycleInvariantError(
+                    "zero-crossing events must affect two distinct positions"
+                )
+
+    @staticmethod
+    def _validate_replay_events(
+        command: FillApplicationCommand,
+        rows: Sequence[sqlite3.Row],
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        if len(rows) not in (1, 2):
+            raise LifecycleInvariantError(
+                "replayed fill has an incomplete or excessive accounting sequence"
+            )
+
+        expected_numbers = tuple(range(1, len(rows) + 1))
+        actual_numbers = tuple(row["source_fill_event_no"] for row in rows)
+        if actual_numbers != expected_numbers:
+            raise LifecycleInvariantError(
+                "replayed fill accounting sequence is not contiguous"
+            )
+
+        total_abs_delta = _ZERO
+        total_fee = _ZERO
+        delta_sign: int | None = None
+        position_ids: list[str] = []
+        for row in rows:
+            event_no = row["source_fill_event_no"]
+            if row["event_id"] != _event_id(command, event_no):
+                raise LifecycleInvariantError(
+                    "replayed fill accounting event_id is not deterministic"
+                )
+            if row["source_fill_symbol"] != command.symbol:
+                raise LifecycleInvariantError(
+                    "replayed fill accounting symbol does not match fill"
+                )
+            if _decimal_from_text(row["price"], "event price") != command.price:
+                raise LifecycleInvariantError(
+                    "replayed fill accounting price does not match fill"
+                )
+            if _parse_utc_text(row["timestamp"], "event timestamp") != command.occurred_at:
+                raise LifecycleInvariantError(
+                    "replayed fill accounting timestamp does not match fill"
+                )
+
+            fee = _decimal_from_text(row["fee"], "event fee")
+            expected_fee = command.fee if event_no == 1 else _ZERO
+            if fee != expected_fee:
+                raise LifecycleInvariantError(
+                    "replayed fill accounting fee attribution is invalid"
+                )
+            total_fee += fee
+
+            delta = _decimal_from_text(row["delta_qty"], "event delta_qty")
+            if delta == 0:
+                raise LifecycleInvariantError("replayed accounting delta cannot be zero")
+            current_sign = 1 if delta > 0 else -1
+            if delta_sign is None:
+                delta_sign = current_sign
+            elif delta_sign != current_sign:
+                raise LifecycleInvariantError(
+                    "replayed accounting deltas have inconsistent directions"
+                )
+            total_abs_delta += abs(delta)
+            position_ids.append(row["position_id"])
+
+        if total_fee != command.fee:
+            raise LifecycleInvariantError("replayed event fees do not equal fill fee")
+        if total_abs_delta != command.quantity:
+            raise LifecycleInvariantError(
+                "replayed event deltas do not consume fill quantity"
+            )
+        if len(rows) == 2:
+            if rows[0]["event_type"] != AccountingEventType.CLOSE.value:
+                raise LifecycleInvariantError(
+                    "replayed zero crossing does not close first"
+                )
+            if rows[1]["event_type"] not in (
+                AccountingEventType.OPEN.value,
+                AccountingEventType.INCREASE.value,
+            ):
+                raise LifecycleInvariantError(
+                    "replayed zero crossing has invalid second event"
+                )
+            if len(set(position_ids)) != 2:
+                raise LifecycleInvariantError(
+                    "replayed zero crossing does not affect distinct positions"
+                )
+
+        return (
+            tuple(row["event_id"] for row in rows),
+            tuple(position_ids),
+        )
+
     def register_order_acknowledgement(
         self,
         command: OrderAcknowledgementCommand,
@@ -232,9 +512,7 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                 ).fetchone()
 
                 if row is not None:
-                    actual = tuple(row)
-                    expected = self._order_payload(command)
-                    if actual != expected:
+                    if tuple(row) != self._order_payload(command):
                         self._raise_with_stats(
                             LifecycleConflictError,
                             "authoritative order identity exists with conflicting payload",
@@ -414,7 +692,8 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                         stats,
                         """
                         SELECT event_id, position_id, source_fill_event_no,
-                               source_fill_symbol
+                               source_fill_symbol, event_type, delta_qty,
+                               price, fee, realized_pnl, timestamp
                         FROM position_accounting_details
                         WHERE source_fill_venue = ?
                           AND source_fill_account_scope = ?
@@ -423,48 +702,9 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                         """,
                         (command.venue, command.account_scope, command.fill_id),
                     ).fetchall()
-                    if len(event_rows) not in (1, 2):
-                        self._raise_with_stats(
-                            LifecycleInvariantError,
-                            "replayed fill has an incomplete or excessive accounting sequence",
-                            stats,
-                        )
-                    expected_numbers = tuple(range(1, len(event_rows) + 1))
-                    actual_numbers = tuple(
-                        row["source_fill_event_no"] for row in event_rows
-                    )
-                    if actual_numbers != expected_numbers:
-                        self._raise_with_stats(
-                            LifecycleInvariantError,
-                            "replayed fill accounting sequence is not contiguous",
-                            stats,
-                        )
-                    for row in event_rows:
-                        event_no = row["source_fill_event_no"]
-                        expected_event_id = deterministic_id(
-                            "pae_",
-                            (
-                                "B4.3B:PAE:V1",
-                                command.venue,
-                                command.account_scope,
-                                command.fill_id,
-                                str(event_no),
-                            ),
-                        )
-                        if (
-                            row["event_id"] != expected_event_id
-                            or row["source_fill_symbol"] != command.symbol
-                        ):
-                            self._raise_with_stats(
-                                LifecycleInvariantError,
-                                "replayed fill accounting identity is not deterministic",
-                                stats,
-                            )
-                    replay_event_ids = tuple(
-                        row["event_id"] for row in event_rows
-                    )
-                    replay_position_ids = tuple(
-                        row["position_id"] for row in event_rows
+                    replay_event_ids, replay_position_ids = self._validate_replay_events(
+                        command,
+                        event_rows,
                     )
                 else:
                     order = self._read(
@@ -511,11 +751,12 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                         },
                     }
                     if command.order_status_after not in allowed_targets.get(
-                        current_status, set()
+                        current_status,
+                        set(),
                     ):
                         self._raise_with_stats(
                             LifecyclePreconditionError,
-                            "fill requests an invalid order status transition",
+                            "fill has an invalid order status transition",
                             stats,
                         )
 
@@ -539,7 +780,6 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                             PositionStatus.OPEN.value,
                         ),
                     ).fetchall()
-
                     open_positions = tuple(
                         self._position_snapshot_from_row(row)
                         for row in position_rows
@@ -549,9 +789,14 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                         order_side=order_side,
                         open_positions=open_positions,
                     )
+                    self._validate_plan(
+                        command,
+                        order_side,
+                        open_positions,
+                        applied_plan,
+                    )
 
                     tx.execute("PRAGMA defer_foreign_keys = ON")
-
                     self._mutate(
                         tx,
                         stats,
@@ -608,11 +853,12 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                         applied_plan.positions,
                         strict=True,
                     ):
-                        self._insert_accounting_event(
-                            tx, stats, command, event
-                        )
+                        self._insert_accounting_event(tx, stats, command, event)
                         self._apply_position_mutation(
-                            tx, stats, event.event_no, mutation
+                            tx,
+                            stats,
+                            event.event_no,
+                            mutation,
                         )
 
                 self._ensure_connection_stable(self._db, connection)
@@ -680,13 +926,16 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
             side=side,
             quantity=_decimal_from_text(row["quantity"], "quantity"),
             avg_entry_price=_decimal_from_text(
-                row["avg_entry_price"], "avg_entry_price"
+                row["avg_entry_price"],
+                "avg_entry_price",
             ),
             realized_pnl=_decimal_from_text(
-                row["realized_pnl"], "realized_pnl"
+                row["realized_pnl"],
+                "realized_pnl",
             ),
             unrealized_pnl=_decimal_from_text(
-                row["unrealized_pnl"], "unrealized_pnl"
+                row["unrealized_pnl"],
+                "unrealized_pnl",
             ),
             status=status,
             opened_at=_parse_utc_text(row["opened_at"], "opened_at"),
