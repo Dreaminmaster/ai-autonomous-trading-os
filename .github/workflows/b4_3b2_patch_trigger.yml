@@ -1,0 +1,47 @@
+name: B4.3B2 Patch Trigger
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'feat/b4.3b2-sqlite-lifecycle-persistence'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/b4.3b2-sqlite-lifecycle-persistence
+          fetch-depth: 0
+
+      - name: Execute bounded helper script
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          workflow = Path('.github/workflows/b4_3b2_one_time_patch.yml').read_text().splitlines()
+          start = next(i for i, line in enumerate(workflow) if line.strip() == "python - <<'PY'")
+          end = next(i for i in range(start + 1, len(workflow)) if workflow[i].strip() == 'PY')
+          script = textwrap.dedent('\n'.join(workflow[start + 1:end]))
+          exec(compile(script, 'b4_3b2_one_time_patch', 'exec'), {'__name__': '__main__'})
+          PY
+
+      - name: Commit exact patch
+        shell: bash
+        run: |
+          git diff --check
+          if git diff --quiet; then
+            echo "No patch needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add implementation/src/atos/lifecycle_persistence.py implementation/tests/test_lifecycle_persistence.py
+          git commit -m "fix(b4.3b2): bind adapter to injected connection boundary"
+          git push origin HEAD:feat/b4.3b2-sqlite-lifecycle-persistence
