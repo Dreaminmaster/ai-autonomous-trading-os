@@ -1,0 +1,257 @@
+name: B4.3A Post-Merge Gate
+
+on:
+  pull_request:
+    branches: [ci/b4.3a-post-merge-base]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  post-merge-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      TARGET_SHA: f6e7f3878c14ef74e038b4c0575b996735467586
+      TARGET_BRANCH: main
+      REPOSITORY: Dreaminmaster/ai-autonomous-trading-os
+    steps:
+      - name: Checkout exact merge SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 1
+
+      - name: Verify exact merge HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          echo "TARGET_SHA=$TARGET_SHA"
+          echo "ACTUAL_SHA=$actual"
+          test "$actual" = "$TARGET_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Wait for exact main evidence
+        id: wait
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+          from pathlib import Path
+
+          repo = os.environ['REPOSITORY']
+          token = os.environ['GITHUB_TOKEN']
+          target_sha = os.environ['TARGET_SHA']
+          target_branch = os.environ['TARGET_BRANCH']
+
+          def api(path):
+              req = urllib.request.Request('https://api.github.com' + path)
+              req.add_header('Authorization', 'Bearer ' + token)
+              req.add_header('Accept', 'application/vnd.github+json')
+              req.add_header('X-GitHub-Api-Version', '2022-11-28')
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.loads(response.read())
+
+          workflows = api(f'/repos/{repo}/actions/workflows?per_page=100')['workflows']
+          by_path = {w['path']: w for w in workflows if w.get('state') == 'active'}
+          ci_workflow = by_path['.github/workflows/ci.yml']
+          freq_workflow = by_path['.github/workflows/freqtrade-validation.yml']
+          assert ci_workflow['name'] == 'CI'
+          assert freq_workflow['name'] == 'Freqtrade Validation'
+
+          def exact_runs(workflow_id):
+              data = api(
+                  f'/repos/{repo}/actions/workflows/{workflow_id}/runs'
+                  f'?head_sha={target_sha}&event=push&per_page=20'
+              )
+              return [
+                  run for run in data.get('workflow_runs', [])
+                  if run.get('head_sha') == target_sha
+                  and run.get('head_branch') == target_branch
+                  and run.get('event') == 'push'
+              ]
+
+          selected = None
+          for attempt in range(240):
+              ci_runs = exact_runs(ci_workflow['id'])
+              freq_runs = exact_runs(freq_workflow['id'])
+              if len(ci_runs) > 1:
+                  raise RuntimeError(f'Ambiguous exact main CI runs: {len(ci_runs)}')
+              if len(freq_runs) > 1:
+                  raise RuntimeError(f'Ambiguous exact main Freqtrade runs: {len(freq_runs)}')
+
+              ci_run = ci_runs[0] if ci_runs else None
+              freq_run = freq_runs[0] if freq_runs else None
+
+              if ci_run and ci_run.get('status') == 'completed' and ci_run.get('conclusion') != 'success':
+                  raise RuntimeError(f"Exact main CI failed: {ci_run.get('conclusion')}")
+
+              if ci_run and freq_run:
+                  jobs = api(f"/repos/{repo}/actions/runs/{freq_run['id']}/jobs?per_page=100")['jobs']
+                  jobs_by_name = {job['name']: job for job in jobs}
+                  atos = jobs_by_name.get('atos-tests')
+                  freq = jobs_by_name.get('freqtrade')
+
+                  for name, job in (('atos-tests', atos), ('freqtrade', freq)):
+                      if job and job.get('status') == 'completed' and job.get('conclusion') != 'success':
+                          raise RuntimeError(f"Exact main {name} failed: {job.get('conclusion')}")
+
+                  artifact_data = api(
+                      f"/repos/{repo}/actions/runs/{freq_run['id']}/artifacts?per_page=100"
+                  )
+                  artifacts = {a['name']: a for a in artifact_data.get('artifacts', [])}
+                  required_artifacts = {'atos-validation', 'freqtrade-validation'}
+
+                  ready = (
+                      ci_run.get('status') == 'completed'
+                      and ci_run.get('conclusion') == 'success'
+                      and atos is not None
+                      and atos.get('status') == 'completed'
+                      and atos.get('conclusion') == 'success'
+                      and freq is not None
+                      and freq.get('status') == 'completed'
+                      and freq.get('conclusion') == 'success'
+                      and required_artifacts.issubset(artifacts)
+                      and all(not artifacts[name].get('expired') for name in required_artifacts)
+                  )
+                  if ready:
+                      selected = (ci_run, freq_run, artifacts)
+                      break
+
+              print(f'waiting attempt={attempt + 1}: ci={ci_run and ci_run.get("status")} freq_run={freq_run and freq_run.get("status")}')
+              time.sleep(30)
+
+          if selected is None:
+              raise RuntimeError('Timed out waiting for exact main evidence')
+
+          ci_run, freq_run, artifacts = selected
+          simple = {
+              'schema_version': 1,
+              'workflow_id': ci_workflow['id'],
+              'workflow_name': ci_workflow['name'],
+              'workflow_path': ci_workflow['path'],
+              'run_id': ci_run['id'],
+              'head_sha': target_sha,
+              'status': ci_run['status'],
+              'conclusion': ci_run['conclusion'],
+              'verified': True,
+              'event': ci_run['event'],
+              'head_branch': ci_run['head_branch'],
+          }
+          Path('simple_ci_evidence.json').write_text(
+              json.dumps(simple, indent=2, sort_keys=True) + '\n'
+          )
+
+          binding = {
+              'schema_version': 1,
+              'target_sha': target_sha,
+              'target_branch': target_branch,
+              'simple_ci_run_id': ci_run['id'],
+              'freqtrade_run_id': freq_run['id'],
+              'atos_artifact_id': artifacts['atos-validation']['id'],
+              'freqtrade_artifact_id': artifacts['freqtrade-validation']['id'],
+              'live': 'FORBIDDEN',
+          }
+          Path('binding_manifest.json').write_text(
+              json.dumps(binding, indent=2, sort_keys=True) + '\n'
+          )
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"ci_run_id={ci_run['id']}\n")
+              output.write(f"freq_run_id={freq_run['id']}\n")
+          print(json.dumps(binding, indent=2, sort_keys=True))
+          PY
+
+      - name: Download exact main ATOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: atos-validation
+          path: atos_artifacts
+          github-token: ${{ github.token }}
+          repository: Dreaminmaster/ai-autonomous-trading-os
+          run-id: ${{ steps.wait.outputs.freq_run_id }}
+
+      - name: Download exact main Freqtrade artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: freqtrade-validation
+          path: freqtrade_artifacts
+          github-token: ${{ github.token }}
+          repository: Dreaminmaster/ai-autonomous-trading-os
+          run-id: ${{ steps.wait.outputs.freq_run_id }}
+
+      - name: Install evidence dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e 'implementation[dev]'
+
+      - name: Run canonical post-merge summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd implementation
+          python -m atos.evidence_summary \
+            "$TARGET_SHA" \
+            "${{ steps.wait.outputs.freq_run_id }}" \
+            success \
+            success \
+            ../atos_artifacts \
+            ../freqtrade_artifacts \
+            ../simple_ci_evidence.json
+
+      - name: Enforce post-merge PASS
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary = json.loads(
+              Path('implementation/validation_summary.json').read_text()
+          )
+          binding = json.loads(Path('binding_manifest.json').read_text())
+          assert summary['gate_status'] == 'PASS', summary
+          assert summary['errors'] == [], summary
+          assert summary['head_sha'] == os.environ['TARGET_SHA']
+          assert summary['run_id'] == str(binding['freqtrade_run_id'])
+          assert summary['live'] == 'FORBIDDEN'
+          assert summary['simple_ci']['run_id'] == binding['simple_ci_run_id']
+          assert binding['target_branch'] == 'main'
+          assert binding['live'] == 'FORBIDDEN'
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Verify no tracked modifications
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+
+      - name: Upload post-merge evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3a-post-merge-gate
+          path: |
+            implementation/validation_summary.json
+            implementation/validation_summary.md
+            simple_ci_evidence.json
+            binding_manifest.json
+          if-no-files-found: error
+          retention-days: 90
