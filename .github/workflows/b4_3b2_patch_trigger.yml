@@ -23,12 +23,14 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import textwrap
 
           workflow = Path('.github/workflows/b4_3b2_one_time_patch.yml').read_text().splitlines()
           start = next(i for i, line in enumerate(workflow) if line.strip() == "python - <<'PY'")
           end = next(i for i in range(start + 1, len(workflow)) if workflow[i].strip() == 'PY')
-          script = textwrap.dedent('\n'.join(workflow[start + 1:end]))
+          script_lines = []
+          for line in workflow[start + 1:end]:
+              script_lines.append(line[10:] if line.startswith('          ') else line)
+          script = '\n'.join(script_lines)
           exec(compile(script, 'b4_3b2_one_time_patch', 'exec'), {'__name__': '__main__'})
           PY
 
