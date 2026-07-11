@@ -66,12 +66,8 @@ def _gross_close_pnl(
         ctx.prec = _DECIMAL_PRECISION
         ctx.rounding = ROUND_HALF_EVEN
         if position.side is PositionSide.LONG:
-            return close_quantity * (
-                fill_price - position.avg_entry_price
-            )
-        return close_quantity * (
-            position.avg_entry_price - fill_price
-        )
+            return close_quantity * (fill_price - position.avg_entry_price)
+        return close_quantity * (position.avg_entry_price - fill_price)
 
 
 def _weighted_average(
@@ -116,17 +112,17 @@ class NettingPositionAccountingV1(PositionAccountingPolicy):
         open_positions: Sequence[PositionSnapshot],
     ) -> AccountingPlan:
         if not isinstance(order_side, OrderSide):
-            raise LifecycleInvariantError(
-                "order_side must be OrderSide"
-            )
+            raise LifecycleInvariantError("order_side must be OrderSide")
 
         by_side: dict[PositionSide, PositionSnapshot] = {}
         position_ids: set[str] = set()
         for position in open_positions:
-            if position.status is not PositionStatus.OPEN:
+            if not isinstance(position, PositionSnapshot):
                 raise LifecycleInvariantError(
-                    "policy received non-open position"
+                    "open_positions must contain PositionSnapshot values"
                 )
+            if position.status is not PositionStatus.OPEN:
+                raise LifecycleInvariantError("policy received non-open position")
             if (
                 position.venue != command.venue
                 or position.account_scope != command.account_scope
@@ -136,9 +132,7 @@ class NettingPositionAccountingV1(PositionAccountingPolicy):
                     "position scope does not match fill scope"
                 )
             if position.position_id in position_ids:
-                raise LifecycleInvariantError(
-                    "duplicate open position_id"
-                )
+                raise LifecycleInvariantError("duplicate open position_id")
             position_ids.add(position.position_id)
             if position.side in by_side:
                 raise LifecycleInvariantError(
@@ -187,9 +181,7 @@ class NettingPositionAccountingV1(PositionAccountingPolicy):
             mutations.append(mutation)
 
         if opposite is not None:
-            close_quantity = min(
-                remaining, opposite.quantity
-            )
+            close_quantity = min(remaining, opposite.quantity)
             realized = _gross_close_pnl(
                 opposite, close_quantity, command.price
             )
@@ -232,9 +224,7 @@ class NettingPositionAccountingV1(PositionAccountingPolicy):
         if remaining > 0:
             if same_side is None:
                 event_no = len(events) + 1
-                position_id = _position_id(
-                    command, target_side, event_no
-                )
+                position_id = _position_id(command, target_side, event_no)
                 event_type = AccountingEventType.OPEN
                 mutation = PositionMutation(
                     kind=PositionMutationKind.INSERT,
@@ -284,33 +274,23 @@ class NettingPositionAccountingV1(PositionAccountingPolicy):
             remaining = _ZERO
 
         if remaining != 0:
-            raise LifecycleInvariantError(
-                "fill quantity was not fully consumed"
-            )
+            raise LifecycleInvariantError("fill quantity was not fully consumed")
         if len(events) not in (1, 2):
-            raise LifecycleInvariantError(
-                "fill must produce one or two events"
-            )
+            raise LifecycleInvariantError("fill must produce one or two events")
         if (
             len(events) == 2
-            and events[0].event_type
-            is not AccountingEventType.CLOSE
+            and events[0].event_type is not AccountingEventType.CLOSE
         ):
             raise LifecycleInvariantError(
-                "two-event crossing requires event 1 to close "
-                "opposite position"
+                "two-event crossing requires event 1 to close opposite position"
             )
-        if sum(
-            (event.fee for event in events), _ZERO
-        ) != command.fee:
+        if sum((event.fee for event in events), _ZERO) != command.fee:
             raise LifecycleInvariantError(
                 "event fee sum does not equal fill fee"
             )
         if tuple(event.event_no for event in events) != tuple(
             range(1, len(events) + 1)
         ):
-            raise LifecycleInvariantError(
-                "event sequence is not contiguous"
-            )
+            raise LifecycleInvariantError("event sequence is not contiguous")
 
         return AccountingPlan(tuple(events), tuple(mutations))
