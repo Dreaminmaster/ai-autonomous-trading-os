@@ -18,7 +18,7 @@ jobs:
           ref: feat/b4.3b2-sqlite-lifecycle-persistence
           fetch-depth: 0
 
-      - name: Apply bounded source and test patch
+      - name: Apply line-anchored patch
         id: execute
         continue-on-error: true
         shell: bash
@@ -29,189 +29,186 @@ jobs:
 
           src_path = Path('implementation/src/atos/lifecycle_persistence.py')
           test_path = Path('implementation/tests/test_lifecycle_persistence.py')
-          src = src_path.read_text()
-          tests = test_path.read_text()
+          src = src_path.read_text().splitlines()
+          tests = test_path.read_text().splitlines()
 
-          def require_count(text: str, token: str, count: int, label: str) -> None:
-              actual = text.count(token)
-              if actual != count:
-                  raise SystemExit(f'{label}: expected {count}, found {actual}')
+          def one(lines, exact, label):
+              matches = [i for i, line in enumerate(lines) if line == exact]
+              if len(matches) != 1:
+                  raise SystemExit(f'{label}: expected 1, found {len(matches)}')
+              return matches[0]
 
-          # Remove only the policy-specific NETTING_V1 position-id helper.
-          start_token = 'def _position_id('
-          end_token = 'class SqliteLifecyclePersistence('
-          require_count(src, start_token, 1, 'position-id helper start')
-          require_count(src, end_token, 1, 'persistence class start')
-          start = src.index(start_token)
-          end = src.index(end_token, start)
-          src = src[:start] + src[end:]
+          def all_exact(lines, exact, count, label):
+              matches = [i for i, line in enumerate(lines) if line == exact]
+              if len(matches) != count:
+                  raise SystemExit(f'{label}: expected {count}, found {len(matches)}')
+              return matches
 
-          # Require an already-connected RuntimeDatabase and bind its exact connection.
-          policy_guard = '''        if not isinstance(accounting_policy, PositionAccountingPolicy):
-              raise LifecycleValidationError(
-                  "accounting_policy must implement PositionAccountingPolicy"
-              )
-          '''
-          require_count(src, policy_guard, 1, 'accounting policy guard')
-          src = src.replace(
-              policy_guard,
-              '''        if db.conn is None:
-              raise LifecycleValidationError(
-                  "db must be connected before adapter construction"
-              )
-          if not isinstance(accounting_policy, PositionAccountingPolicy):
-              raise LifecycleValidationError(
-                  "accounting_policy must implement PositionAccountingPolicy"
-              )
-          ''',
-              1,
-          )
+          # Remove policy-specific NETTING_V1 position-id helper only.
+          start = one(src, 'def _position_id(', 'position-id helper')
+          end = one(src, 'class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter):', 'persistence class')
+          if end <= start:
+              raise SystemExit('position-id helper boundary order invalid')
+          del src[start:end]
 
-          assignment = '''        self._db = db
-          self._accounting_policy = accounting_policy
-          '''
-          require_count(src, assignment, 1, 'adapter assignments')
-          src = src.replace(
-              assignment,
-              '''        self._db = db
-          self._connection = db.conn
-          self._accounting_policy = accounting_policy
-          ''',
-              1,
-          )
-
-          stable_start = '    @staticmethod\n    def _ensure_connection_stable('
-          stable_end = '    @staticmethod\n    def _order_payload('
-          require_count(src, stable_start, 1, 'connection stability start')
-          require_count(src, stable_end, 1, 'order payload start')
-          start = src.index(stable_start)
-          end = src.index(stable_end, start)
-          replacement = '''    def _require_connection(self) -> sqlite3.Connection:
-              if self._db.conn is not self._connection:
-                  raise LifecyclePreconditionError(
-                      "injected RuntimeDatabase connection was closed or replaced",
-                      OperationStats(db_connection_identity=id(self._connection)),
-                  )
-              return self._connection
-
-          def _ensure_connection_stable(
-              self,
-              connection: sqlite3.Connection,
-          ) -> None:
-              if (
-                  self._db.conn is not self._connection
-                  or connection is not self._connection
-              ):
-                  raise LifecycleInvariantError(
-                      "RuntimeDatabase connection changed inside lifecycle operation"
-                  )
-
-          '''
-          src = src[:start] + replacement + src[end:]
-
-          require_count(src, 'connection = self._db.connection', 2, 'operation connection lookup')
-          src = src.replace(
-              'connection = self._db.connection',
-              'connection = self._require_connection()',
-          )
-          require_count(
+          # Require and bind one already-open injected connection.
+          policy_guard = one(
               src,
-              'self._ensure_connection_stable(self._db, connection)',
+              '        if not isinstance(accounting_policy, PositionAccountingPolicy):',
+              'accounting policy guard',
+          )
+          src[policy_guard:policy_guard] = [
+              '        if db.conn is None:',
+              '            raise LifecycleValidationError(',
+              '                "db must be connected before adapter construction"',
+              '            )',
+          ]
+          db_assignment = one(src, '        self._db = db', 'db assignment')
+          src.insert(db_assignment + 1, '        self._connection = db.conn')
+
+          stable_decorator = None
+          for i in range(len(src) - 1):
+              if src[i] == '    @staticmethod' and src[i + 1] == '    def _ensure_connection_stable(':
+                  stable_decorator = i
+                  break
+          if stable_decorator is None:
+              raise SystemExit('connection stability method start not found')
+
+          order_payload_decorator = None
+          for i in range(stable_decorator + 1, len(src) - 1):
+              if src[i] == '    @staticmethod' and src[i + 1] == '    def _order_payload(command: OrderAcknowledgementCommand) -> tuple[str, ...]:':
+                  order_payload_decorator = i
+                  break
+          if order_payload_decorator is None:
+              raise SystemExit('order payload boundary not found')
+
+          src[stable_decorator:order_payload_decorator] = [
+              '    def _require_connection(self) -> sqlite3.Connection:',
+              '        if self._db.conn is not self._connection:',
+              '            raise LifecyclePreconditionError(',
+              '                "injected RuntimeDatabase connection was closed or replaced",',
+              '                OperationStats(db_connection_identity=id(self._connection)),',
+              '            )',
+              '        return self._connection',
+              '',
+              '    def _ensure_connection_stable(',
+              '        self,',
+              '        connection: sqlite3.Connection,',
+              '    ) -> None:',
+              '        if (',
+              '            self._db.conn is not self._connection',
+              '            or connection is not self._connection',
+              '        ):',
+              '            raise LifecycleInvariantError(',
+              '                "RuntimeDatabase connection changed inside lifecycle operation"',
+              '            )',
+              '',
+          ]
+
+          for i in all_exact(
+              src,
+              '        connection = self._db.connection',
               2,
-              'connection stability invocation',
+              'operation connection lookup',
+          ):
+              src[i] = '        connection = self._require_connection()'
+
+          for i in all_exact(
+              src,
+              '                self._ensure_connection_stable(self._db, connection)',
+              2,
+              'connection stability call',
+          ):
+              src[i] = '                self._ensure_connection_stable(connection)'
+
+          clause = one(src, '                    or mutation.position_id', 'position-id clause')
+          if '!= _position_id(' not in src[clause + 1]:
+              raise SystemExit('position-id clause continuation mismatch')
+          del src[clause:clause + 2]
+
+          # Test imports.
+          import_at = one(tests, '    LifecyclePreconditionError,', 'LifecyclePreconditionError import')
+          tests.insert(import_at + 1, '    LifecycleValidationError,')
+
+          # Insert replaceable policy fixture and connection-boundary tests.
+          first_test = one(
+              tests,
+              'def test_order_acknowledgement_exact_three_mutation_transaction(tmp_path):',
+              'first acknowledgement test',
           )
-          src = src.replace(
-              'self._ensure_connection_stable(self._db, connection)',
-              'self._ensure_connection_stable(connection)',
+          before_first_test = [
+              'class AlternatePositionIdPolicy(PositionAccountingPolicy):',
+              '    def __init__(self) -> None:',
+              '        self.inner = NettingPositionAccountingV1()',
+              '',
+              '    def plan(self, *, command, order_side, open_positions) -> AccountingPlan:',
+              '        plan = self.inner.plan(',
+              '            command=command,',
+              '            order_side=order_side,',
+              '            open_positions=open_positions,',
+              '        )',
+              '        custom_id = f"policy-position-{command.fill_id}"',
+              '        event = replace(plan.events[0], position_id=custom_id)',
+              '        mutation = replace(plan.positions[0], position_id=custom_id)',
+              '        return AccountingPlan(',
+              '            (event,) + plan.events[1:],',
+              '            (mutation,) + plan.positions[1:],',
+              '        )',
+              '',
+              '',
+              'def test_adapter_requires_preconnected_database(tmp_path):',
+              '    db = RuntimeDatabase(tmp_path / "runtime.db")',
+              '    with pytest.raises(LifecycleValidationError):',
+              '        SqliteLifecyclePersistence(db, NettingPositionAccountingV1())',
+              '    assert db.conn is None',
+              '',
+              '',
+              'def test_adapter_rejects_closed_or_replaced_connection_without_reconnect(tmp_path):',
+              '    db = make_db(tmp_path / "runtime.db")',
+              '    graph = seed_execution_graph(db, "connection-replaced")',
+              '    adapter = make_adapter(db)',
+              '    original_identity = id(db.connection)',
+              '',
+              '    db.close()',
+              '    with pytest.raises(LifecyclePreconditionError) as closed_error:',
+              '        adapter.register_order_acknowledgement(order_command(graph))',
+              '    assert closed_error.value.stats == OperationStats(',
+              '        0, 0, 0, 0, original_identity',
+              '    )',
+              '    assert db.conn is None',
+              '',
+              '    db.connect()',
+              '    with pytest.raises(LifecyclePreconditionError) as replaced_error:',
+              '        adapter.register_order_acknowledgement(order_command(graph))',
+              '    assert replaced_error.value.stats.transaction_count == 0',
+              '    assert replaced_error.value.stats.db_connection_identity == original_identity',
+              '',
+              '',
+          ]
+          tests[first_test:first_test] = before_first_test
+
+          param_at = one(
+              tests,
+              '@pytest.mark.parametrize("policy", [BadScopePolicy(), BadEventIdPolicy()])',
+              'invalid policy test marker',
           )
+          alternate_test = [
+              'def test_alternate_policy_position_identity_is_not_hardcoded_in_adapter(tmp_path):',
+              '    db = make_db(tmp_path / "alternate-policy.db")',
+              '    graph = seed_execution_graph(db, "alternate-policy")',
+              '    acknowledge(db, graph)',
+              '    adapter = SqliteLifecyclePersistence(db, AlternatePositionIdPolicy())',
+              '    result = adapter.apply_fill(fill_command(graph, "alternate-policy-fill"))',
+              '    assert result.outcome is PersistenceOutcome.APPLIED',
+              '    assert result.position_ids == ("policy-position-alternate-policy-fill",)',
+              '    assert scalar(db, "SELECT position_id FROM position_states") == result.position_ids[0]',
+              '',
+              '',
+          ]
+          tests[param_at:param_at] = alternate_test
 
-          position_clause = '''                    or mutation.position_id
-                      != _position_id(command, mutation.side, event.event_no)
-          '''
-          require_count(src, position_clause, 1, 'policy-specific position-id clause')
-          src = src.replace(position_clause, '', 1)
-
-          # Tests: typed constructor failure and no implicit reconnect.
-          import_anchor = '    LifecyclePreconditionError,\n    OperationStats,\n'
-          require_count(tests, import_anchor, 1, 'test import anchor')
-          tests = tests.replace(
-              import_anchor,
-              '    LifecyclePreconditionError,\n    LifecycleValidationError,\n    OperationStats,\n',
-              1,
-          )
-
-          class_anchor = 'def test_order_acknowledgement_exact_three_mutation_transaction(tmp_path):\n'
-          require_count(tests, class_anchor, 1, 'first acknowledgement test')
-          fixtures_and_tests = '''class AlternatePositionIdPolicy(PositionAccountingPolicy):
-              def __init__(self) -> None:
-                  self.inner = NettingPositionAccountingV1()
-
-              def plan(self, *, command, order_side, open_positions) -> AccountingPlan:
-                  plan = self.inner.plan(
-                      command=command,
-                      order_side=order_side,
-                      open_positions=open_positions,
-                  )
-                  custom_id = f"policy-position-{command.fill_id}"
-                  event = replace(plan.events[0], position_id=custom_id)
-                  mutation = replace(plan.positions[0], position_id=custom_id)
-                  return AccountingPlan(
-                      (event,) + plan.events[1:],
-                      (mutation,) + plan.positions[1:],
-                  )
-
-
-          def test_adapter_requires_preconnected_database(tmp_path):
-              db = RuntimeDatabase(tmp_path / "runtime.db")
-              with pytest.raises(LifecycleValidationError):
-                  SqliteLifecyclePersistence(db, NettingPositionAccountingV1())
-              assert db.conn is None
-
-
-          def test_adapter_rejects_closed_or_replaced_connection_without_reconnect(tmp_path):
-              db = make_db(tmp_path / "runtime.db")
-              graph = seed_execution_graph(db, "connection-replaced")
-              adapter = make_adapter(db)
-              original_identity = id(db.connection)
-
-              db.close()
-              with pytest.raises(LifecyclePreconditionError) as closed_error:
-                  adapter.register_order_acknowledgement(order_command(graph))
-              assert closed_error.value.stats == OperationStats(
-                  0, 0, 0, 0, original_identity
-              )
-              assert db.conn is None
-
-              db.connect()
-              with pytest.raises(LifecyclePreconditionError) as replaced_error:
-                  adapter.register_order_acknowledgement(order_command(graph))
-              assert replaced_error.value.stats.transaction_count == 0
-              assert replaced_error.value.stats.db_connection_identity == original_identity
-
-
-          '''
-          tests = tests.replace(class_anchor, fixtures_and_tests + class_anchor, 1)
-
-          param_anchor = '''@pytest.mark.parametrize("policy", [BadScopePolicy(), BadEventIdPolicy()])
-          def test_invalid_injected_policy_is_rejected_before_first_mutation(tmp_path, policy):
-          '''
-          require_count(tests, param_anchor, 1, 'invalid policy parameterized test')
-          alternate_test = '''def test_alternate_policy_position_identity_is_not_hardcoded_in_adapter(tmp_path):
-              db = make_db(tmp_path / "alternate-policy.db")
-              graph = seed_execution_graph(db, "alternate-policy")
-              acknowledge(db, graph)
-              adapter = SqliteLifecyclePersistence(db, AlternatePositionIdPolicy())
-              result = adapter.apply_fill(fill_command(graph, "alternate-policy-fill"))
-              assert result.outcome is PersistenceOutcome.APPLIED
-              assert result.position_ids == ("policy-position-alternate-policy-fill",)
-              assert scalar(db, "SELECT position_id FROM position_states") == result.position_ids[0]
-
-
-          '''
-          tests = tests.replace(param_anchor, alternate_test + param_anchor, 1)
-
-          src_path.write_text(src)
-          test_path.write_text(tests)
+          src_path.write_text('\n'.join(src) + '\n')
+          test_path.write_text('\n'.join(tests) + '\n')
           print('PATCH_OK')
           PY
 
