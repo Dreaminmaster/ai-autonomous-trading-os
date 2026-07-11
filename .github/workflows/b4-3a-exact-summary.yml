@@ -1,0 +1,207 @@
+name: B4.3A Exact Evidence Summary
+
+on:
+  pull_request:
+    branches: [ci/b4.3a-summary-base]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  exact-summary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TARGET_SHA: e00786dcd0904bd26546c826efe662a43ce8b89a
+      TARGET_BRANCH: feat/b4.3a-authority-consistent-schema
+      SOURCE_RUN_ID: '29149498151'
+      SIMPLE_CI_RUN_ID: '29149498138'
+      ATOS_ARTIFACT_ID: '8247741492'
+      FREQ_ARTIFACT_ID: '8248314555'
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 1
+
+      - name: Verify exact HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          echo "TARGET_SHA=$TARGET_SHA"
+          echo "ACTUAL_SHA=$actual"
+          test "$actual" = "$TARGET_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install evidence dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e 'implementation[dev]'
+
+      - name: Download formal ATOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: atos-validation
+          path: atos_artifacts
+          github-token: ${{ github.token }}
+          repository: Dreaminmaster/ai-autonomous-trading-os
+          run-id: ${{ env.SOURCE_RUN_ID }}
+
+      - name: Download formal Freqtrade artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: freqtrade-validation
+          path: freqtrade_artifacts
+          github-token: ${{ github.token }}
+          repository: Dreaminmaster/ai-autonomous-trading-os
+          run-id: ${{ env.SOURCE_RUN_ID }}
+
+      - name: Bind exact Simple CI and formal artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          repo = 'Dreaminmaster/ai-autonomous-trading-os'
+          token = os.environ['GITHUB_TOKEN']
+          target_sha = os.environ['TARGET_SHA']
+          target_branch = os.environ['TARGET_BRANCH']
+          source_run_id = int(os.environ['SOURCE_RUN_ID'])
+          simple_run_id = int(os.environ['SIMPLE_CI_RUN_ID'])
+          atos_artifact_id = int(os.environ['ATOS_ARTIFACT_ID'])
+          freq_artifact_id = int(os.environ['FREQ_ARTIFACT_ID'])
+
+          def api(path):
+              req = urllib.request.Request('https://api.github.com' + path)
+              req.add_header('Authorization', 'Bearer ' + token)
+              req.add_header('Accept', 'application/vnd.github+json')
+              req.add_header('X-GitHub-Api-Version', '2022-11-28')
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.loads(response.read())
+
+          run = api(f'/repos/{repo}/actions/runs/{simple_run_id}')
+          assert run['id'] == simple_run_id
+          assert run['name'] == 'CI'
+          assert run['workflow_id'] == 305746223
+          assert run['event'] == 'push'
+          assert run['head_branch'] == target_branch
+          assert run['head_sha'] == target_sha
+          assert run['status'] == 'completed'
+          assert run['conclusion'] == 'success'
+
+          simple = {
+              'schema_version': 1,
+              'workflow_id': run['workflow_id'],
+              'workflow_name': 'CI',
+              'workflow_path': '.github/workflows/ci.yml',
+              'run_id': simple_run_id,
+              'head_sha': target_sha,
+              'status': run['status'],
+              'conclusion': run['conclusion'],
+              'verified': True,
+              'event': run['event'],
+              'head_branch': run['head_branch'],
+          }
+          Path('simple_ci_evidence.json').write_text(
+              json.dumps(simple, indent=2, sort_keys=True) + '\n'
+          )
+
+          source = api(f'/repos/{repo}/actions/runs/{source_run_id}')
+          assert source['id'] == source_run_id
+          assert source['name'] == 'Freqtrade Validation'
+          assert source['event'] == 'push'
+          assert source['head_branch'] == target_branch
+          assert source['head_sha'] == target_sha
+
+          artifact_data = api(
+              f'/repos/{repo}/actions/runs/{source_run_id}/artifacts?per_page=100'
+          )
+          artifacts = {a['name']: a for a in artifact_data['artifacts']}
+          assert artifacts['atos-validation']['id'] == atos_artifact_id
+          assert artifacts['freqtrade-validation']['id'] == freq_artifact_id
+          assert artifacts['atos-validation']['expired'] is False
+          assert artifacts['freqtrade-validation']['expired'] is False
+
+          binding = {
+              'schema_version': 1,
+              'target_sha': target_sha,
+              'target_branch': target_branch,
+              'source_run_id': source_run_id,
+              'simple_ci_run_id': simple_run_id,
+              'atos_artifact_id': atos_artifact_id,
+              'freqtrade_artifact_id': freq_artifact_id,
+              'live': 'FORBIDDEN',
+          }
+          Path('binding_manifest.json').write_text(
+              json.dumps(binding, indent=2, sort_keys=True) + '\n'
+          )
+          PY
+
+      - name: Run canonical evidence summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd implementation
+          python -m atos.evidence_summary \
+            "$TARGET_SHA" \
+            "$SOURCE_RUN_ID" \
+            success \
+            success \
+            ../atos_artifacts \
+            ../freqtrade_artifacts \
+            ../simple_ci_evidence.json
+
+      - name: Enforce exact PASS
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary = json.loads(
+              Path('implementation/validation_summary.json').read_text()
+          )
+          assert summary['gate_status'] == 'PASS', summary
+          assert summary['errors'] == [], summary
+          assert summary['head_sha'] == os.environ['TARGET_SHA']
+          assert summary['run_id'] == os.environ['SOURCE_RUN_ID']
+          assert summary['live'] == 'FORBIDDEN'
+          assert summary['simple_ci']['run_id'] == int(os.environ['SIMPLE_CI_RUN_ID'])
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Verify no tracked modifications
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+
+      - name: Upload exact summary evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3a-exact-evidence-summary
+          path: |
+            implementation/validation_summary.json
+            implementation/validation_summary.md
+            simple_ci_evidence.json
+            binding_manifest.json
+          if-no-files-found: error
+          retention-days: 90
