@@ -81,11 +81,8 @@ def seed_execution_graph(
         "INSERT INTO runtime_cycles "
         "(cycle_id,session_id,symbol,started_at,status) VALUES (?,?,?,?,?)",
         (
-            graph["cycle_id"],
-            graph["session_id"],
-            symbol,
-            "2026-01-01T00:00:00Z",
-            "CREATED",
+            graph["cycle_id"], graph["session_id"], symbol,
+            "2026-01-01T00:00:00Z", "CREATED",
         ),
     )
     c.execute(
@@ -138,17 +135,11 @@ def order_command(
     acknowledged_at: datetime = T0,
 ) -> OrderAcknowledgementCommand:
     return OrderAcknowledgementCommand(
-        venue=graph["venue"],
-        account_scope=graph["account_scope"],
-        order_id=graph["order_id"],
-        execution_intent_id=graph["execution_intent_id"],
-        attempt_id=graph["attempt_id"],
-        client_order_id=graph["client_order_id"],
-        symbol=graph["symbol"],
-        side=OrderSide(graph["action"]),
-        quantity=quantity,
-        price=price,
-        order_type=OrderType.LIMIT,
+        venue=graph["venue"], account_scope=graph["account_scope"],
+        order_id=graph["order_id"], execution_intent_id=graph["execution_intent_id"],
+        attempt_id=graph["attempt_id"], client_order_id=graph["client_order_id"],
+        symbol=graph["symbol"], side=OrderSide(graph["action"]),
+        quantity=quantity, price=price, order_type=OrderType.LIMIT,
         acknowledged_at=acknowledged_at,
     )
 
@@ -166,17 +157,10 @@ def fill_command(
     symbol: str | None = None,
 ) -> FillApplicationCommand:
     return FillApplicationCommand(
-        venue=graph["venue"],
-        account_scope=graph["account_scope"],
-        fill_id=fill_id,
-        order_id=graph["order_id"],
-        symbol=symbol or graph["symbol"],
-        quantity=quantity,
-        price=price,
-        fee=fee,
-        fee_currency="USDT",
-        occurred_at=occurred_at,
-        recorded_at=recorded_at,
+        venue=graph["venue"], account_scope=graph["account_scope"],
+        fill_id=fill_id, order_id=graph["order_id"], symbol=symbol or graph["symbol"],
+        quantity=quantity, price=price, fee=fee, fee_currency="USDT",
+        occurred_at=occurred_at, recorded_at=recorded_at,
         order_status_after=order_status_after,
     )
 
@@ -187,8 +171,9 @@ def make_adapter(db: RuntimeDatabase) -> SqliteLifecyclePersistence:
 
 def acknowledge(db: RuntimeDatabase, graph: dict[str, str]) -> SqliteLifecyclePersistence:
     adapter = make_adapter(db)
-    result = adapter.register_order_acknowledgement(order_command(graph))
-    assert result.outcome is PersistenceOutcome.APPLIED
+    assert adapter.register_order_acknowledgement(
+        order_command(graph)
+    ).outcome is PersistenceOutcome.APPLIED
     return adapter
 
 
@@ -198,12 +183,7 @@ def scalar(db: RuntimeDatabase, sql: str, params: tuple = ()):
 
 
 class FailingAdapter(SqliteLifecyclePersistence):
-    def __init__(
-        self,
-        db: RuntimeDatabase,
-        policy: PositionAccountingPolicy,
-        boundary: str,
-    ) -> None:
+    def __init__(self, db, policy, boundary: str) -> None:
         super().__init__(db, policy)
         self.boundary = boundary
 
@@ -219,28 +199,35 @@ class BadScopePolicy(PositionAccountingPolicy):
 
     def plan(self, *, command, order_side, open_positions) -> AccountingPlan:
         plan = self.inner.plan(
-            command=command,
-            order_side=order_side,
-            open_positions=open_positions,
+            command=command, order_side=order_side, open_positions=open_positions
         )
         bad = replace(plan.positions[0], venue="wrong-venue")
         return AccountingPlan(plan.events, (bad,) + plan.positions[1:])
+
+
+class BadEventIdPolicy(PositionAccountingPolicy):
+    def __init__(self) -> None:
+        self.inner = NettingPositionAccountingV1()
+
+    def plan(self, *, command, order_side, open_positions) -> AccountingPlan:
+        plan = self.inner.plan(
+            command=command, order_side=order_side, open_positions=open_positions
+        )
+        bad = replace(plan.events[0], event_id="not-deterministic")
+        return AccountingPlan((bad,) + plan.events[1:], plan.positions)
 
 
 def test_order_acknowledgement_exact_three_mutation_transaction(tmp_path):
     db = make_db(tmp_path / "runtime.db")
     graph = seed_execution_graph(db, "ack")
     connection_id = id(db.connection)
-
     result = make_adapter(db).register_order_acknowledgement(order_command(graph))
-
     assert result.outcome is PersistenceOutcome.APPLIED
     assert result.stats == OperationStats(1, 3, 3, 1, connection_id)
-    dispatch = db.connection.execute(
+    assert tuple(db.connection.execute(
         "SELECT status,response_received_at FROM dispatch_attempts WHERE attempt_id=?",
         (graph["attempt_id"],),
-    ).fetchone()
-    assert tuple(dispatch) == ("ACCEPTED", "2026-01-01T00:00:00Z")
+    ).fetchone()) == ("ACCEPTED", "2026-01-01T00:00:00Z")
     assert tuple(db.connection.execute(
         "SELECT status,created_at,updated_at,quantity,price FROM order_states"
     ).fetchone()) == (
@@ -263,11 +250,7 @@ def test_order_ack_wrong_dispatch_precondition_rolls_back(tmp_path):
     assert caught.value.stats.committed_mutations == 0
     assert caught.value.stats.attempted_mutations == 1
     assert scalar(db, "SELECT COUNT(*) FROM order_states") == 0
-    assert scalar(
-        db,
-        "SELECT status FROM execution_states WHERE execution_intent_id=?",
-        (graph["execution_intent_id"],),
-    ) == "DISPATCHED"
+    assert scalar(db, "SELECT status FROM execution_states") == "DISPATCHED"
 
 
 def test_order_ack_wrong_execution_precondition_rolls_back_dispatch_and_order(tmp_path):
@@ -277,22 +260,14 @@ def test_order_ack_wrong_execution_precondition_rolls_back_dispatch_and_order(tm
         make_adapter(db).register_order_acknowledgement(order_command(graph))
     assert caught.value.stats.attempted_mutations == 3
     assert caught.value.stats.committed_mutations == 0
-    assert scalar(
-        db,
-        "SELECT status FROM dispatch_attempts WHERE attempt_id=?",
-        (graph["attempt_id"],),
-    ) == "SUBMITTED"
+    assert scalar(db, "SELECT status FROM dispatch_attempts") == "SUBMITTED"
     assert scalar(db, "SELECT COUNT(*) FROM order_states") == 0
 
 
-@pytest.mark.parametrize(
-    "boundary",
-    [
-        "order_ack.dispatch_accept",
-        "order_ack.order_insert",
-        "order_ack.execution_acknowledge",
-    ],
-)
+@pytest.mark.parametrize("boundary", [
+    "order_ack.dispatch_accept", "order_ack.order_insert",
+    "order_ack.execution_acknowledge",
+])
 def test_order_ack_injected_failure_after_each_boundary_rolls_back(tmp_path, boundary):
     db = make_db(tmp_path / f"{boundary}.db")
     graph = seed_execution_graph(db, boundary)
@@ -301,16 +276,8 @@ def test_order_ack_injected_failure_after_each_boundary_rolls_back(tmp_path, bou
         adapter.register_order_acknowledgement(order_command(graph))
     assert caught.value.stats.committed_mutations == 0
     assert scalar(db, "SELECT COUNT(*) FROM order_states") == 0
-    assert scalar(
-        db,
-        "SELECT status FROM dispatch_attempts WHERE attempt_id=?",
-        (graph["attempt_id"],),
-    ) == "SUBMITTED"
-    assert scalar(
-        db,
-        "SELECT status FROM execution_states WHERE execution_intent_id=?",
-        (graph["execution_intent_id"],),
-    ) == "DISPATCHED"
+    assert scalar(db, "SELECT status FROM dispatch_attempts") == "SUBMITTED"
+    assert scalar(db, "SELECT status FROM execution_states") == "DISPATCHED"
 
 
 def test_order_exact_replay_is_zero_mutation_and_does_not_regress_parents(tmp_path):
@@ -319,19 +286,12 @@ def test_order_exact_replay_is_zero_mutation_and_does_not_regress_parents(tmp_pa
     adapter = make_adapter(db)
     command = order_command(graph)
     adapter.register_order_acknowledgement(command)
-    db.connection.execute(
-        "UPDATE execution_states SET status='FILLED' WHERE execution_intent_id=?",
-        (graph["execution_intent_id"],),
-    )
+    db.connection.execute("UPDATE execution_states SET status='FILLED'")
     db.connection.commit()
     result = adapter.register_order_acknowledgement(command)
     assert result.outcome is PersistenceOutcome.REPLAY_NOOP
     assert result.stats == OperationStats(1, 0, 0, 1, id(db.connection))
-    assert scalar(
-        db,
-        "SELECT status FROM execution_states WHERE execution_intent_id=?",
-        (graph["execution_intent_id"],),
-    ) == "FILLED"
+    assert scalar(db, "SELECT status FROM execution_states") == "FILLED"
 
 
 def test_order_conflicting_replay_fails_closed(tmp_path):
@@ -340,9 +300,7 @@ def test_order_conflicting_replay_fails_closed(tmp_path):
     adapter = make_adapter(db)
     adapter.register_order_acknowledgement(order_command(graph))
     with pytest.raises(LifecycleConflictError) as caught:
-        adapter.register_order_acknowledgement(
-            order_command(graph, quantity=Decimal("3"))
-        )
+        adapter.register_order_acknowledgement(order_command(graph, quantity=Decimal("3")))
     assert caught.value.stats == OperationStats(1, 0, 0, 1, id(db.connection))
     assert scalar(db, "SELECT quantity FROM order_states") == "2"
 
@@ -361,8 +319,7 @@ def test_nested_transaction_is_rejected_before_adapter_transaction(tmp_path):
 def test_one_event_fill_is_atomic_and_within_statement_budget(tmp_path):
     db = make_db(tmp_path / "runtime.db")
     graph = seed_execution_graph(db, "fill-open")
-    adapter = acknowledge(db, graph)
-    result = adapter.apply_fill(fill_command(graph, "fill-open"))
+    result = acknowledge(db, graph).apply_fill(fill_command(graph, "fill-open"))
     assert result.outcome is PersistenceOutcome.APPLIED
     assert result.stats == OperationStats(3, 4, 4, 1, id(db.connection))
     assert scalar(db, "SELECT COUNT(*) FROM fill_states") == 1
@@ -374,8 +331,7 @@ def test_one_event_fill_is_atomic_and_within_statement_budget(tmp_path):
         "OPEN", "1", "0.1", "0", "2026-01-01T00:01:00Z",
     )
     assert tuple(db.connection.execute(
-        "SELECT side,quantity,avg_entry_price,realized_pnl,status "
-        "FROM position_states"
+        "SELECT side,quantity,avg_entry_price,realized_pnl,status FROM position_states"
     ).fetchone()) == ("LONG", "1", "100", "0", "OPEN")
 
 
@@ -384,52 +340,33 @@ def test_fill_increases_existing_position_with_weighted_average(tmp_path):
     graph = seed_execution_graph(db, "increase")
     adapter = acknowledge(db, graph)
     adapter.apply_fill(fill_command(graph, "fill-1", price=Decimal("100")))
-    result = adapter.apply_fill(
-        fill_command(
-            graph,
-            "fill-2",
-            price=Decimal("120"),
-            occurred_at=T2,
-            recorded_at=T3,
-        )
-    )
+    result = adapter.apply_fill(fill_command(
+        graph, "fill-2", price=Decimal("120"), occurred_at=T2, recorded_at=T3
+    ))
     assert result.stats.committed_mutations == 4
     assert tuple(db.connection.execute(
         "SELECT quantity,avg_entry_price,realized_pnl FROM position_states "
         "WHERE status='OPEN'"
     ).fetchone()) == ("2", "110", "0")
-    assert scalar(
-        db,
-        "SELECT event_type FROM position_accounting_details "
-        "WHERE source_fill_id='fill-2'",
-    ) == "INCREASE"
+    assert scalar(db, "SELECT event_type FROM position_accounting_details "
+                      "WHERE source_fill_id='fill-2'") == "INCREASE"
 
 
 def test_zero_crossing_fill_has_two_events_and_six_mutations(tmp_path):
     db = make_db(tmp_path / "runtime.db")
     buy = seed_execution_graph(db, "buy", action="BUY")
     adapter = acknowledge(db, buy)
-    adapter.apply_fill(
-        fill_command(
-            buy,
-            "fill-buy",
-            quantity=Decimal("1"),
-            order_status_after=OrderStatus.FILLED,
-        )
-    )
+    adapter.apply_fill(fill_command(
+        buy, "fill-buy", quantity=Decimal("1"),
+        order_status_after=OrderStatus.FILLED,
+    ))
     sell = seed_execution_graph(db, "sell", action="SELL")
     adapter.register_order_acknowledgement(order_command(sell))
-    result = adapter.apply_fill(
-        fill_command(
-            sell,
-            "fill-cross",
-            quantity=Decimal("1.5"),
-            price=Decimal("110"),
-            occurred_at=T2,
-            recorded_at=T3,
-            order_status_after=OrderStatus.FILLED,
-        )
-    )
+    result = adapter.apply_fill(fill_command(
+        sell, "fill-cross", quantity=Decimal("1.5"), price=Decimal("110"),
+        occurred_at=T2, recorded_at=T3,
+        order_status_after=OrderStatus.FILLED,
+    ))
     assert result.stats == OperationStats(3, 6, 6, 1, id(db.connection))
     events = db.connection.execute(
         "SELECT source_fill_event_no,event_type,delta_qty,fee,realized_pnl "
@@ -453,20 +390,12 @@ def test_exact_fill_replay_ignores_recorded_at_and_stale_order_status(tmp_path):
     db = make_db(tmp_path / "runtime.db")
     graph = seed_execution_graph(db, "fill-replay")
     adapter = acknowledge(db, graph)
-    original = fill_command(
-        graph,
-        "fill-replay",
-        order_status_after=OrderStatus.FILLED,
-    )
+    original = fill_command(graph, "fill-replay", order_status_after=OrderStatus.FILLED)
     applied = adapter.apply_fill(original)
     original_updated_at = scalar(db, "SELECT updated_at FROM order_states")
-    result = adapter.apply_fill(
-        replace(
-            original,
-            recorded_at=T3,
-            order_status_after=OrderStatus.PARTIALLY_FILLED,
-        )
-    )
+    result = adapter.apply_fill(replace(
+        original, recorded_at=T3, order_status_after=OrderStatus.PARTIALLY_FILLED
+    ))
     assert result.outcome is PersistenceOutcome.REPLAY_NOOP
     assert result.event_ids == applied.event_ids
     assert result.position_ids == applied.position_ids
@@ -494,14 +423,10 @@ def test_incomplete_replay_accounting_sequence_is_invariant_failure(tmp_path):
     graph = seed_execution_graph(db, "incomplete")
     acknowledge(db, graph)
     command = fill_command(graph, "fill-incomplete")
-    db.connection.execute(
-        "INSERT INTO fill_states VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (
-            command.venue, command.account_scope, command.fill_id,
-            command.order_id, command.symbol, "1", "100", "0.1", "USDT",
-            "2026-01-01T00:01:00Z",
-        ),
-    )
+    db.connection.execute("INSERT INTO fill_states VALUES (?,?,?,?,?,?,?,?,?,?)", (
+        command.venue, command.account_scope, command.fill_id, command.order_id,
+        command.symbol, "1", "100", "0.1", "USDT", "2026-01-01T00:01:00Z",
+    ))
     db.connection.commit()
     with pytest.raises(LifecycleInvariantError) as caught:
         make_adapter(db).apply_fill(command)
@@ -513,34 +438,60 @@ def test_non_deterministic_replay_event_identity_is_rejected(tmp_path):
     graph = seed_execution_graph(db, "bad-event")
     acknowledge(db, graph)
     command = fill_command(graph, "fill-bad-event")
+    db.connection.execute("INSERT INTO fill_states VALUES (?,?,?,?,?,?,?,?,?,?)", (
+        command.venue, command.account_scope, command.fill_id, command.order_id,
+        command.symbol, "1", "100", "0.1", "USDT", "2026-01-01T00:01:00Z",
+    ))
+    db.connection.execute("INSERT INTO position_states VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+        "pos-bad", command.venue, command.account_scope, command.symbol,
+        "LONG", "1", "100", "0", "0", "OPEN",
+        "2026-01-01T00:01:00Z", None, "2026-01-01T00:02:00Z",
+    ))
     db.connection.execute(
-        "INSERT INTO fill_states VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (
-            command.venue, command.account_scope, command.fill_id,
-            command.order_id, command.symbol, "1", "100", "0.1", "USDT",
+        "INSERT INTO position_accounting_details VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+            "not-deterministic", "pos-bad", command.venue, command.account_scope,
+            command.fill_id, command.symbol, 1, "OPEN", "1", "100", "0.1", "0",
             "2026-01-01T00:01:00Z",
-        ),
-    )
-    db.connection.execute(
-        "INSERT INTO position_states VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            "pos-bad", command.venue, command.account_scope, command.symbol,
-            "LONG", "1", "100", "0", "0", "OPEN",
-            "2026-01-01T00:01:00Z", None, "2026-01-01T00:02:00Z",
-        ),
-    )
-    db.connection.execute(
-        "INSERT INTO position_accounting_details VALUES "
-        "(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            "not-deterministic", "pos-bad", command.venue,
-            command.account_scope, command.fill_id, command.symbol, 1, "OPEN",
-            "1", "100", "0.1", "0", "2026-01-01T00:01:00Z",
-        ),
+        )
     )
     db.connection.commit()
     with pytest.raises(LifecycleInvariantError):
         make_adapter(db).apply_fill(command)
+
+
+@pytest.mark.parametrize("policy", [BadScopePolicy(), BadEventIdPolicy()])
+def test_invalid_injected_policy_is_rejected_before_first_mutation(tmp_path, policy):
+    db = make_db(tmp_path / f"{type(policy).__name__}.db")
+    graph = seed_execution_graph(db, type(policy).__name__)
+    acknowledge(db, graph)
+    adapter = SqliteLifecyclePersistence(db, policy)
+    with pytest.raises(LifecycleInvariantError) as caught:
+        adapter.apply_fill(fill_command(graph, f"fill-{type(policy).__name__}"))
+    assert caught.value.stats == OperationStats(3, 0, 0, 1, id(db.connection))
+    assert scalar(db, "SELECT COUNT(*) FROM fill_states") == 0
+    assert scalar(db, "SELECT COUNT(*) FROM position_states") == 0
+    assert scalar(db, "SELECT COUNT(*) FROM position_accounting_details") == 0
+    assert scalar(db, "SELECT status FROM order_states") == "OPEN"
+
+
+def test_sqlite_constraint_failure_rolls_back_all_prior_mutations(tmp_path):
+    db = make_db(tmp_path / "constraint.db")
+    graph = seed_execution_graph(db, "constraint")
+    adapter = acknowledge(db, graph)
+    db.connection.execute("""
+        CREATE TRIGGER test_reject_position_insert
+        BEFORE INSERT ON position_states
+        BEGIN SELECT RAISE(ABORT,'injected position constraint'); END
+    """)
+    db.connection.commit()
+    with pytest.raises(LifecycleInvariantError) as caught:
+        adapter.apply_fill(fill_command(graph, "constraint-fill"))
+    assert caught.value.stats.attempted_mutations == 4
+    assert caught.value.stats.committed_mutations == 0
+    assert scalar(db, "SELECT COUNT(*) FROM fill_states") == 0
+    assert scalar(db, "SELECT COUNT(*) FROM position_states") == 0
+    assert scalar(db, "SELECT COUNT(*) FROM position_accounting_details") == 0
+    assert scalar(db, "SELECT status FROM order_states") == "OPEN"
 
 
 def test_wrong_order_symbol_fails_before_mutation(tmp_path):
@@ -565,35 +516,10 @@ def test_invalid_order_status_transition_fails_before_mutation(tmp_path):
     assert scalar(db, "SELECT COUNT(*) FROM fill_states") == 0
 
 
-def test_deferred_fk_failure_rolls_back_fill_order_event_and_position(tmp_path):
-    db = make_db(tmp_path / "runtime.db")
-    graph = seed_execution_graph(db, "bad-policy")
-    acknowledge(db, graph)
-    adapter = SqliteLifecyclePersistence(db, BadScopePolicy())
-    before_order = tuple(db.connection.execute(
-        "SELECT status,updated_at FROM order_states"
-    ).fetchone())
-    with pytest.raises(LifecycleInvariantError) as caught:
-        adapter.apply_fill(fill_command(graph, "bad-policy-fill"))
-    assert caught.value.stats.attempted_mutations == 4
-    assert caught.value.stats.committed_mutations == 0
-    assert scalar(db, "SELECT COUNT(*) FROM fill_states") == 0
-    assert scalar(db, "SELECT COUNT(*) FROM position_states") == 0
-    assert scalar(db, "SELECT COUNT(*) FROM position_accounting_details") == 0
-    assert tuple(db.connection.execute(
-        "SELECT status,updated_at FROM order_states"
-    ).fetchone()) == before_order
-
-
-@pytest.mark.parametrize(
-    "boundary",
-    [
-        "fill.fill_insert",
-        "fill.order_update",
-        "fill.accounting_event_1",
-        "fill.position_1_insert",
-    ],
-)
+@pytest.mark.parametrize("boundary", [
+    "fill.fill_insert", "fill.order_update",
+    "fill.accounting_event_1", "fill.position_1_insert",
+])
 def test_one_event_fill_failure_after_each_boundary_fully_rolls_back(tmp_path, boundary):
     db = make_db(tmp_path / f"{boundary}.db")
     graph = seed_execution_graph(db, boundary)
@@ -620,12 +546,7 @@ def test_same_connection_reused_across_hot_path_operations(tmp_path):
     assert fill.stats.db_connection_identity == identity
 
 
-def _concurrent_apply(
-    path: Path,
-    command: FillApplicationCommand,
-    barrier: threading.Barrier,
-    output: queue.Queue,
-) -> None:
+def _concurrent_apply(path, command, barrier, output) -> None:
     db = RuntimeDatabase(path)
     try:
         db.connect()
@@ -647,7 +568,7 @@ def _prepare_concurrent_db(path: Path, suffix: str) -> dict[str, str]:
     return graph
 
 
-def _run_two_threads(path: Path, commands: list[FillApplicationCommand]):
+def _run_two_threads(path, commands):
     barrier = threading.Barrier(2)
     output: queue.Queue = queue.Queue()
     threads = [
@@ -674,21 +595,14 @@ def test_two_connection_concurrent_exact_duplicate_converges(tmp_path):
 def test_two_connection_concurrent_conflict_is_one_applied_one_conflict(tmp_path):
     path = tmp_path / "concurrent-conflict.db"
     graph = _prepare_concurrent_db(path, "concurrent-conflict")
-    results = _run_two_threads(
-        path,
-        [
-            fill_command(graph, "same-id", quantity=Decimal("1")),
-            fill_command(graph, "same-id", quantity=Decimal("1.25")),
-        ],
-    )
-    assert sum(
-        1 for item in results
-        if item[0] == "result" and item[1] is PersistenceOutcome.APPLIED
-    ) == 1
-    assert sum(
-        1 for item in results
-        if item[0] == "error" and item[1] is LifecycleConflictError
-    ) == 1
+    results = _run_two_threads(path, [
+        fill_command(graph, "same-id", quantity=Decimal("1")),
+        fill_command(graph, "same-id", quantity=Decimal("1.25")),
+    ])
+    assert sum(1 for item in results
+               if item[0] == "result" and item[1] is PersistenceOutcome.APPLIED) == 1
+    assert sum(1 for item in results
+               if item[0] == "error" and item[1] is LifecycleConflictError) == 1
 
 
 def test_module_has_no_forbidden_hot_path_dependencies():
@@ -700,7 +614,6 @@ def test_module_has_no_forbidden_hot_path_dependencies():
             imported_roots.update(alias.name.split(".", 1)[0] for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported_roots.add(node.module.split(".", 1)[0])
-
     assert imported_roots.isdisjoint(
         {"sqlalchemy", "requests", "httpx", "urllib3", "aiohttp", "json"}
     )
@@ -710,6 +623,4 @@ def test_module_has_no_forbidden_hot_path_dependencies():
     assert "connect(" not in inspect.getsource(
         SqliteLifecyclePersistence.register_order_acknowledgement
     )
-    assert "connect(" not in inspect.getsource(
-        SqliteLifecyclePersistence.apply_fill
-    )
+    assert "connect(" not in inspect.getsource(SqliteLifecyclePersistence.apply_fill)
