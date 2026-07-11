@@ -1,0 +1,85 @@
+name: B4.3A Exact SHA Run Probe
+
+on:
+  pull_request:
+    branches: [ci/b4.3a-exact-head-base]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    env:
+      TARGET_SHA: e00786dcd0904bd26546c826efe662a43ce8b89a
+      TARGET_BRANCH: feat/b4.3a-authority-consistent-schema
+    steps:
+      - name: Query exact-SHA workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          repo = os.environ['REPOSITORY']
+          sha = os.environ['TARGET_SHA']
+          branch = os.environ['TARGET_BRANCH']
+          token = os.environ['GH_TOKEN']
+          query = urllib.parse.urlencode({'head_sha': sha, 'per_page': 100})
+          req = urllib.request.Request(
+              f'https://api.github.com/repos/{repo}/actions/runs?{query}',
+              headers={
+                  'Authorization': f'Bearer {token}',
+                  'Accept': 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+              },
+          )
+          with urllib.request.urlopen(req) as response:
+              payload = json.load(response)
+          rows = []
+          for run in payload.get('workflow_runs', []):
+              rows.append({
+                  'id': run['id'],
+                  'name': run['name'],
+                  'event': run['event'],
+                  'head_branch': run.get('head_branch'),
+                  'head_sha': run['head_sha'],
+                  'status': run['status'],
+                  'conclusion': run.get('conclusion'),
+                  'run_attempt': run.get('run_attempt'),
+                  'created_at': run.get('created_at'),
+                  'updated_at': run.get('updated_at'),
+              })
+          result = {
+              'target_sha': sha,
+              'target_branch': branch,
+              'exact_push_freqtrade_runs': [
+                  row for row in rows
+                  if row['name'] == 'Freqtrade Validation'
+                  and row['event'] == 'push'
+                  and row['head_branch'] == branch
+                  and row['head_sha'] == sha
+              ],
+              'all_exact_sha_runs': rows,
+              'live': 'FORBIDDEN',
+          }
+          Path('b4_3a_exact_sha_runs.json').write_text(
+              json.dumps(result, indent=2, sort_keys=True) + '\n'
+          )
+          print(json.dumps(result, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload probe evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3a-exact-sha-run-probe
+          path: b4_3a_exact_sha_runs.json
+          if-no-files-found: error
+          retention-days: 30
