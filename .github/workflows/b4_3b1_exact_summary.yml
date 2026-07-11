@@ -15,6 +15,7 @@ jobs:
     env:
       TARGET_SHA: ab462274cff69dd1ff14b71c67f921f3d85d4990
       TARGET_BRANCH: feat/b4.3b1-typed-accounting-policy
+      BASE_SHA: 431d0bac38c739de40ece46981067bca0dfb37b7
       FORMAL_RUN_ID: "29156143053"
       SIMPLE_CI_RUN_ID: "29156143044"
       TARGET_PR_NUMBER: "16"
@@ -57,7 +58,7 @@ jobs:
           run-id: ${{ env.FORMAL_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Bind exact Simple CI and formal artifacts
+      - name: Bind exact PR, CI and formal artifacts
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -68,6 +69,7 @@ jobs:
           repo=os.environ['REPO']
           sha=os.environ['TARGET_SHA']
           branch=os.environ['TARGET_BRANCH']
+          base_sha=os.environ['BASE_SHA']
           run_id=int(os.environ['SIMPLE_CI_RUN_ID'])
           pr_number=int(os.environ['TARGET_PR_NUMBER'])
           token=os.environ['GITHUB_TOKEN']
@@ -83,12 +85,19 @@ jobs:
           wf=next((w for w in workflows.get('workflows',[]) if w.get('path')=='.github/workflows/ci.yml' and w.get('name')=='CI' and w.get('state')=='active'),None)
           if not wf or wf.get('id') != 305746223:
               raise SystemExit(f'Unexpected CI workflow: {wf}')
+          pr=api(f'https://api.github.com/repos/{repo}/pulls/{pr_number}')
+          if pr.get('head',{}).get('sha') != sha:
+              raise SystemExit(f'PR head SHA mismatch: {pr.get("head",{}).get("sha")} != {sha}')
+          if pr.get('head',{}).get('ref') != branch:
+              raise SystemExit(f'PR head branch mismatch: {pr.get("head",{}).get("ref")} != {branch}')
+          if pr.get('base',{}).get('sha') != base_sha:
+              raise SystemExit(f'PR base SHA mismatch: {pr.get("base",{}).get("sha")} != {base_sha}')
+          if pr.get('state') != 'open' or pr.get('draft') is not True:
+              raise SystemExit(f'Unexpected PR state: state={pr.get("state")} draft={pr.get("draft")}')
           run=api(f'https://api.github.com/repos/{repo}/actions/runs/{run_id}')
           expected={
               'id': run_id,
               'workflow_id': 305746223,
-              'head_sha': sha,
-              'head_branch': branch,
               'event': 'pull_request',
               'status': 'completed',
               'conclusion': 'success',
@@ -96,9 +105,6 @@ jobs:
           for key,val in expected.items():
               if run.get(key) != val:
                   raise SystemExit(f'PR CI mismatch {key}: {run.get(key)!r} != {val!r}')
-          prs=run.get('pull_requests') or []
-          if not any(p.get('number')==pr_number for p in prs):
-              raise SystemExit(f'PR CI run is not bound to PR #{pr_number}: {prs}')
           evidence={
               'schema_version':1,
               'workflow_id':305746223,
@@ -109,6 +115,15 @@ jobs:
               'status':'completed',
               'conclusion':'success',
               'verified':True,
+              'provenance':{
+                  'event':'pull_request',
+                  'pr_number':pr_number,
+                  'pr_head_sha':sha,
+                  'pr_head_branch':branch,
+                  'pr_base_sha':base_sha,
+                  'run_api_head_sha':run.get('head_sha'),
+                  'run_api_head_branch':run.get('head_branch'),
+              },
           }
           with open('simple_ci_evidence.json','w') as f:
               json.dump(evidence,f,indent=2)
@@ -139,6 +154,7 @@ jobs:
           assert s['simple_ci']['run_id']==29156143044, s
           assert s['simple_ci']['verified'] is True, s
           assert s['simple_ci']['head_sha']==s['head_sha'], s
+          assert s['simple_ci']['provenance']['pr_number']==16, s
           PY
 
       - name: Verify no tracked modifications
