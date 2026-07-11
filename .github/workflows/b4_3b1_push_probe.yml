@@ -1,4 +1,4 @@
-name: B4.3B1 Exact Push Probe
+name: B4.3B1 Exact Evidence Summary
 
 on:
   pull_request:
@@ -9,8 +9,13 @@ permissions:
   actions: read
 
 jobs:
-  probe:
+  exact-summary:
     runs-on: ubuntu-24.04
+    env:
+      TARGET_SHA: ab462274cff69dd1ff14b71c67f921f3d85d4990
+      TARGET_BRANCH: feat/b4.3b1-typed-accounting-policy
+      SIMPLE_CI_RUN_ID: "29156141909"
+      FORMAL_RUN_ID: "29156141922"
     steps:
       - name: Checkout exact candidate SHA
         uses: actions/checkout@v4
@@ -22,9 +27,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "ab462274cff69dd1ff14b71c67f921f3d85d4990"
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
-      - name: Query exact push runs
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download exact ATOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: atos-validation
+          path: evidence/atos
+          github-token: ${{ github.token }}
+          repository: Dreaminmaster/ai-autonomous-trading-os
+          run-id: 29156141922
+
+      - name: Download exact Freqtrade artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: freqtrade-validation
+          path: evidence/freq
+          github-token: ${{ github.token }}
+          repository: Dreaminmaster/ai-autonomous-trading-os
+          run-id: 29156141922
+
+      - name: Verify exact provenance and artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         shell: python
@@ -34,8 +62,10 @@ jobs:
           import urllib.request
 
           repo = "Dreaminmaster/ai-autonomous-trading-os"
-          sha = "ab462274cff69dd1ff14b71c67f921f3d85d4990"
-          branch = "feat/b4.3b1-typed-accounting-policy"
+          sha = os.environ["TARGET_SHA"]
+          branch = os.environ["TARGET_BRANCH"]
+          ci_run_id = int(os.environ["SIMPLE_CI_RUN_ID"])
+          formal_run_id = int(os.environ["FORMAL_RUN_ID"])
           token = os.environ["GH_TOKEN"]
 
           def api(url):
@@ -46,55 +76,159 @@ jobs:
               with urllib.request.urlopen(req, timeout=30) as response:
                   return json.loads(response.read())
 
-          workflows = api(f"https://api.github.com/repos/{repo}/actions/workflows?per_page=100")["workflows"]
-          targets = {
-              "CI": ".github/workflows/ci.yml",
-              "Freqtrade Validation": ".github/workflows/freqtrade-validation.yml",
+          ci = api(f"https://api.github.com/repos/{repo}/actions/runs/{ci_run_id}")
+          expected_ci = {
+              "workflow_id": 305746223,
+              "event": "push",
+              "head_branch": branch,
+              "head_sha": sha,
+              "status": "completed",
+              "conclusion": "success",
           }
-          result = {
-              "target_sha": sha,
-              "target_branch": branch,
-              "workflows": {},
-              "live": "FORBIDDEN",
-          }
+          for key, expected in expected_ci.items():
+              actual = ci.get(key)
+              if actual != expected:
+                  raise RuntimeError(f"Simple CI {key}: {actual!r} != {expected!r}")
 
-          for name, path in targets.items():
-              matches = [w for w in workflows if w.get("name") == name and w.get("path") == path]
-              if len(matches) != 1:
-                  raise RuntimeError(f"workflow resolution failed for {name}: {len(matches)} matches")
-              workflow_id = matches[0]["id"]
-              data = api(
-                  f"https://api.github.com/repos/{repo}/actions/workflows/{workflow_id}/runs"
-                  f"?head_sha={sha}&per_page=100"
-              )
-              runs = []
-              for run in data.get("workflow_runs", []):
-                  if run.get("event") == "push" and run.get("head_branch") == branch:
-                      runs.append({
-                          "id": run.get("id"),
-                          "event": run.get("event"),
-                          "head_branch": run.get("head_branch"),
-                          "head_sha": run.get("head_sha"),
-                          "status": run.get("status"),
-                          "conclusion": run.get("conclusion"),
-                          "run_number": run.get("run_number"),
-                          "created_at": run.get("created_at"),
-                          "updated_at": run.get("updated_at"),
-                      })
-              result["workflows"][name] = {
-                  "workflow_id": workflow_id,
-                  "workflow_path": path,
-                  "runs": runs,
+          simple_ci = {
+              "schema_version": 1,
+              "workflow_id": 305746223,
+              "workflow_name": "CI",
+              "workflow_path": ".github/workflows/ci.yml",
+              "run_id": ci_run_id,
+              "head_sha": sha,
+              "status": "completed",
+              "conclusion": "success",
+              "verified": True,
+          }
+          with open("simple_ci_evidence.json", "w", encoding="utf-8") as f:
+              json.dump(simple_ci, f, indent=2, sort_keys=True)
+
+          formal = api(f"https://api.github.com/repos/{repo}/actions/runs/{formal_run_id}")
+          expected_formal = {
+              "workflow_id": 305848317,
+              "event": "push",
+              "head_branch": branch,
+              "head_sha": sha,
+              "status": "completed",
+          }
+          for key, expected in expected_formal.items():
+              actual = formal.get(key)
+              if actual != expected:
+                  raise RuntimeError(f"Formal run {key}: {actual!r} != {expected!r}")
+
+          jobs_data = api(
+              f"https://api.github.com/repos/{repo}/actions/runs/{formal_run_id}/jobs"
+              "?filter=latest&per_page=100"
+          )
+          jobs = {job.get("name"): job for job in jobs_data.get("jobs", [])}
+          core_jobs = {}
+          for name in ("atos-tests", "freqtrade"):
+              job = jobs.get(name)
+              if job is None:
+                  raise RuntimeError(f"missing formal core job: {name}")
+              if job.get("status") != "completed" or job.get("conclusion") != "success":
+                  raise RuntimeError(
+                      f"formal core job {name}: {job.get('status')}/{job.get('conclusion')}"
+                  )
+              core_jobs[name] = {
+                  "id": job.get("id"),
+                  "status": job.get("status"),
+                  "conclusion": job.get("conclusion"),
               }
 
-          with open("b4_3b1_push_probe.json", "w", encoding="utf-8") as f:
-              json.dump(result, f, indent=2, sort_keys=True)
+          expected_run_id = str(formal_run_id)
+          manifests = {}
+          for job_name, path in (
+              ("atos-tests", "evidence/atos/evidence_manifest.json"),
+              ("freqtrade", "evidence/freq/evidence_manifest.json"),
+          ):
+              with open(path, encoding="utf-8") as f:
+                  manifest = json.load(f)
+              if manifest.get("run_id") != expected_run_id:
+                  raise RuntimeError(f"{job_name} manifest run_id mismatch")
+              if manifest.get("head_sha") != sha:
+                  raise RuntimeError(f"{job_name} manifest head_sha mismatch")
+              if manifest.get("job") != job_name:
+                  raise RuntimeError(f"{job_name} manifest job mismatch")
+              manifests[job_name] = manifest
 
-          print(json.dumps(result, indent=2, sort_keys=True))
+          provenance = {
+              "schema_version": 1,
+              "target_sha": sha,
+              "target_branch": branch,
+              "simple_ci": simple_ci,
+              "formal_run": {
+                  "run_id": formal_run_id,
+                  "workflow_id": formal.get("workflow_id"),
+                  "event": formal.get("event"),
+                  "head_branch": formal.get("head_branch"),
+                  "head_sha": formal.get("head_sha"),
+                  "status": formal.get("status"),
+                  "overall_conclusion": formal.get("conclusion"),
+                  "core_jobs": core_jobs,
+              },
+              "manifests": manifests,
+              "live": "FORBIDDEN",
+          }
+          with open("formal_provenance.json", "w", encoding="utf-8") as f:
+              json.dump(provenance, f, indent=2, sort_keys=True)
 
-      - name: Upload probe evidence
+      - name: Run canonical evidence summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=implementation/src python -m atos.evidence_summary \
+            "$TARGET_SHA" "$FORMAL_RUN_ID" success success \
+            evidence/atos evidence/freq simple_ci_evidence.json
+
+      - name: Enforce exact PASS
+        shell: python
+        run: |
+          import json
+          import os
+
+          with open("validation_summary.json", encoding="utf-8") as f:
+              summary = json.load(f)
+
+          assert summary["head_sha"] == os.environ["TARGET_SHA"]
+          assert summary["run_id"] == os.environ["FORMAL_RUN_ID"]
+          assert summary["gate_status"] == "PASS"
+          assert summary["errors"] == []
+          assert summary["live"] == "FORBIDDEN"
+          assert summary["atos_job_result"] == "success"
+          assert summary["freqtrade_job_result"] == "success"
+          assert summary["simple_ci"]["run_id"] == int(os.environ["SIMPLE_CI_RUN_ID"])
+          assert summary["simple_ci"]["verified"] is True
+          assert summary["canonical"]["lookahead_final_status"] in (
+              "PASS",
+              "PASS_WITH_RC_ANOMALY",
+          )
+          assert summary["round1"]["baseline_integrity"] == "PASS"
+          print(json.dumps(summary, indent=2, sort_keys=True))
+
+      - name: Verify no tracked modifications
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Upload exact summary evidence
         uses: actions/upload-artifact@v4
         with:
-          name: b4-3b1-push-probe
-          path: b4_3b1_push_probe.json
+          name: b4-3b1-exact-evidence-summary
+          path: |
+            validation_summary.json
+            validation_summary.md
+            simple_ci_evidence.json
+            formal_provenance.json
+            evidence/atos/evidence_manifest.json
+            evidence/atos/pytest.log
+            evidence/atos/no_secret_scan.log
+            evidence/freq/evidence_manifest.json
+            evidence/freq/freqtrade_data/backtest_results/canonical_baseline_summary.json
+            evidence/freq/freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json
+            evidence/freq/freqtrade_data/backtest_results/round1_2_trend_weight_025_only_la_lookahead_status.json
+            evidence/freq/freqtrade_data/backtest_results/round1_3_trend_disabled_only_la_lookahead_status.json
+            evidence/freq/validation_reports/strategy_fix_round1.json
           if-no-files-found: error
