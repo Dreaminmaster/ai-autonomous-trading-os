@@ -20,9 +20,37 @@ class OrderType(StrEnum):
 
 
 class OrderStatus(StrEnum):
+    NEW = "NEW"
+    PENDING_SUBMIT = "PENDING_SUBMIT"
     OPEN = "OPEN"
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
     FILLED = "FILLED"
+    CANCEL_REQUESTED = "CANCEL_REQUESTED"
+    CANCEL_PENDING = "CANCEL_PENDING"
+    CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+    UNKNOWN = "UNKNOWN"
+
+
+class DispatchAttemptStatus(StrEnum):
+    PRE_DISPATCH_PROVEN = "PRE_DISPATCH_PROVEN"
+    DISPATCH_INITIATED = "DISPATCH_INITIATED"
+    SUBMITTED = "SUBMITTED"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    TIMEOUT = "TIMEOUT"
+    AMBIGUOUS = "AMBIGUOUS"
+
+
+class ExecutionStatus(StrEnum):
+    PREPARED = "PREPARED"
+    DISPATCH_COMMITTED = "DISPATCH_COMMITTED"
+    DISPATCHED = "DISPATCHED"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    AMBIGUOUS = "AMBIGUOUS"
+    FILLED = "FILLED"
+    TERMINAL = "TERMINAL"
 
 
 class PositionSide(StrEnum):
@@ -105,9 +133,7 @@ def require_identity(value: str, field_name: str) -> str:
     if not isinstance(value, str):
         raise LifecycleValidationError(f"{field_name} must be str")
     if value == "" or value.isspace():
-        raise LifecycleValidationError(
-            f"{field_name} must not be empty or whitespace"
-        )
+        raise LifecycleValidationError(f"{field_name} must not be empty or whitespace")
     return value
 
 
@@ -133,13 +159,9 @@ def require_utc_datetime(value: datetime, field_name: str) -> datetime:
     if not isinstance(value, datetime):
         raise LifecycleValidationError(f"{field_name} must be datetime")
     if value.tzinfo is None or value.utcoffset() is None:
-        raise LifecycleValidationError(
-            f"{field_name} must be timezone-aware UTC"
-        )
+        raise LifecycleValidationError(f"{field_name} must be timezone-aware UTC")
     if value.utcoffset() != timedelta(0):
-        raise LifecycleValidationError(
-            f"{field_name} must use UTC offset +00:00"
-        )
+        raise LifecycleValidationError(f"{field_name} must use UTC offset +00:00")
     return value
 
 
@@ -239,10 +261,9 @@ class FillApplicationCommand:
         require_decimal(self.fee, "fee", non_negative=True)
         require_utc_datetime(self.occurred_at, "occurred_at")
         require_utc_datetime(self.recorded_at, "recorded_at")
-        if (
-            not isinstance(self.order_status_after, OrderStatus)
-            or self.order_status_after
-            not in (OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED)
+        if not isinstance(self.order_status_after, OrderStatus) or self.order_status_after not in (
+            OrderStatus.PARTIALLY_FILLED,
+            OrderStatus.FILLED,
         ):
             raise LifecycleValidationError(
                 "order_status_after must be PARTIALLY_FILLED or FILLED"
@@ -273,9 +294,7 @@ class PositionSnapshot:
         if not isinstance(self.status, PositionStatus):
             raise LifecycleValidationError("status must be PositionStatus")
         require_decimal(self.quantity, "quantity", non_negative=True)
-        require_decimal(
-            self.avg_entry_price, "avg_entry_price", non_negative=True
-        )
+        require_decimal(self.avg_entry_price, "avg_entry_price", non_negative=True)
         require_decimal(self.realized_pnl, "realized_pnl")
         require_decimal(self.unrealized_pnl, "unrealized_pnl")
         require_utc_datetime(self.opened_at, "opened_at")
@@ -311,9 +330,7 @@ class AccountingEvent:
         if type(self.event_no) is not int or self.event_no < 1:
             raise LifecycleValidationError("event_no must be int >= 1")
         if not isinstance(self.event_type, AccountingEventType):
-            raise LifecycleValidationError(
-                "event_type must be AccountingEventType"
-            )
+            raise LifecycleValidationError("event_type must be AccountingEventType")
         require_decimal(self.delta_qty, "delta_qty")
         if self.delta_qty == 0:
             raise LifecycleValidationError("delta_qty must be non-zero")
@@ -342,9 +359,7 @@ class PositionMutation:
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, PositionMutationKind):
-            raise LifecycleValidationError(
-                "kind must be PositionMutationKind"
-            )
+            raise LifecycleValidationError("kind must be PositionMutationKind")
         PositionSnapshot(
             position_id=self.position_id,
             venue=self.venue,
@@ -360,10 +375,7 @@ class PositionMutation:
             closed_at=self.closed_at,
             updated_at=self.updated_at,
         )
-        if (
-            self.kind is PositionMutationKind.INSERT
-            and self.status is not PositionStatus.OPEN
-        ):
+        if self.kind is PositionMutationKind.INSERT and self.status is not PositionStatus.OPEN:
             raise LifecycleValidationError(
                 "INSERT position mutation must create an OPEN position"
             )
@@ -376,9 +388,7 @@ class AccountingPlan:
 
     def __post_init__(self) -> None:
         if len(self.events) not in (1, 2):
-            raise LifecycleValidationError(
-                "accounting plan must contain 1 or 2 events"
-            )
+            raise LifecycleValidationError("accounting plan must contain 1 or 2 events")
         if len(self.positions) != len(self.events):
             raise LifecycleValidationError(
                 "each accounting event must have one position mutation"
@@ -386,12 +396,8 @@ class AccountingPlan:
         if tuple(event.event_no for event in self.events) != tuple(
             range(1, len(self.events) + 1)
         ):
-            raise LifecycleValidationError(
-                "event numbers must be contiguous from 1"
-            )
-        for event, mutation in zip(
-            self.events, self.positions, strict=True
-        ):
+            raise LifecycleValidationError("event numbers must be contiguous from 1")
+        for event, mutation in zip(self.events, self.positions, strict=True):
             if event.position_id != mutation.position_id:
                 raise LifecycleValidationError(
                     "event position_id must match its position mutation"
