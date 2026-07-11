@@ -9,6 +9,8 @@ import pytest
 
 from atos.lifecycle_types import (
     AccountingEventType,
+    DispatchAttemptStatus,
+    ExecutionStatus,
     FillApplicationCommand,
     LifecycleInvariantError,
     LifecyclePersistenceError,
@@ -75,14 +77,16 @@ def position(
     status: PositionStatus = PositionStatus.OPEN,
 ) -> PositionSnapshot:
     closed_at = None if status is PositionStatus.OPEN else T0
-    qty = Decimal(quantity) if status is PositionStatus.OPEN else Decimal("0")
+    quantity_value = (
+        Decimal(quantity) if status is PositionStatus.OPEN else Decimal("0")
+    )
     return PositionSnapshot(
         position_id=position_id or f"pos-{side.value.lower()}",
         venue=venue,
         account_scope=account_scope,
         symbol=symbol,
         side=side,
-        quantity=qty,
+        quantity=quantity_value,
         avg_entry_price=Decimal(avg),
         realized_pnl=Decimal(realized),
         unrealized_pnl=Decimal(unrealized),
@@ -448,10 +452,7 @@ def test_policy_rejects_duplicate_side_wrong_scope_and_closed_input():
         plan(
             OrderSide.BUY,
             command,
-            position(
-                PositionSide.LONG,
-                status=PositionStatus.CLOSED,
-            ),
+            position(PositionSide.LONG, status=PositionStatus.CLOSED),
         )
 
 
@@ -502,8 +503,7 @@ def test_plan_is_deterministic_and_pairs_events_to_positions():
         mutation.position_id for mutation in first.positions
     )
     assert all(
-        event.event_id.startswith("pae_")
-        and len(event.event_id) == 68
+        event.event_id.startswith("pae_") and len(event.event_id) == 68
         for event in first.events
     )
 
@@ -512,10 +512,7 @@ def test_operation_stats_reject_invalid_counts():
     with pytest.raises(ValueError):
         OperationStats(read_statements=-1)
     with pytest.raises(ValueError):
-        OperationStats(
-            attempted_mutations=1,
-            committed_mutations=2,
-        )
+        OperationStats(attempted_mutations=1, committed_mutations=2)
     with pytest.raises(ValueError):
         OperationStats(transaction_count=True)
 
@@ -537,4 +534,47 @@ def test_policy_rejects_duplicate_position_id_across_sides():
             command,
             position(PositionSide.LONG, position_id="same"),
             position(PositionSide.SHORT, position_id="same"),
+        )
+
+
+def test_lifecycle_status_enums_match_frozen_schema_values():
+    assert {status.value for status in OrderStatus} == {
+        "NEW",
+        "PENDING_SUBMIT",
+        "OPEN",
+        "PARTIALLY_FILLED",
+        "FILLED",
+        "CANCEL_REQUESTED",
+        "CANCEL_PENDING",
+        "CANCELLED",
+        "REJECTED",
+        "EXPIRED",
+        "UNKNOWN",
+    }
+    assert {status.value for status in DispatchAttemptStatus} == {
+        "PRE_DISPATCH_PROVEN",
+        "DISPATCH_INITIATED",
+        "SUBMITTED",
+        "ACCEPTED",
+        "REJECTED",
+        "TIMEOUT",
+        "AMBIGUOUS",
+    }
+    assert {status.value for status in ExecutionStatus} == {
+        "PREPARED",
+        "DISPATCH_COMMITTED",
+        "DISPATCHED",
+        "ACKNOWLEDGED",
+        "AMBIGUOUS",
+        "FILLED",
+        "TERMINAL",
+    }
+
+
+def test_policy_rejects_untyped_position_input_fail_closed():
+    with pytest.raises(LifecycleInvariantError):
+        NettingPositionAccountingV1().plan(
+            command=fill(),
+            order_side=OrderSide.BUY,
+            open_positions=(object(),),
         )
