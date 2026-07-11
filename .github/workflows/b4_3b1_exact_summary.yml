@@ -16,6 +16,8 @@ jobs:
       TARGET_SHA: ab462274cff69dd1ff14b71c67f921f3d85d4990
       TARGET_BRANCH: feat/b4.3b1-typed-accounting-policy
       FORMAL_RUN_ID: "29156143053"
+      SIMPLE_CI_RUN_ID: "29156143044"
+      TARGET_PR_NUMBER: "16"
       REPO: Dreaminmaster/ai-autonomous-trading-os
     steps:
       - name: Checkout exact candidate SHA
@@ -62,10 +64,12 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import json, os, urllib.parse, urllib.request
+          import json, os, urllib.request
           repo=os.environ['REPO']
           sha=os.environ['TARGET_SHA']
           branch=os.environ['TARGET_BRANCH']
+          run_id=int(os.environ['SIMPLE_CI_RUN_ID'])
+          pr_number=int(os.environ['TARGET_PR_NUMBER'])
           token=os.environ['GITHUB_TOKEN']
           def api(url):
               req=urllib.request.Request(url, headers={
@@ -79,19 +83,28 @@ jobs:
           wf=next((w for w in workflows.get('workflows',[]) if w.get('path')=='.github/workflows/ci.yml' and w.get('name')=='CI' and w.get('state')=='active'),None)
           if not wf or wf.get('id') != 305746223:
               raise SystemExit(f'Unexpected CI workflow: {wf}')
-          q=urllib.parse.urlencode({'head_sha':sha,'per_page':100})
-          data=api(f'https://api.github.com/repos/{repo}/actions/workflows/{wf["id"]}/runs?{q}')
-          matches=[r for r in data.get('workflow_runs',[]) if r.get('head_sha')==sha and r.get('head_branch')==branch and r.get('event')=='push' and r.get('status')=='completed' and r.get('conclusion')=='success']
-          if len(matches)!=1:
-              compact=[{k:r.get(k) for k in ('id','head_sha','head_branch','event','status','conclusion')} for r in data.get('workflow_runs',[])]
-              raise SystemExit(f'Expected exactly one exact push CI run, got {len(matches)}; runs={compact}')
-          run=matches[0]
+          run=api(f'https://api.github.com/repos/{repo}/actions/runs/{run_id}')
+          expected={
+              'id': run_id,
+              'workflow_id': 305746223,
+              'head_sha': sha,
+              'head_branch': branch,
+              'event': 'pull_request',
+              'status': 'completed',
+              'conclusion': 'success',
+          }
+          for key,val in expected.items():
+              if run.get(key) != val:
+                  raise SystemExit(f'PR CI mismatch {key}: {run.get(key)!r} != {val!r}')
+          prs=run.get('pull_requests') or []
+          if not any(p.get('number')==pr_number for p in prs):
+              raise SystemExit(f'PR CI run is not bound to PR #{pr_number}: {prs}')
           evidence={
               'schema_version':1,
               'workflow_id':305746223,
               'workflow_name':'CI',
               'workflow_path':'.github/workflows/ci.yml',
-              'run_id':run['id'],
+              'run_id':run_id,
               'head_sha':sha,
               'status':'completed',
               'conclusion':'success',
@@ -123,6 +136,7 @@ jobs:
           assert s['gate_status']=='PASS', s
           assert s['errors']==[], s
           assert s['live']=='FORBIDDEN', s
+          assert s['simple_ci']['run_id']==29156143044, s
           assert s['simple_ci']['verified'] is True, s
           assert s['simple_ci']['head_sha']==s['head_sha'], s
           PY
