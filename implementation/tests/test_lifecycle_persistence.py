@@ -22,6 +22,7 @@ from atos.lifecycle_types import (
     LifecycleInvariantError,
     LifecyclePersistenceError,
     LifecyclePreconditionError,
+    LifecycleValidationError,
     OperationStats,
     OrderAcknowledgementCommand,
     OrderSide,
@@ -215,6 +216,53 @@ class BadEventIdPolicy(PositionAccountingPolicy):
         )
         bad = replace(plan.events[0], event_id="not-deterministic")
         return AccountingPlan((bad,) + plan.events[1:], plan.positions)
+
+
+class AlternatePositionIdPolicy(PositionAccountingPolicy):
+    def __init__(self) -> None:
+        self.inner = NettingPositionAccountingV1()
+
+    def plan(self, *, command, order_side, open_positions) -> AccountingPlan:
+        plan = self.inner.plan(
+            command=command,
+            order_side=order_side,
+            open_positions=open_positions,
+        )
+        custom_id = f"policy-position-{command.fill_id}"
+        event = replace(plan.events[0], position_id=custom_id)
+        mutation = replace(plan.positions[0], position_id=custom_id)
+        return AccountingPlan(
+            (event,) + plan.events[1:],
+            (mutation,) + plan.positions[1:],
+        )
+
+
+def test_adapter_requires_preconnected_database(tmp_path):
+    db = RuntimeDatabase(tmp_path / "runtime.db")
+    with pytest.raises(LifecycleValidationError):
+        SqliteLifecyclePersistence(db, NettingPositionAccountingV1())
+    assert db.conn is None
+
+
+def test_adapter_rejects_closed_or_replaced_connection_without_reconnect(tmp_path):
+    db = make_db(tmp_path / "runtime.db")
+    graph = seed_execution_graph(db, "connection-replaced")
+    adapter = make_adapter(db)
+    original_identity = id(db.connection)
+
+    db.close()
+    with pytest.raises(LifecyclePreconditionError) as closed_error:
+        adapter.register_order_acknowledgement(order_command(graph))
+    assert closed_error.value.stats == OperationStats(
+        0, 0, 0, 0, original_identity
+    )
+    assert db.conn is None
+
+    db.connect()
+    with pytest.raises(LifecyclePreconditionError) as replaced_error:
+        adapter.register_order_acknowledgement(order_command(graph))
+    assert replaced_error.value.stats.transaction_count == 0
+    assert replaced_error.value.stats.db_connection_identity == original_identity
 
 
 def test_order_acknowledgement_exact_three_mutation_transaction(tmp_path):
@@ -457,6 +505,17 @@ def test_non_deterministic_replay_event_identity_is_rejected(tmp_path):
     db.connection.commit()
     with pytest.raises(LifecycleInvariantError):
         make_adapter(db).apply_fill(command)
+
+
+def test_alternate_policy_position_identity_is_not_hardcoded_in_adapter(tmp_path):
+    db = make_db(tmp_path / "alternate-policy.db")
+    graph = seed_execution_graph(db, "alternate-policy")
+    acknowledge(db, graph)
+    adapter = SqliteLifecyclePersistence(db, AlternatePositionIdPolicy())
+    result = adapter.apply_fill(fill_command(graph, "alternate-policy-fill"))
+    assert result.outcome is PersistenceOutcome.APPLIED
+    assert result.position_ids == ("policy-position-alternate-policy-fill",)
+    assert scalar(db, "SELECT position_id FROM position_states") == result.position_ids[0]
 
 
 @pytest.mark.parametrize("policy", [BadScopePolicy(), BadEventIdPolicy()])

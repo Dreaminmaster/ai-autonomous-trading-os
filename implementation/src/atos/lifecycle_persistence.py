@@ -110,25 +110,6 @@ def _event_id(command: FillApplicationCommand, event_no: int) -> str:
     )
 
 
-def _position_id(
-    command: FillApplicationCommand,
-    side: PositionSide,
-    event_no: int,
-) -> str:
-    return deterministic_id(
-        "pos_",
-        (
-            "B4.3B:POSITION:NETTING_V1",
-            command.venue,
-            command.account_scope,
-            command.symbol,
-            side.value,
-            command.fill_id,
-            str(event_no),
-        ),
-    )
-
-
 class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter):
     """Concrete atomic lifecycle writer using one injected SQLite authority."""
 
@@ -139,11 +120,16 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
     ) -> None:
         if not isinstance(db, RuntimeDatabase):
             raise LifecycleValidationError("db must be RuntimeDatabase")
+        if db.conn is None:
+            raise LifecycleValidationError(
+                "db must be connected before adapter construction"
+            )
         if not isinstance(accounting_policy, PositionAccountingPolicy):
             raise LifecycleValidationError(
                 "accounting_policy must implement PositionAccountingPolicy"
             )
         self._db = db
+        self._connection = db.conn
         self._accounting_policy = accounting_policy
 
     def _after_mutation(
@@ -177,12 +163,22 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
         self._after_mutation(boundary, connection)
         return cursor
 
-    @staticmethod
+    def _require_connection(self) -> sqlite3.Connection:
+        if self._db.conn is not self._connection:
+            raise LifecyclePreconditionError(
+                "injected RuntimeDatabase connection was closed or replaced",
+                OperationStats(db_connection_identity=id(self._connection)),
+            )
+        return self._connection
+
     def _ensure_connection_stable(
-        db: RuntimeDatabase,
+        self,
         connection: sqlite3.Connection,
     ) -> None:
-        if db.connection is not connection:
+        if (
+            self._db.conn is not self._connection
+            or connection is not self._connection
+        ):
             raise LifecycleInvariantError(
                 "RuntimeDatabase connection changed inside lifecycle operation"
             )
@@ -299,8 +295,6 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                     or mutation.side is not target_side
                     or mutation.opened_at != command.occurred_at
                     or mutation.closed_at is not None
-                    or mutation.position_id
-                    != _position_id(command, mutation.side, event.event_no)
                     or mutation.quantity != abs(event.delta_qty)
                     or mutation.avg_entry_price != command.price
                     or mutation.realized_pnl != 0
@@ -486,7 +480,7 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                 OperationStats(),
             )
 
-        connection = self._db.connection
+        connection = self._require_connection()
         stats = _MutableStats(connection_identity=id(connection))
         if connection.in_transaction:
             raise LifecyclePreconditionError(
@@ -608,7 +602,7 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                             stats,
                         )
 
-                self._ensure_connection_stable(self._db, connection)
+                self._ensure_connection_stable(connection)
         except LifecyclePersistenceError as exc:
             self._raise_with_stats(type(exc), str(exc), stats, exc)
         except sqlite3.IntegrityError as exc:
@@ -653,7 +647,7 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                 OperationStats(),
             )
 
-        connection = self._db.connection
+        connection = self._require_connection()
         stats = _MutableStats(connection_identity=id(connection))
         if connection.in_transaction:
             raise LifecyclePreconditionError(
@@ -861,7 +855,7 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                             mutation,
                         )
 
-                self._ensure_connection_stable(self._db, connection)
+                self._ensure_connection_stable(connection)
         except LifecyclePersistenceError as exc:
             self._raise_with_stats(type(exc), str(exc), stats, exc)
         except sqlite3.IntegrityError as exc:
