@@ -18,7 +18,7 @@ jobs:
           ref: feat/b4.3b2-sqlite-lifecycle-persistence
           fetch-depth: 0
 
-      - name: Execute bounded helper script
+      - name: Apply bounded source and test patch
         id: execute
         continue-on-error: true
         shell: bash
@@ -27,14 +27,192 @@ jobs:
           python - <<'PY' > patch_helper.log 2>&1
           from pathlib import Path
 
-          workflow = Path('.github/workflows/b4_3b2_one_time_patch.yml').read_text().splitlines()
-          start = next(i for i, line in enumerate(workflow) if line.strip() == "python - <<'PY'")
-          end = next(i for i in range(start + 1, len(workflow)) if workflow[i].strip() == 'PY')
-          script_lines = []
-          for line in workflow[start + 1:end]:
-              script_lines.append(line[10:] if line.startswith('          ') else line)
-          script = '\n'.join(script_lines)
-          exec(compile(script, 'b4_3b2_one_time_patch', 'exec'), {'__name__': '__main__'})
+          src_path = Path('implementation/src/atos/lifecycle_persistence.py')
+          test_path = Path('implementation/tests/test_lifecycle_persistence.py')
+          src = src_path.read_text()
+          tests = test_path.read_text()
+
+          def require_count(text: str, token: str, count: int, label: str) -> None:
+              actual = text.count(token)
+              if actual != count:
+                  raise SystemExit(f'{label}: expected {count}, found {actual}')
+
+          # Remove only the policy-specific NETTING_V1 position-id helper.
+          start_token = 'def _position_id('
+          end_token = 'class SqliteLifecyclePersistence('
+          require_count(src, start_token, 1, 'position-id helper start')
+          require_count(src, end_token, 1, 'persistence class start')
+          start = src.index(start_token)
+          end = src.index(end_token, start)
+          src = src[:start] + src[end:]
+
+          # Require an already-connected RuntimeDatabase and bind its exact connection.
+          policy_guard = '''        if not isinstance(accounting_policy, PositionAccountingPolicy):
+              raise LifecycleValidationError(
+                  "accounting_policy must implement PositionAccountingPolicy"
+              )
+          '''
+          require_count(src, policy_guard, 1, 'accounting policy guard')
+          src = src.replace(
+              policy_guard,
+              '''        if db.conn is None:
+              raise LifecycleValidationError(
+                  "db must be connected before adapter construction"
+              )
+          if not isinstance(accounting_policy, PositionAccountingPolicy):
+              raise LifecycleValidationError(
+                  "accounting_policy must implement PositionAccountingPolicy"
+              )
+          ''',
+              1,
+          )
+
+          assignment = '''        self._db = db
+          self._accounting_policy = accounting_policy
+          '''
+          require_count(src, assignment, 1, 'adapter assignments')
+          src = src.replace(
+              assignment,
+              '''        self._db = db
+          self._connection = db.conn
+          self._accounting_policy = accounting_policy
+          ''',
+              1,
+          )
+
+          stable_start = '    @staticmethod\n    def _ensure_connection_stable('
+          stable_end = '    @staticmethod\n    def _order_payload('
+          require_count(src, stable_start, 1, 'connection stability start')
+          require_count(src, stable_end, 1, 'order payload start')
+          start = src.index(stable_start)
+          end = src.index(stable_end, start)
+          replacement = '''    def _require_connection(self) -> sqlite3.Connection:
+              if self._db.conn is not self._connection:
+                  raise LifecyclePreconditionError(
+                      "injected RuntimeDatabase connection was closed or replaced",
+                      OperationStats(db_connection_identity=id(self._connection)),
+                  )
+              return self._connection
+
+          def _ensure_connection_stable(
+              self,
+              connection: sqlite3.Connection,
+          ) -> None:
+              if (
+                  self._db.conn is not self._connection
+                  or connection is not self._connection
+              ):
+                  raise LifecycleInvariantError(
+                      "RuntimeDatabase connection changed inside lifecycle operation"
+                  )
+
+          '''
+          src = src[:start] + replacement + src[end:]
+
+          require_count(src, 'connection = self._db.connection', 2, 'operation connection lookup')
+          src = src.replace(
+              'connection = self._db.connection',
+              'connection = self._require_connection()',
+          )
+          require_count(
+              src,
+              'self._ensure_connection_stable(self._db, connection)',
+              2,
+              'connection stability invocation',
+          )
+          src = src.replace(
+              'self._ensure_connection_stable(self._db, connection)',
+              'self._ensure_connection_stable(connection)',
+          )
+
+          position_clause = '''                    or mutation.position_id
+                      != _position_id(command, mutation.side, event.event_no)
+          '''
+          require_count(src, position_clause, 1, 'policy-specific position-id clause')
+          src = src.replace(position_clause, '', 1)
+
+          # Tests: typed constructor failure and no implicit reconnect.
+          import_anchor = '    LifecyclePreconditionError,\n    OperationStats,\n'
+          require_count(tests, import_anchor, 1, 'test import anchor')
+          tests = tests.replace(
+              import_anchor,
+              '    LifecyclePreconditionError,\n    LifecycleValidationError,\n    OperationStats,\n',
+              1,
+          )
+
+          class_anchor = 'def test_order_acknowledgement_exact_three_mutation_transaction(tmp_path):\n'
+          require_count(tests, class_anchor, 1, 'first acknowledgement test')
+          fixtures_and_tests = '''class AlternatePositionIdPolicy(PositionAccountingPolicy):
+              def __init__(self) -> None:
+                  self.inner = NettingPositionAccountingV1()
+
+              def plan(self, *, command, order_side, open_positions) -> AccountingPlan:
+                  plan = self.inner.plan(
+                      command=command,
+                      order_side=order_side,
+                      open_positions=open_positions,
+                  )
+                  custom_id = f"policy-position-{command.fill_id}"
+                  event = replace(plan.events[0], position_id=custom_id)
+                  mutation = replace(plan.positions[0], position_id=custom_id)
+                  return AccountingPlan(
+                      (event,) + plan.events[1:],
+                      (mutation,) + plan.positions[1:],
+                  )
+
+
+          def test_adapter_requires_preconnected_database(tmp_path):
+              db = RuntimeDatabase(tmp_path / "runtime.db")
+              with pytest.raises(LifecycleValidationError):
+                  SqliteLifecyclePersistence(db, NettingPositionAccountingV1())
+              assert db.conn is None
+
+
+          def test_adapter_rejects_closed_or_replaced_connection_without_reconnect(tmp_path):
+              db = make_db(tmp_path / "runtime.db")
+              graph = seed_execution_graph(db, "connection-replaced")
+              adapter = make_adapter(db)
+              original_identity = id(db.connection)
+
+              db.close()
+              with pytest.raises(LifecyclePreconditionError) as closed_error:
+                  adapter.register_order_acknowledgement(order_command(graph))
+              assert closed_error.value.stats == OperationStats(
+                  0, 0, 0, 0, original_identity
+              )
+              assert db.conn is None
+
+              db.connect()
+              with pytest.raises(LifecyclePreconditionError) as replaced_error:
+                  adapter.register_order_acknowledgement(order_command(graph))
+              assert replaced_error.value.stats.transaction_count == 0
+              assert replaced_error.value.stats.db_connection_identity == original_identity
+
+
+          '''
+          tests = tests.replace(class_anchor, fixtures_and_tests + class_anchor, 1)
+
+          param_anchor = '''@pytest.mark.parametrize("policy", [BadScopePolicy(), BadEventIdPolicy()])
+          def test_invalid_injected_policy_is_rejected_before_first_mutation(tmp_path, policy):
+          '''
+          require_count(tests, param_anchor, 1, 'invalid policy parameterized test')
+          alternate_test = '''def test_alternate_policy_position_identity_is_not_hardcoded_in_adapter(tmp_path):
+              db = make_db(tmp_path / "alternate-policy.db")
+              graph = seed_execution_graph(db, "alternate-policy")
+              acknowledge(db, graph)
+              adapter = SqliteLifecyclePersistence(db, AlternatePositionIdPolicy())
+              result = adapter.apply_fill(fill_command(graph, "alternate-policy-fill"))
+              assert result.outcome is PersistenceOutcome.APPLIED
+              assert result.position_ids == ("policy-position-alternate-policy-fill",)
+              assert scalar(db, "SELECT position_id FROM position_states") == result.position_ids[0]
+
+
+          '''
+          tests = tests.replace(param_anchor, alternate_test + param_anchor, 1)
+
+          src_path.write_text(src)
+          test_path.write_text(tests)
+          print('PATCH_OK')
           PY
 
       - name: Upload helper diagnostics
@@ -57,10 +235,7 @@ jobs:
         shell: bash
         run: |
           git diff --check
-          if git diff --quiet; then
-            echo "No patch needed"
-            exit 0
-          fi
+          python -m py_compile implementation/src/atos/lifecycle_persistence.py implementation/tests/test_lifecycle_persistence.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add implementation/src/atos/lifecycle_persistence.py implementation/tests/test_lifecycle_persistence.py
