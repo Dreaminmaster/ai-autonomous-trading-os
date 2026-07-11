@@ -1,0 +1,394 @@
+name: B4.3B1 Post-Merge Gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  post-merge-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      TARGET_SHA: f390d528f17928f180d2a617e12436158e962156
+      TARGET_BRANCH: main
+    steps:
+      - name: Checkout exact merge SHA
+        uses: actions/checkout@v4
+        with:
+          ref: f390d528f17928f180d2a617e12436158e962156
+          fetch-depth: 1
+
+      - name: Verify exact merge HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Wait for exact main evidence
+        id: wait
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: python
+        run: |
+          import json
+          import os
+          import time
+          import urllib.request
+
+          repo = "Dreaminmaster/ai-autonomous-trading-os"
+          sha = os.environ["TARGET_SHA"]
+          branch = os.environ["TARGET_BRANCH"]
+          token = os.environ["GH_TOKEN"]
+          output_path = os.environ["GITHUB_OUTPUT"]
+          ci_workflow_id = 305746223
+          freq_workflow_id = 305848317
+
+          def api(url):
+              req = urllib.request.Request(url)
+              req.add_header("Authorization", "Bearer " + token)
+              req.add_header("Accept", "application/vnd.github+json")
+              req.add_header("X-GitHub-Api-Version", "2022-11-28")
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.loads(response.read())
+
+          def exact_push_runs(workflow_id):
+              data = api(
+                  f"https://api.github.com/repos/{repo}/actions/workflows/{workflow_id}/runs"
+                  f"?head_sha={sha}&per_page=100"
+              )
+              return [
+                  run for run in data.get("workflow_runs", [])
+                  if run.get("event") == "push"
+                  and run.get("head_branch") == branch
+                  and run.get("head_sha") == sha
+              ]
+
+          last = {}
+          for attempt in range(240):
+              ci_runs = exact_push_runs(ci_workflow_id)
+              freq_runs = exact_push_runs(freq_workflow_id)
+              last = {
+                  "attempt": attempt + 1,
+                  "target_sha": sha,
+                  "target_branch": branch,
+                  "ci_runs": [
+                      {
+                          "id": r.get("id"),
+                          "status": r.get("status"),
+                          "conclusion": r.get("conclusion"),
+                      }
+                      for r in ci_runs
+                  ],
+                  "freq_runs": [
+                      {
+                          "id": r.get("id"),
+                          "status": r.get("status"),
+                          "conclusion": r.get("conclusion"),
+                      }
+                      for r in freq_runs
+                  ],
+                  "live": "FORBIDDEN",
+              }
+              with open("post_merge_probe.json", "w", encoding="utf-8") as f:
+                  json.dump(last, f, indent=2, sort_keys=True)
+
+              if len(ci_runs) > 1:
+                  raise RuntimeError(f"ambiguous exact main CI runs: {len(ci_runs)}")
+              if len(freq_runs) > 1:
+                  raise RuntimeError(f"ambiguous exact main Freqtrade runs: {len(freq_runs)}")
+
+              if len(ci_runs) == 1 and len(freq_runs) == 1:
+                  ci = ci_runs[0]
+                  freq = freq_runs[0]
+                  if (
+                      ci.get("status") == "completed"
+                      and ci.get("conclusion") == "success"
+                      and freq.get("status") == "completed"
+                  ):
+                      freq_run_id = int(freq["id"])
+                      jobs_data = api(
+                          f"https://api.github.com/repos/{repo}/actions/runs/{freq_run_id}/jobs"
+                          "?filter=latest&per_page=100"
+                      )
+                      jobs = {job.get("name"): job for job in jobs_data.get("jobs", [])}
+                      core_ready = True
+                      core_jobs = {}
+                      for name in ("atos-tests", "freqtrade"):
+                          job = jobs.get(name)
+                          if job is None:
+                              core_ready = False
+                              break
+                          core_jobs[name] = {
+                              "id": job.get("id"),
+                              "status": job.get("status"),
+                              "conclusion": job.get("conclusion"),
+                          }
+                          if (
+                              job.get("status") != "completed"
+                              or job.get("conclusion") != "success"
+                          ):
+                              if job.get("status") == "completed":
+                                  raise RuntimeError(
+                                      f"exact main core job {name} failed: {job.get('conclusion')}"
+                                  )
+                              core_ready = False
+
+                      artifacts_data = api(
+                          f"https://api.github.com/repos/{repo}/actions/runs/{freq_run_id}/artifacts"
+                          "?per_page=100"
+                      )
+                      artifact_names = {
+                          item.get("name")
+                          for item in artifacts_data.get("artifacts", [])
+                          if not item.get("expired")
+                      }
+                      artifacts_ready = {
+                          "atos-validation",
+                          "freqtrade-validation",
+                      }.issubset(artifact_names)
+
+                      if core_ready and artifacts_ready:
+                          last["selected_ci_run"] = {
+                              "id": ci.get("id"),
+                              "status": ci.get("status"),
+                              "conclusion": ci.get("conclusion"),
+                          }
+                          last["selected_freq_run"] = {
+                              "id": freq.get("id"),
+                              "status": freq.get("status"),
+                              "overall_conclusion": freq.get("conclusion"),
+                              "core_jobs": core_jobs,
+                              "artifacts": sorted(artifact_names),
+                          }
+                          with open("post_merge_probe.json", "w", encoding="utf-8") as f:
+                              json.dump(last, f, indent=2, sort_keys=True)
+                          with open(output_path, "a", encoding="utf-8") as out:
+                              out.write(f"ci_run_id={int(ci['id'])}\n")
+                              out.write(f"freq_run_id={freq_run_id}\n")
+                          print(json.dumps(last, indent=2, sort_keys=True))
+                          break
+
+              time.sleep(30)
+          else:
+              raise RuntimeError(
+                  "timed out waiting for exact main CI/Freqtrade evidence: "
+                  + json.dumps(last, sort_keys=True)
+              )
+
+      - name: Download exact main ATOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: atos-validation
+          path: evidence/atos
+          github-token: ${{ github.token }}
+          repository: Dreaminmaster/ai-autonomous-trading-os
+          run-id: ${{ steps.wait.outputs.freq_run_id }}
+
+      - name: Download exact main Freqtrade artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: freqtrade-validation
+          path: evidence/freq
+          github-token: ${{ github.token }}
+          repository: Dreaminmaster/ai-autonomous-trading-os
+          run-id: ${{ steps.wait.outputs.freq_run_id }}
+
+      - name: Verify exact main provenance and artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ steps.wait.outputs.ci_run_id }}
+          FREQ_RUN_ID: ${{ steps.wait.outputs.freq_run_id }}
+        shell: python
+        run: |
+          import json
+          import os
+          import urllib.request
+
+          repo = "Dreaminmaster/ai-autonomous-trading-os"
+          sha = os.environ["TARGET_SHA"]
+          branch = os.environ["TARGET_BRANCH"]
+          ci_run_id = int(os.environ["CI_RUN_ID"])
+          freq_run_id = int(os.environ["FREQ_RUN_ID"])
+          token = os.environ["GH_TOKEN"]
+
+          def api(url):
+              req = urllib.request.Request(url)
+              req.add_header("Authorization", "Bearer " + token)
+              req.add_header("Accept", "application/vnd.github+json")
+              req.add_header("X-GitHub-Api-Version", "2022-11-28")
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.loads(response.read())
+
+          ci = api(f"https://api.github.com/repos/{repo}/actions/runs/{ci_run_id}")
+          expected_ci = {
+              "workflow_id": 305746223,
+              "event": "push",
+              "head_branch": branch,
+              "head_sha": sha,
+              "status": "completed",
+              "conclusion": "success",
+          }
+          for key, expected in expected_ci.items():
+              if ci.get(key) != expected:
+                  raise RuntimeError(
+                      f"main Simple CI {key}: {ci.get(key)!r} != {expected!r}"
+                  )
+
+          simple_ci = {
+              "schema_version": 1,
+              "workflow_id": 305746223,
+              "workflow_name": "CI",
+              "workflow_path": ".github/workflows/ci.yml",
+              "run_id": ci_run_id,
+              "head_sha": sha,
+              "status": "completed",
+              "conclusion": "success",
+              "verified": True,
+          }
+          with open("simple_ci_evidence.json", "w", encoding="utf-8") as f:
+              json.dump(simple_ci, f, indent=2, sort_keys=True)
+
+          formal = api(f"https://api.github.com/repos/{repo}/actions/runs/{freq_run_id}")
+          expected_formal = {
+              "workflow_id": 305848317,
+              "event": "push",
+              "head_branch": branch,
+              "head_sha": sha,
+              "status": "completed",
+          }
+          for key, expected in expected_formal.items():
+              if formal.get(key) != expected:
+                  raise RuntimeError(
+                      f"main formal run {key}: {formal.get(key)!r} != {expected!r}"
+                  )
+
+          jobs_data = api(
+              f"https://api.github.com/repos/{repo}/actions/runs/{freq_run_id}/jobs"
+              "?filter=latest&per_page=100"
+          )
+          jobs = {job.get("name"): job for job in jobs_data.get("jobs", [])}
+          core_jobs = {}
+          for name in ("atos-tests", "freqtrade"):
+              job = jobs.get(name)
+              if job is None:
+                  raise RuntimeError(f"missing exact main core job: {name}")
+              if job.get("status") != "completed" or job.get("conclusion") != "success":
+                  raise RuntimeError(
+                      f"exact main core job {name}: {job.get('status')}/{job.get('conclusion')}"
+                  )
+              core_jobs[name] = {
+                  "id": job.get("id"),
+                  "status": job.get("status"),
+                  "conclusion": job.get("conclusion"),
+              }
+
+          expected_run_id = str(freq_run_id)
+          manifests = {}
+          for job_name, path in (
+              ("atos-tests", "evidence/atos/evidence_manifest.json"),
+              ("freqtrade", "evidence/freq/evidence_manifest.json"),
+          ):
+              with open(path, encoding="utf-8") as f:
+                  manifest = json.load(f)
+              if manifest.get("run_id") != expected_run_id:
+                  raise RuntimeError(f"{job_name} manifest run_id mismatch")
+              if manifest.get("head_sha") != sha:
+                  raise RuntimeError(f"{job_name} manifest head_sha mismatch")
+              if manifest.get("job") != job_name:
+                  raise RuntimeError(f"{job_name} manifest job mismatch")
+              manifests[job_name] = manifest
+
+          provenance = {
+              "schema_version": 1,
+              "target_sha": sha,
+              "target_branch": branch,
+              "simple_ci": simple_ci,
+              "formal_run": {
+                  "run_id": freq_run_id,
+                  "workflow_id": formal.get("workflow_id"),
+                  "event": formal.get("event"),
+                  "head_branch": formal.get("head_branch"),
+                  "head_sha": formal.get("head_sha"),
+                  "status": formal.get("status"),
+                  "overall_conclusion": formal.get("conclusion"),
+                  "core_jobs": core_jobs,
+              },
+              "manifests": manifests,
+              "live": "FORBIDDEN",
+          }
+          with open("formal_provenance.json", "w", encoding="utf-8") as f:
+              json.dump(provenance, f, indent=2, sort_keys=True)
+
+      - name: Run canonical post-merge summary
+        env:
+          FREQ_RUN_ID: ${{ steps.wait.outputs.freq_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=implementation/src python -m atos.evidence_summary \
+            "$TARGET_SHA" "$FREQ_RUN_ID" success success \
+            evidence/atos evidence/freq simple_ci_evidence.json
+
+      - name: Enforce post-merge PASS
+        env:
+          CI_RUN_ID: ${{ steps.wait.outputs.ci_run_id }}
+          FREQ_RUN_ID: ${{ steps.wait.outputs.freq_run_id }}
+        shell: python
+        run: |
+          import json
+          import os
+
+          with open("validation_summary.json", encoding="utf-8") as f:
+              summary = json.load(f)
+
+          assert summary["head_sha"] == os.environ["TARGET_SHA"]
+          assert summary["run_id"] == os.environ["FREQ_RUN_ID"]
+          assert summary["gate_status"] == "PASS"
+          assert summary["errors"] == []
+          assert summary["live"] == "FORBIDDEN"
+          assert summary["atos_job_result"] == "success"
+          assert summary["freqtrade_job_result"] == "success"
+          assert summary["simple_ci"]["run_id"] == int(os.environ["CI_RUN_ID"])
+          assert summary["simple_ci"]["verified"] is True
+          assert summary["canonical"]["lookahead_final_status"] in (
+              "PASS",
+              "PASS_WITH_RC_ANOMALY",
+          )
+          assert summary["round1"]["baseline_integrity"] == "PASS"
+          print(json.dumps(summary, indent=2, sort_keys=True))
+
+      - name: Verify no tracked modifications
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Upload post-merge evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3b1-post-merge-gate
+          path: |
+            post_merge_probe.json
+            validation_summary.json
+            validation_summary.md
+            simple_ci_evidence.json
+            formal_provenance.json
+            evidence/atos/evidence_manifest.json
+            evidence/atos/pytest.log
+            evidence/atos/no_secret_scan.log
+            evidence/freq/evidence_manifest.json
+            evidence/freq/freqtrade_data/backtest_results/canonical_baseline_summary.json
+            evidence/freq/freqtrade_data/backtest_results/canonical_baseline_la_lookahead_status.json
+            evidence/freq/freqtrade_data/backtest_results/round1_2_trend_weight_025_only_la_lookahead_status.json
+            evidence/freq/freqtrade_data/backtest_results/round1_3_trend_disabled_only_la_lookahead_status.json
+            evidence/freq/validation_reports/strategy_fix_round1.json
+          if-no-files-found: error
