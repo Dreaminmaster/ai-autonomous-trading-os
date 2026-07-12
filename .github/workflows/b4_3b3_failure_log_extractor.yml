@@ -17,21 +17,43 @@ jobs:
         with:
           ref: feat/b4.3b3-lifecycle-performance-gate
           fetch-depth: 1
-      - name: Decode and print exact identities
+      - name: Produce exact decode diagnostics
         shell: bash
         run: |
-          set -uox pipefail
-          wc -c .github/tmp/b4_3b3_crossover_benchmark.gz.b64 .github/tmp/b4_3b3_crossover_test.gz.b64
-          sha256sum .github/tmp/b4_3b3_crossover_benchmark.gz.b64 .github/tmp/b4_3b3_crossover_test.gz.b64
-          base64 -d .github/tmp/b4_3b3_crossover_benchmark.gz.b64 > /tmp/benchmark.gz
-          base64 -d .github/tmp/b4_3b3_crossover_test.gz.b64 > /tmp/test.gz
-          gzip -t /tmp/benchmark.gz
-          gzip -t /tmp/test.gz
-          gzip -dc /tmp/benchmark.gz > /tmp/benchmark.py
-          gzip -dc /tmp/test.gz > /tmp/test.py
-          echo '--- decoded identities ---'
-          wc -c /tmp/benchmark.py /tmp/test.py
-          sha256sum /tmp/benchmark.py /tmp/test.py
-          head -n 3 /tmp/benchmark.py
-          head -n 3 /tmp/test.py
-          python -m py_compile /tmp/benchmark.py /tmp/test.py
+          set +e
+          {
+            echo '=== source files ==='
+            wc -c .github/tmp/b4_3b3_crossover_benchmark.gz.b64 .github/tmp/b4_3b3_crossover_test.gz.b64
+            sha256sum .github/tmp/b4_3b3_crossover_benchmark.gz.b64 .github/tmp/b4_3b3_crossover_test.gz.b64
+            echo '=== base64 decode ==='
+            base64 -d .github/tmp/b4_3b3_crossover_benchmark.gz.b64 > /tmp/benchmark.gz
+            echo "benchmark_base64_rc=$?"
+            base64 -d .github/tmp/b4_3b3_crossover_test.gz.b64 > /tmp/test.gz
+            echo "test_base64_rc=$?"
+            echo '=== gzip verify ==='
+            gzip -t /tmp/benchmark.gz
+            echo "benchmark_gzip_rc=$?"
+            gzip -t /tmp/test.gz
+            echo "test_gzip_rc=$?"
+            gzip -dc /tmp/benchmark.gz > /tmp/benchmark.py
+            echo "benchmark_decode_rc=$?"
+            gzip -dc /tmp/test.gz > /tmp/test.py
+            echo "test_decode_rc=$?"
+            echo '=== decoded identities ==='
+            wc -c /tmp/benchmark.py /tmp/test.py
+            sha256sum /tmp/benchmark.py /tmp/test.py
+            echo '=== first lines ==='
+            head -n 3 /tmp/benchmark.py
+            head -n 3 /tmp/test.py
+            echo '=== compile ==='
+            python -m py_compile /tmp/benchmark.py /tmp/test.py
+            echo "compile_rc=$?"
+          } > decode_diagnostic.txt 2>&1
+          cat decode_diagnostic.txt
+      - name: Upload decode diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3b3-crossover-decode-diagnostic
+          path: decode_diagnostic.txt
+          retention-days: 3
