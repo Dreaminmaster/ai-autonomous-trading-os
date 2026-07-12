@@ -14,6 +14,10 @@ from pathlib import Path
 import pytest
 
 import atos.lifecycle_persistence as persistence_module
+from atos.execution_idempotency_types import (
+    derive_client_order_id,
+    derive_idempotency_key,
+)
 from atos.lifecycle_persistence import SqliteLifecyclePersistence
 from atos.lifecycle_types import (
     AccountingPlan,
@@ -59,6 +63,14 @@ def seed_execution_graph(
     dispatch_status: str = "SUBMITTED",
     execution_status: str = "DISPATCHED",
 ) -> dict[str, str]:
+    normalized_intent_hash = hashlib.sha256(suffix.encode()).hexdigest()
+    idempotency_key = derive_idempotency_key(
+        venue=venue,
+        account_scope=account_scope,
+        symbol=symbol,
+        action=OrderSide(action),
+        normalized_intent_hash=normalized_intent_hash,
+    )
     graph = {
         "session_id": f"session-{suffix}",
         "cycle_id": f"cycle-{suffix}",
@@ -66,7 +78,9 @@ def seed_execution_graph(
         "risk_decision_id": f"risk-{suffix}",
         "execution_intent_id": f"execution-{suffix}",
         "attempt_id": f"attempt-{suffix}",
-        "client_order_id": f"client-{suffix}",
+        "idempotency_key": idempotency_key,
+        "normalized_intent_hash": normalized_intent_hash,
+        "client_order_id": derive_client_order_id(idempotency_key),
         "order_id": f"order-{suffix}",
         "symbol": symbol,
         "action": action,
@@ -105,7 +119,16 @@ def seed_execution_graph(
         (
             graph["execution_intent_id"], graph["trade_intent_id"],
             graph["risk_decision_id"], graph["cycle_id"], symbol, action, "100",
-            hashlib.sha256(suffix.encode()).hexdigest(),
+            graph["normalized_intent_hash"],
+            "2026-01-01T00:00:00Z",
+        ),
+    )
+    c.execute(
+        "INSERT INTO execution_idempotency_claims VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            graph["idempotency_key"], graph["execution_intent_id"],
+            venue, account_scope, symbol, action,
+            graph["normalized_intent_hash"], graph["client_order_id"],
             "2026-01-01T00:00:00Z",
         ),
     )

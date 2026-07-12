@@ -292,7 +292,7 @@ def fk_groups(db: RuntimeDatabase, table: str) -> set[tuple]:
 
 def test_plan_fresh_schema_and_legacy_checksums() -> None:
     db = make_db()
-    assert [m.version for m in MIGRATION_PLAN] == [1, 2, 3, 4]
+    assert [m.version for m in MIGRATION_PLAN] == [1, 2, 3, 4, 5]
     assert tuple(m.checksum for m in MIGRATION_PLAN[:3]) == LEGACY_CHECKSUMS
     assert db.connection.execute(
         "SELECT MAX(version) FROM schema_migrations"
@@ -850,7 +850,8 @@ def test_real_v3_to_v4_exact_preservation_and_noop() -> None:
         "position_accounting_details",
     ):
         assert reopened.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
-    assert MigrationManager(reopened, MIGRATION_PLAN).migrate() == 0
+    v4_plan = tuple(m for m in MIGRATION_PLAN if m.version <= 4)
+    assert MigrationManager(reopened, v4_plan).migrate() == 0
 
 
 def test_failed_0004_rolls_back_every_object() -> None:
