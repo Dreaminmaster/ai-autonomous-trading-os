@@ -58,6 +58,15 @@ def test_evidence_metadata_is_exact_and_complete(performance_report):
         benchmark.MIN_SAMPLE_COUNT * benchmark.REPLICATE_COUNT
     )
     assert performance_report["aggregation"] == benchmark.AGGREGATION
+    assert performance_report["crossover"] == benchmark.CROSSOVER
+    assert performance_report["calls_per_sample_per_path"] == (
+        benchmark.CALLS_PER_SAMPLE_PER_PATH
+    )
+    assert performance_report["total_call_count_per_path"] == (
+        benchmark.MIN_SAMPLE_COUNT
+        * benchmark.REPLICATE_COUNT
+        * benchmark.CALLS_PER_SAMPLE_PER_PATH
+    )
     assert performance_report["max_p95_ratio"] == pytest.approx(1.10)
 
 
@@ -85,11 +94,24 @@ def test_each_operation_meets_latency_and_statement_gate(
     assert record["total_sample_count"] == (
         benchmark.MIN_SAMPLE_COUNT * benchmark.REPLICATE_COUNT
     )
+    assert record["crossover"] == benchmark.CROSSOVER
+    assert record["calls_per_sample_per_path"] == (
+        benchmark.CALLS_PER_SAMPLE_PER_PATH
+    )
+    assert record["total_call_count_per_path"] == (
+        benchmark.MIN_SAMPLE_COUNT
+        * benchmark.REPLICATE_COUNT
+        * benchmark.CALLS_PER_SAMPLE_PER_PATH
+    )
     assert len(record["replicates"]) == benchmark.REPLICATE_COUNT
     assert [item["replicate_index"] for item in record["replicates"]] == list(
         range(1, benchmark.REPLICATE_COUNT + 1)
     )
     for replicate in record["replicates"]:
+        assert replicate["crossover"] == benchmark.CROSSOVER
+        assert replicate["calls_per_sample_per_path"] == (
+            benchmark.CALLS_PER_SAMPLE_PER_PATH
+        )
         assert replicate["p50_ratio"] > 0
         assert replicate["p95_ratio"] > 0
     assert 0 < record["p95_ratio"] <= benchmark.MAX_P95_RATIO
@@ -132,6 +154,8 @@ def test_baseline_equivalence_proof_is_fail_closed(performance_report):
         "policy_indirection_bypassed": False,
         "network_calls": 0,
         "reconnects_per_operation": 0,
+        "database_role_crossover": True,
+        "calls_per_sample_per_path": benchmark.CALLS_PER_SAMPLE_PER_PATH,
         "internal_json_transport": False,
     }
 
@@ -159,6 +183,22 @@ def test_report_evaluator_rejects_aggregation_drift(performance_report):
     gate, errors = benchmark.evaluate_report(altered)
     assert gate == "FAIL"
     assert "aggregation mismatch" in errors
+
+
+def test_report_evaluator_rejects_crossover_drift(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["crossover"] = "fixed_database_roles"
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert "crossover mismatch" in errors
+
+
+def test_report_evaluator_rejects_call_count_drift(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["operations"][0]["calls_per_sample_per_path"] = 1
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert any("calls_per_sample_per_path mismatch" in error for error in errors)
 
 
 def test_report_evaluator_rejects_missing_operation(performance_report):
@@ -269,8 +309,10 @@ def test_topology_proves_two_files_persistent_connections_and_alternation(
     assert performance_report["benchmark_topology"] == {
         "database_files": 2,
         "persistent_connections": 2,
-        "sample_order": "alternating baseline/modular",
+        "sample_order": "paired AB/BA crossover with alternating call order",
         "warmups_excluded": True,
         "same_process": True,
+        "database_role_crossover": True,
+        "calls_per_sample_per_path": benchmark.CALLS_PER_SAMPLE_PER_PATH,
         "replicate_aggregation": benchmark.AGGREGATION,
     }

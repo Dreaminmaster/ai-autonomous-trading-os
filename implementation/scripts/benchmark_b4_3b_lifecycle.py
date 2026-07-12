@@ -50,7 +50,9 @@ MIN_WARMUP_COUNT = 10
 DEFAULT_SAMPLE_COUNT = 80
 DEFAULT_WARMUP_COUNT = 12
 REPLICATE_COUNT = 5
-AGGREGATION = "median_of_replicate_percentiles"
+CALLS_PER_SAMPLE_PER_PATH = 2
+AGGREGATION = "median_of_replicate_crossover_block_percentiles"
+CROSSOVER = "two_database_ab_ba_per_sample"
 
 OP_NEW_ORDER_ACK = "new_order_acknowledgement"
 OP_NEW_ONE_EVENT_FILL = "new_one_event_fill"
@@ -552,48 +554,86 @@ def _time_call(
 
 def _benchmark_replicate(
     scenario: _Scenario,
-    baseline_environment: _Environment,
-    modular_environment: _Environment,
+    environment_a: _Environment,
+    environment_b: _Environment,
     *,
     sample_count: int,
     warmup_count: int,
     replicate_index: int,
 ) -> tuple[dict[str, Any], list[int], list[int]]:
-    baseline_runner = _DirectRunner(baseline_environment.adapter)
-    modular_runner = _ModularRunner(modular_environment.adapter)
+    """Measure crossed AB/BA blocks so each path uses both durable DB files.
+
+    One statistical sample is the arithmetic mean of two full durable calls for
+    each path.  Direct and modular calls exchange database A/B roles inside the
+    same block, while call order is reversed on alternating blocks.  This keeps
+    WAL/FULL fsync, validation, SQL, and policy work inside the timed region but
+    removes persistent per-file and first/second-call bias from the comparison.
+    """
+    direct_a_runner = _DirectRunner(environment_a.adapter)
+    modular_a_runner = _ModularRunner(environment_a.adapter)
+    direct_b_runner = _DirectRunner(environment_b.adapter)
+    modular_b_runner = _ModularRunner(environment_b.adapter)
     baseline_samples: list[int] = []
     modular_samples: list[int] = []
 
     total_iterations = warmup_count + sample_count
-    ordinal_offset = replicate_index * total_iterations
+    ordinal_offset = replicate_index * total_iterations * 2
     for local_ordinal in range(total_iterations):
-        ordinal = ordinal_offset + local_ordinal
-        baseline_prepared = scenario.prepare(
-            baseline_environment,
-            baseline_runner,
-            "baseline",
-            ordinal,
+        first_ordinal = ordinal_offset + (local_ordinal * 2)
+        second_ordinal = first_ordinal + 1
+
+        direct_a = scenario.prepare(
+            environment_a,
+            direct_a_runner,
+            "a-direct",
+            first_ordinal,
         )
-        modular_prepared = scenario.prepare(
-            modular_environment,
-            modular_runner,
-            "modular",
-            ordinal,
+        modular_b = scenario.prepare(
+            environment_b,
+            modular_b_runner,
+            "b-modular",
+            first_ordinal,
+        )
+        modular_a = scenario.prepare(
+            environment_a,
+            modular_a_runner,
+            "a-modular",
+            second_ordinal,
+        )
+        direct_b = scenario.prepare(
+            environment_b,
+            direct_b_runner,
+            "b-direct",
+            second_ordinal,
         )
 
-        ordered_calls = (
-            (("baseline", baseline_prepared), ("modular", modular_prepared))
-            if ordinal % 2 == 0
-            else (("modular", modular_prepared), ("baseline", baseline_prepared))
-        )
+        if local_ordinal % 2 == 0:
+            ordered_calls = (
+                ("direct_a", direct_a),
+                ("modular_b", modular_b),
+                ("modular_a", modular_a),
+                ("direct_b", direct_b),
+            )
+        else:
+            ordered_calls = (
+                ("modular_b", modular_b),
+                ("direct_a", direct_a),
+                ("direct_b", direct_b),
+                ("modular_a", modular_a),
+            )
+
         measured: dict[str, int] = {}
         for label, prepared in ordered_calls:
             elapsed, _ = _time_call(scenario.name, prepared)
             measured[label] = elapsed
 
         if local_ordinal >= warmup_count:
-            baseline_samples.append(measured["baseline"])
-            modular_samples.append(measured["modular"])
+            baseline_samples.append(
+                (measured["direct_a"] + measured["direct_b"]) // 2
+            )
+            modular_samples.append(
+                (measured["modular_a"] + measured["modular_b"]) // 2
+            )
 
     if len(baseline_samples) != sample_count or len(modular_samples) != sample_count:
         raise BenchmarkContractError("sample collection count mismatch")
@@ -605,6 +645,8 @@ def _benchmark_replicate(
     return (
         {
             "replicate_index": replicate_index + 1,
+            "crossover": CROSSOVER,
+            "calls_per_sample_per_path": CALLS_PER_SAMPLE_PER_PATH,
             "baseline_p50_ns": baseline_p50,
             "baseline_p95_ns": baseline_p95,
             "modular_p50_ns": modular_p50,
@@ -625,8 +667,8 @@ def _median_int(values: Sequence[int]) -> int:
 
 def _benchmark_operation(
     scenario: _Scenario,
-    baseline_environment: _Environment,
-    modular_environment: _Environment,
+    environment_a: _Environment,
+    environment_b: _Environment,
     *,
     sample_count: int,
     warmup_count: int,
@@ -638,8 +680,8 @@ def _benchmark_operation(
     for replicate_index in range(REPLICATE_COUNT):
         record, baseline_samples, modular_samples = _benchmark_replicate(
             scenario,
-            baseline_environment,
-            modular_environment,
+            environment_a,
+            environment_b,
             sample_count=sample_count,
             warmup_count=warmup_count,
             replicate_index=replicate_index,
@@ -664,10 +706,10 @@ def _benchmark_operation(
     p95_ratio = modular_p95 / baseline_p95
 
     connection_reuse = (
-        id(baseline_environment.db.connection)
-        == baseline_environment.connection_identity
-        and id(modular_environment.db.connection)
-        == modular_environment.connection_identity
+        id(environment_a.db.connection)
+        == environment_a.connection_identity
+        and id(environment_b.db.connection)
+        == environment_b.connection_identity
     )
 
     return {
@@ -676,6 +718,11 @@ def _benchmark_operation(
         "replicate_count": REPLICATE_COUNT,
         "sample_count_per_replicate": sample_count,
         "total_sample_count": sample_count * REPLICATE_COUNT,
+        "calls_per_sample_per_path": CALLS_PER_SAMPLE_PER_PATH,
+        "total_call_count_per_path": (
+            sample_count * REPLICATE_COUNT * CALLS_PER_SAMPLE_PER_PATH
+        ),
+        "crossover": CROSSOVER,
         "baseline_p50_ns": baseline_p50,
         "baseline_p95_ns": baseline_p95,
         "modular_p50_ns": modular_p50,
@@ -714,6 +761,8 @@ def _baseline_equivalence() -> dict[str, Any]:
         "policy_indirection_bypassed": False,
         "network_calls": 0,
         "reconnects_per_operation": 0,
+        "database_role_crossover": True,
+        "calls_per_sample_per_path": CALLS_PER_SAMPLE_PER_PATH,
         "internal_json_transport": False,
     }
 
@@ -750,14 +799,24 @@ def evaluate_report(report: Mapping[str, Any]) -> tuple[str, list[str]]:
         errors.append("aggregation mismatch")
     if report.get("total_sample_count") != report.get("sample_count", 0) * REPLICATE_COUNT:
         errors.append("total_sample_count mismatch")
+    if report.get("calls_per_sample_per_path") != CALLS_PER_SAMPLE_PER_PATH:
+        errors.append("calls_per_sample_per_path mismatch")
+    if report.get("total_call_count_per_path") != (
+        report.get("total_sample_count", 0) * CALLS_PER_SAMPLE_PER_PATH
+    ):
+        errors.append("total_call_count_per_path mismatch")
+    if report.get("crossover") != CROSSOVER:
+        errors.append("crossover mismatch")
     if report.get("baseline_equivalence") != _baseline_equivalence():
         errors.append("baseline equivalence proof mismatch")
     expected_topology = {
         "database_files": 2,
         "persistent_connections": 2,
-        "sample_order": "alternating baseline/modular",
+        "sample_order": "paired AB/BA crossover with alternating call order",
         "warmups_excluded": True,
         "same_process": True,
+        "database_role_crossover": True,
+        "calls_per_sample_per_path": CALLS_PER_SAMPLE_PER_PATH,
         "replicate_aggregation": AGGREGATION,
     }
     if report.get("benchmark_topology") != expected_topology:
@@ -799,6 +858,12 @@ def evaluate_report(report: Mapping[str, Any]) -> tuple[str, list[str]]:
             errors.append(f"{name}: sample_count_per_replicate mismatch")
         if record.get("total_sample_count") != report.get("total_sample_count"):
             errors.append(f"{name}: total_sample_count mismatch")
+        if record.get("calls_per_sample_per_path") != CALLS_PER_SAMPLE_PER_PATH:
+            errors.append(f"{name}: calls_per_sample_per_path mismatch")
+        if record.get("total_call_count_per_path") != report.get("total_call_count_per_path"):
+            errors.append(f"{name}: total_call_count_per_path mismatch")
+        if record.get("crossover") != CROSSOVER:
+            errors.append(f"{name}: crossover mismatch")
         replicates = record.get("replicates")
         if not isinstance(replicates, list) or len(replicates) != REPLICATE_COUNT:
             errors.append(f"{name}: replicate evidence mismatch")
@@ -809,6 +874,10 @@ def evaluate_report(report: Mapping[str, Any]) -> tuple[str, list[str]]:
                     continue
                 if replicate.get("replicate_index") != expected_index:
                     errors.append(f"{name}: replicate index mismatch")
+                if replicate.get("crossover") != CROSSOVER:
+                    errors.append(f"{name}: replicate crossover mismatch")
+                if replicate.get("calls_per_sample_per_path") != CALLS_PER_SAMPLE_PER_PATH:
+                    errors.append(f"{name}: replicate call count mismatch")
                 for field in (
                     "baseline_p50_ns",
                     "baseline_p95_ns",
@@ -901,15 +970,22 @@ def run_benchmark(
             "warmup_count": warmup_count,
             "replicate_count": REPLICATE_COUNT,
             "total_sample_count": sample_count * REPLICATE_COUNT,
+            "calls_per_sample_per_path": CALLS_PER_SAMPLE_PER_PATH,
+            "total_call_count_per_path": (
+                sample_count * REPLICATE_COUNT * CALLS_PER_SAMPLE_PER_PATH
+            ),
             "aggregation": AGGREGATION,
+            "crossover": CROSSOVER,
             "clock": "time.perf_counter_ns",
             "max_p95_ratio": MAX_P95_RATIO,
             "benchmark_topology": {
                 "database_files": 2,
                 "persistent_connections": 2,
-                "sample_order": "alternating baseline/modular",
+                "sample_order": "paired AB/BA crossover with alternating call order",
                 "warmups_excluded": True,
                 "same_process": True,
+                "database_role_crossover": True,
+                "calls_per_sample_per_path": CALLS_PER_SAMPLE_PER_PATH,
                 "replicate_aggregation": AGGREGATION,
             },
             "baseline_equivalence": _baseline_equivalence(),
