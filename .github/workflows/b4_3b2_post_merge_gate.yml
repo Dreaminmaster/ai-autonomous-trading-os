@@ -1,0 +1,431 @@
+name: B4.3B2 Post-Merge Gate
+
+on:
+  pull_request:
+    branches:
+      - ci/b4-3b2-post-merge-base
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      TARGET_SHA: 5de00b3e53c77b4b61499a96eae83ba4b3437beb
+      TARGET_BRANCH: main
+      REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout exact merged main SHA
+        uses: actions/checkout@v4
+        with:
+          ref: 5de00b3e53c77b4b61499a96eae83ba4b3437beb
+          fetch-depth: 1
+
+      - name: Verify exact HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$TARGET_SHA"
+          echo "actual_sha=$actual"
+
+      - name: Wait for exact-main CI and Freqtrade runs
+        id: provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+          from pathlib import Path
+
+          repo = os.environ["REPO"]
+          target_sha = os.environ["TARGET_SHA"]
+          target_branch = os.environ["TARGET_BRANCH"]
+          token = os.environ["GH_TOKEN"]
+          output_path = Path(os.environ["GITHUB_OUTPUT"])
+          api_root = f"https://api.github.com/repos/{repo}"
+
+          def api(path: str):
+              request = urllib.request.Request(
+                  api_root + path,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "b4-3b2-post-merge-gate",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+
+          deadline = time.time() + 3 * 60 * 60
+          selected = None
+          while time.time() < deadline:
+              query = (
+                  f"/actions/runs?head_sha={target_sha}"
+                  f"&branch={target_branch}&event=push&per_page=100"
+              )
+              runs = api(query).get("workflow_runs", [])
+              exact = [
+                  run for run in runs
+                  if run.get("head_sha") == target_sha
+                  and run.get("head_branch") == target_branch
+                  and run.get("event") == "push"
+              ]
+              ci = [run for run in exact if run.get("name") == "CI"]
+              freq = [
+                  run for run in exact
+                  if run.get("name") == "Freqtrade Validation"
+              ]
+              if len(ci) > 1 or len(freq) > 1:
+                  raise SystemExit(
+                      f"ambiguous exact-main runs: CI={len(ci)} Freqtrade={len(freq)}"
+                  )
+              if len(ci) == 1 and len(freq) == 1:
+                  ci_run, freq_run = ci[0], freq[0]
+                  if (
+                      ci_run.get("status") == "completed"
+                      and freq_run.get("status") == "completed"
+                  ):
+                      selected = (ci_run, freq_run)
+                      break
+                  print(
+                      "waiting:",
+                      "CI", ci_run.get("status"), ci_run.get("conclusion"),
+                      "Freqtrade", freq_run.get("status"), freq_run.get("conclusion"),
+                      flush=True,
+                  )
+              else:
+                  print(
+                      f"waiting for runs: CI={len(ci)} Freqtrade={len(freq)}",
+                      flush=True,
+                  )
+              time.sleep(60)
+
+          if selected is None:
+              raise SystemExit("timed out waiting for exact-main runs")
+
+          ci_run, freq_run = selected
+          if ci_run.get("conclusion") != "success":
+              raise SystemExit(
+                  f"exact-main CI failed: {ci_run.get('conclusion')}"
+              )
+
+          jobs = api(f"/actions/runs/{freq_run['id']}/jobs?per_page=100").get(
+              "jobs", []
+          )
+          by_name = {job.get("name"): job for job in jobs}
+          for required in ("atos-tests", "freqtrade"):
+              job = by_name.get(required)
+              if job is None:
+                  raise SystemExit(f"missing required job: {required}")
+              if job.get("status") != "completed" or job.get("conclusion") != "success":
+                  raise SystemExit(
+                      f"required job {required} is not successful: "
+                      f"{job.get('status')}/{job.get('conclusion')}"
+                  )
+
+          summary_job = by_name.get("validation-summary")
+          provenance = {
+              "schema_version": 1,
+              "target_sha": target_sha,
+              "target_branch": target_branch,
+              "selection_policy": "exact_sha+event_push+exact_main_branch",
+              "ci": {
+                  "run_id": ci_run["id"],
+                  "run_number": ci_run.get("run_number"),
+                  "status": ci_run.get("status"),
+                  "conclusion": ci_run.get("conclusion"),
+                  "event": ci_run.get("event"),
+                  "head_branch": ci_run.get("head_branch"),
+                  "head_sha": ci_run.get("head_sha"),
+                  "path": ci_run.get("path"),
+              },
+              "freqtrade_validation": {
+                  "run_id": freq_run["id"],
+                  "run_number": freq_run.get("run_number"),
+                  "status": freq_run.get("status"),
+                  "conclusion": freq_run.get("conclusion"),
+                  "event": freq_run.get("event"),
+                  "head_branch": freq_run.get("head_branch"),
+                  "head_sha": freq_run.get("head_sha"),
+                  "path": freq_run.get("path"),
+                  "core_jobs": {
+                      name: {
+                          "status": by_name[name].get("status"),
+                          "conclusion": by_name[name].get("conclusion"),
+                          "job_id": by_name[name].get("id"),
+                      }
+                      for name in ("atos-tests", "freqtrade")
+                  },
+                  "validation_summary": None if summary_job is None else {
+                      "status": summary_job.get("status"),
+                      "conclusion": summary_job.get("conclusion"),
+                      "job_id": summary_job.get("id"),
+                  },
+              },
+          }
+          Path("post_merge_provenance.json").write_text(
+              json.dumps(provenance, indent=2, sort_keys=True) + "\n"
+          )
+          with output_path.open("a") as handle:
+              handle.write(f"ci_run_id={ci_run['id']}\n")
+              handle.write(f"freq_run_id={freq_run['id']}\n")
+          print(json.dumps(provenance, indent=2, sort_keys=True))
+          PY
+
+      - name: Download exact-main artifacts
+        shell: bash
+        env:
+          FREQ_RUN_ID: ${{ steps.provenance.outputs.freq_run_id }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import io
+          import json
+          import os
+          import urllib.request
+          import zipfile
+          from pathlib import Path
+
+          repo = os.environ["REPO"]
+          token = os.environ["GH_TOKEN"]
+          run_id = os.environ["FREQ_RUN_ID"]
+          api_root = f"https://api.github.com/repos/{repo}"
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "b4-3b2-post-merge-gate",
+          }
+
+          def api_json(path: str):
+              request = urllib.request.Request(api_root + path, headers=headers)
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+
+          artifacts = api_json(
+              f"/actions/runs/{run_id}/artifacts?per_page=100"
+          ).get("artifacts", [])
+          required = {
+              "atos-validation": Path("atos_artifacts"),
+              "freqtrade-validation": Path("freqtrade_artifacts"),
+          }
+          index = {}
+          for name, destination in required.items():
+              matches = [
+                  artifact for artifact in artifacts
+                  if artifact.get("name") == name
+                  and not artifact.get("expired", False)
+              ]
+              if len(matches) != 1:
+                  raise SystemExit(
+                      f"expected one live {name} artifact, found {len(matches)}"
+                  )
+              artifact = matches[0]
+              request = urllib.request.Request(
+                  artifact["archive_download_url"], headers=headers
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  payload = response.read()
+              destination.mkdir(parents=True, exist_ok=True)
+              with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+                  archive.extractall(destination)
+              index[name] = {
+                  "artifact_id": artifact["id"],
+                  "digest": artifact.get("digest"),
+                  "size_in_bytes": artifact.get("size_in_bytes"),
+                  "created_at": artifact.get("created_at"),
+              }
+          Path("post_merge_artifact_index.json").write_text(
+              json.dumps(index, indent=2, sort_keys=True) + "\n"
+          )
+          print(json.dumps(index, indent=2, sort_keys=True))
+          PY
+
+      - name: Audit exact-main product evidence
+        shell: bash
+        env:
+          CI_RUN_ID: ${{ steps.provenance.outputs.ci_run_id }}
+          FREQ_RUN_ID: ${{ steps.provenance.outputs.freq_run_id }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          target_sha = os.environ["TARGET_SHA"]
+          ci_run_id = int(os.environ["CI_RUN_ID"])
+          freq_run_id = int(os.environ["FREQ_RUN_ID"])
+
+          def load(path: str):
+              return json.loads(Path(path).read_text())
+
+          provenance = load("post_merge_provenance.json")
+          artifact_index = load("post_merge_artifact_index.json")
+          atos_manifest = load("atos_artifacts/evidence_manifest.json")
+          freq_manifest = load("freqtrade_artifacts/evidence_manifest.json")
+          canonical = load(
+              "freqtrade_artifacts/freqtrade_data/backtest_results/"
+              "canonical_baseline_summary.json"
+          )
+          lookahead = load(
+              "freqtrade_artifacts/freqtrade_data/backtest_results/"
+              "canonical_baseline_la_lookahead_status.json"
+          )
+          round1 = load(
+              "freqtrade_artifacts/validation_reports/strategy_fix_round1.json"
+          )
+          round1_md = Path(
+              "freqtrade_artifacts/validation_reports/strategy_fix_round1.md"
+          ).read_text()
+          pytest_log = Path("atos_artifacts/pytest.log").read_text()
+          secret_log = Path("atos_artifacts/no_secret_scan.log").read_text()
+
+          errors = []
+          def require(condition: bool, message: str):
+              if not condition:
+                  errors.append(message)
+
+          require(provenance["target_sha"] == target_sha, "provenance target SHA")
+          require(
+              provenance["selection_policy"]
+              == "exact_sha+event_push+exact_main_branch",
+              "provenance selection policy",
+          )
+          require(provenance["ci"]["run_id"] == ci_run_id, "CI run ID")
+          require(provenance["ci"]["head_sha"] == target_sha, "CI head SHA")
+          require(provenance["ci"]["head_branch"] == "main", "CI branch")
+          require(provenance["ci"]["event"] == "push", "CI event")
+          require(provenance["ci"]["conclusion"] == "success", "CI conclusion")
+
+          freq_prov = provenance["freqtrade_validation"]
+          require(freq_prov["run_id"] == freq_run_id, "Freqtrade run ID")
+          require(freq_prov["head_sha"] == target_sha, "Freqtrade head SHA")
+          require(freq_prov["head_branch"] == "main", "Freqtrade branch")
+          require(freq_prov["event"] == "push", "Freqtrade event")
+          for job_name in ("atos-tests", "freqtrade"):
+              require(
+                  freq_prov["core_jobs"][job_name]["conclusion"] == "success",
+                  f"core job {job_name}",
+              )
+
+          for manifest, expected_job in (
+              (atos_manifest, "atos-tests"),
+              (freq_manifest, "freqtrade"),
+          ):
+              require(manifest.get("head_sha") == target_sha, f"{expected_job} manifest SHA")
+              require(manifest.get("run_id") == str(freq_run_id), f"{expected_job} manifest run")
+              require(manifest.get("job") == expected_job, f"{expected_job} manifest job")
+
+          match = re.search(r"(\d+) passed, (\d+) skipped", pytest_log)
+          require(match is not None, "pytest summary present")
+          passed = int(match.group(1)) if match else -1
+          skipped = int(match.group(2)) if match else -1
+          require(passed == 562, f"pytest passed expected 562 got {passed}")
+          require(skipped == 8, f"pytest skipped expected 8 got {skipped}")
+          require("No secret leakage detected." in secret_log, "secret scan PASS")
+
+          expected_metrics = {
+              "total_trades": 244,
+              "profit_total_pct": -16.12,
+              "winrate": 44.67,
+              "max_drawdown_pct": 17.85,
+          }
+          for key, value in expected_metrics.items():
+              require(canonical.get(key) == value, f"canonical {key}")
+          require(canonical.get("baseline_integrity") == "CONFIRMED", "baseline integrity")
+          require(canonical.get("pair_universe_integrity") == "PASS", "pair integrity")
+          require(canonical.get("pairs_requested") == ["BTC/USDT"], "requested pair")
+          require(canonical.get("pairs_tested") == ["BTC/USDT"], "tested pair")
+          require(canonical.get("cache_mode") == "none", "cache mode")
+
+          require(lookahead.get("final_status") == "PASS", "canonical lookahead status")
+          require(lookahead.get("has_bias") is False, "canonical no bias")
+          require(
+              lookahead.get("explicit_no_bias_evidence") is True,
+              "canonical explicit no-bias evidence",
+          )
+          require(round1.get("head_sha") == target_sha, "Round1 head SHA")
+          require(round1.get("run_id") == str(freq_run_id), "Round1 run ID")
+          require(round1.get("baseline_integrity") == "PASS", "Round1 baseline")
+          require(
+              all(
+                  item.get("lookahead_final_status") == "PASS"
+                  for item in round1.get("selected_variants", [])
+              ),
+              "Round1 selected lookahead",
+          )
+          require("Live trading: FORBIDDEN" in round1_md, "LIVE forbidden")
+
+          report = {
+              "schema_version": 1,
+              "gate_status": "PASS" if not errors else "FAIL",
+              "target_sha": target_sha,
+              "target_branch": "main",
+              "ci_run_id": ci_run_id,
+              "freqtrade_run_id": freq_run_id,
+              "tests": {
+                  "passed": passed,
+                  "skipped": skipped,
+                  "failed": 0 if match else None,
+              },
+              "secret_scan": "PASS" if "No secret leakage detected." in secret_log else "FAIL",
+              "canonical": {
+                  "total_trades": canonical.get("total_trades"),
+                  "profit_total_pct": canonical.get("profit_total_pct"),
+                  "winrate": canonical.get("winrate"),
+                  "max_drawdown_pct": canonical.get("max_drawdown_pct"),
+                  "profit_factor": canonical.get("profit_factor"),
+                  "baseline_integrity": canonical.get("baseline_integrity"),
+                  "pair_universe_integrity": canonical.get("pair_universe_integrity"),
+              },
+              "lookahead": {
+                  "final_status": lookahead.get("final_status"),
+                  "has_bias": lookahead.get("has_bias"),
+              },
+              "round1_baseline_integrity": round1.get("baseline_integrity"),
+              "artifacts": artifact_index,
+              "live": "FORBIDDEN",
+              "errors": errors,
+          }
+          Path("post_merge_validation.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n"
+          )
+          Path("post_merge_validation.md").write_text(
+              "# B4.3B2 Post-Merge Gate\n\n"
+              f"- Gate: **{report['gate_status']}**\n"
+              f"- Exact main SHA: `{target_sha}`\n"
+              f"- CI run: `{ci_run_id}`\n"
+              f"- Freqtrade run: `{freq_run_id}`\n"
+              f"- Tests: {passed} passed, {skipped} skipped, 0 failed\n"
+              f"- Canonical lookahead: {lookahead.get('final_status')}\n"
+              f"- LIVE: FORBIDDEN\n"
+              f"- Errors: {errors}\n"
+          )
+          print(json.dumps(report, indent=2, sort_keys=True))
+          if errors:
+              raise SystemExit("post-merge evidence audit failed")
+          PY
+
+      - name: Upload exact-main freeze evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3b2-post-merge-gate
+          path: |
+            post_merge_provenance.json
+            post_merge_artifact_index.json
+            post_merge_validation.json
+            post_merge_validation.md
+          if-no-files-found: warn
+          retention-days: 90
