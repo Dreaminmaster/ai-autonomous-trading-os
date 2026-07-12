@@ -1,0 +1,41 @@
+name: B4.3B3 Failure Log Extractor
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/b4_3b3_failure_log_extractor.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  extract:
+    if: github.head_ref == 'feat/b4.3b3-lifecycle-performance-gate'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download failed job log
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          JOB_ID: '86624494016'
+        run: |
+          set -euo pipefail
+          curl -fsSL -L \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${REPO}/actions/jobs/${JOB_ID}/logs" \
+            -o failed_job.log
+          file failed_job.log
+          grep -nE 'FAILED|ERROR|AssertionError|BenchmarkContractError|p95|short test summary' failed_job.log > failure_extract.txt || true
+          tail -n 250 failed_job.log > failure_tail.txt
+      - name: Upload failure evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3b3-failed-atos-log
+          path: |
+            failed_job.log
+            failure_extract.txt
+            failure_tail.txt
+          retention-days: 3
