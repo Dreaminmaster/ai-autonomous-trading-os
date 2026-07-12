@@ -1,0 +1,66 @@
+name: B4.3B3 Targeted Diagnostic
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/b4_3b3_diagnostic.yml'
+      - 'implementation/scripts/benchmark_b4_3b_lifecycle.py'
+      - 'implementation/tests/test_b4_3b_performance_contract.py'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'feat/b4.3b3-lifecycle-performance-gate'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/b4.3b3-lifecycle-performance-gate
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: |
+          cd implementation
+          python -m pip install -e '.[dev]'
+      - name: Run benchmark and preserve evidence
+        id: benchmark
+        continue-on-error: true
+        run: |
+          cd implementation
+          set -o pipefail
+          python scripts/benchmark_b4_3b_lifecycle.py \
+            --output b4_3b3_diagnostic_report.json \
+            --sample-count 60 \
+            --warmup-count 10 \
+            --head-sha "${GITHUB_SHA}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            2>&1 | tee b4_3b3_benchmark.log
+      - name: Run targeted pytest and preserve log
+        id: pytest
+        continue-on-error: true
+        run: |
+          cd implementation
+          set -o pipefail
+          python -m pytest -vv -s tests/test_b4_3b_performance_contract.py --tb=long \
+            2>&1 | tee b4_3b3_pytest.log
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3b3-targeted-diagnostic
+          path: |
+            implementation/b4_3b3_diagnostic_report.json
+            implementation/b4_3b3_benchmark.log
+            implementation/b4_3b3_pytest.log
+          if-no-files-found: warn
+          retention-days: 3
+      - name: Report outcomes
+        if: always()
+        run: |
+          echo "benchmark=${{ steps.benchmark.outcome }}"
+          echo "pytest=${{ steps.pytest.outcome }}"
+          test "${{ steps.benchmark.outcome }}" = success
+          test "${{ steps.pytest.outcome }}" = success
