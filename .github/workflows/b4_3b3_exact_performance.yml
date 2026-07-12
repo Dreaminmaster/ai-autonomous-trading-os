@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/b4_3b3_exact_performance.yml'
-      - '.github/tmp/b43b3_patch.py.gz.b64'
+      - '.github/tmp/b43b3_patch.part*'
 
 permissions:
   contents: write
@@ -28,10 +28,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Decode and verify reviewed patch
+      - name: Reassemble and verify reviewed patch
         run: |
           set -euo pipefail
-          base64 -d executor/.github/tmp/b43b3_patch.py.gz.b64 | gzip -d > /tmp/b43b3_patch.py
+          test "$(sha256sum executor/.github/tmp/b43b3_patch.part01 | awk '{print $1}')" = '0f07ec19f54934ddb2187e9d2473db21f8c13d7260c7c6c09e65ce776d778243'
+          test "$(sha256sum executor/.github/tmp/b43b3_patch.part02 | awk '{print $1}')" = 'bb27178d62cf3005fbe563ece0af114183a0997acce8d32cdb043893547dcb16'
+          test "$(sha256sum executor/.github/tmp/b43b3_patch.part03 | awk '{print $1}')" = '9424d8149dcff295005de6d18888e951ac0b36cf95efb7d2258a009c580e860f'
+          test "$(sha256sum executor/.github/tmp/b43b3_patch.part04 | awk '{print $1}')" = '29a18bc5fb7fc21d9c60d3b07796106addd7139006895b5f106406e7360f9e18'
+          test "$(sha256sum executor/.github/tmp/b43b3_patch.part05 | awk '{print $1}')" = '0f4c1859dd39f44213849b6335af695846da3ab23f884569d0fdd1c6cb01ec7b'
+          test "$(sha256sum executor/.github/tmp/b43b3_patch.part06 | awk '{print $1}')" = '50130dbfde63c7ed71bcdf657b774261a976bfef6f7e036ebd650b421fa06e9e'
+          cat executor/.github/tmp/b43b3_patch.part{01,02,03,04,05,06} > /tmp/b43b3_patch.py.gz.b64
+          test "$(wc -c < /tmp/b43b3_patch.py.gz.b64 | tr -d ' ')" = '11320'
+          test "$(sha256sum /tmp/b43b3_patch.py.gz.b64 | awk '{print $1}')" = '6d8e4be92fc31a63a619f5ab00c3493c38aca30ff0951cea8328bec059b8ed8b'
+          base64 -d /tmp/b43b3_patch.py.gz.b64 | gzip -d > /tmp/b43b3_patch.py
           test "$(sha256sum /tmp/b43b3_patch.py | awk '{print $1}')" = '054e9e5a3c8f70b98758671a655a1a0e7a6d3d5e4b4eb6cdd9075ef257426c5e'
           python -m py_compile /tmp/b43b3_patch.py
           test "$(git -C product rev-parse HEAD)" = '092a75c624f81c5d5b416e66d1dde6d832938d0a'
