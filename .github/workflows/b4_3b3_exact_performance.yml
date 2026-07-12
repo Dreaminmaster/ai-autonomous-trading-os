@@ -1,0 +1,78 @@
+name: B4.3B3 Exact Performance Gate
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/b4_3b3_exact_performance.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  exact-performance:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 092a75c624f81c5d5b416e66d1dde6d832938d0a
+          fetch-depth: 1
+      - name: Verify exact candidate
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '092a75c624f81c5d5b416e66d1dde6d832938d0a'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: |
+          cd implementation
+          python -m pip install -e '.[dev]'
+      - name: Run exact wall-clock performance gate
+        run: |
+          set -euo pipefail
+          cd implementation
+          python scripts/benchmark_b4_3b_lifecycle.py \
+            --output b4_3b3_exact_performance.json \
+            --sample-count 80 \
+            --warmup-count 12 \
+            --head-sha 092a75c624f81c5d5b416e66d1dde6d832938d0a \
+            --run-id "${GITHUB_RUN_ID}" \
+            2>&1 | tee b4_3b3_exact_performance.log
+      - name: Verify exact evidence
+        run: |
+          set -euo pipefail
+          cd implementation
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path('b4_3b3_exact_performance.json').read_text())
+          assert report['head_sha'] == '092a75c624f81c5d5b416e66d1dde6d832938d0a'
+          assert report['run_id'].isdigit()
+          assert report['gate_status'] == 'PASS'
+          assert report['errors'] == []
+          assert report['live'] == 'FORBIDDEN'
+          assert report['max_p95_ratio'] == 1.10
+          assert len(report['operations']) == 5
+          for record in report['operations']:
+              assert record['gate_status'] == 'PASS'
+              assert 0 < record['p95_ratio'] <= 1.10
+              assert record['connection_reuse'] is True
+              assert record['calls_per_sample_per_path'] == 2
+              assert record['crossover'] == 'two_database_ab_ba_per_sample'
+          print('Exact B4.3B3 performance evidence verified.')
+          PY
+      - name: Run deterministic contract tests
+        run: |
+          cd implementation
+          python -m pytest -q tests/test_b4_3b_performance_contract.py --tb=short
+      - name: Upload exact performance artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3b3-exact-performance
+          path: |
+            implementation/b4_3b3_exact_performance.json
+            implementation/b4_3b3_exact_performance.log
+          if-no-files-found: warn
+          retention-days: 14
