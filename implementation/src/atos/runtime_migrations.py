@@ -376,11 +376,115 @@ CREATE TRIGGER trg_position_accounting_no_delete
 BEFORE DELETE ON position_accounting_details BEGIN SELECT RAISE(ABORT,'position_accounting_details are immutable'); END;
 """
 
+_MIGRATION_0005_SQL = """
+CREATE UNIQUE INDEX uq_execution_intents_idempotency_owner
+ON execution_intents(
+    execution_intent_id,
+    symbol,
+    action,
+    normalized_intent_hash
+);
+
+CREATE TABLE execution_idempotency_claims (
+    idempotency_key        TEXT PRIMARY KEY,
+    execution_intent_id    TEXT NOT NULL UNIQUE,
+    venue                  TEXT NOT NULL,
+    account_scope          TEXT NOT NULL,
+    symbol                 TEXT NOT NULL,
+    action                 TEXT NOT NULL CHECK (action IN ('BUY','SELL')),
+    normalized_intent_hash TEXT NOT NULL,
+    client_order_id        TEXT NOT NULL,
+    created_at             TEXT NOT NULL,
+    CHECK (
+        length(idempotency_key) = 64
+        AND idempotency_key NOT GLOB '*[^0-9a-f]*'
+        AND idempotency_key = lower(idempotency_key)
+    ),
+    CHECK (
+        length(normalized_intent_hash) = 64
+        AND normalized_intent_hash NOT GLOB '*[^0-9a-f]*'
+        AND normalized_intent_hash = lower(normalized_intent_hash)
+    ),
+    CHECK (
+        length(client_order_id) = 30
+        AND client_order_id NOT GLOB '*[^0-9a-z]*'
+        AND client_order_id = lower(client_order_id)
+    ),
+    UNIQUE (
+        venue,
+        account_scope,
+        symbol,
+        action,
+        normalized_intent_hash
+    ),
+    UNIQUE (venue, account_scope, client_order_id),
+    UNIQUE (
+        execution_intent_id,
+        venue,
+        account_scope,
+        client_order_id
+    ),
+    FOREIGN KEY (
+        execution_intent_id,
+        symbol,
+        action,
+        normalized_intent_hash
+    ) REFERENCES execution_intents(
+        execution_intent_id,
+        symbol,
+        action,
+        normalized_intent_hash
+    ) ON DELETE RESTRICT
+);
+
+CREATE INDEX idx_execution_idempotency_claims_scope
+ON execution_idempotency_claims(venue, account_scope, symbol, action);
+
+CREATE INDEX idx_execution_idempotency_claims_client_order
+ON execution_idempotency_claims(venue, account_scope, client_order_id);
+
+CREATE TRIGGER trg_execution_idempotency_claims_no_update
+BEFORE UPDATE ON execution_idempotency_claims
+BEGIN SELECT RAISE(ABORT,'execution idempotency claims are immutable'); END;
+
+CREATE TRIGGER trg_execution_idempotency_claims_no_delete
+BEFORE DELETE ON execution_idempotency_claims
+BEGIN SELECT RAISE(ABORT,'execution idempotency claims are immutable'); END;
+
+CREATE TRIGGER trg_dispatch_attempts_require_idempotency_claim
+BEFORE INSERT ON dispatch_attempts
+BEGIN
+    SELECT RAISE(ABORT,'dispatch attempt requires matching idempotency claim')
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM execution_idempotency_claims AS claim
+        WHERE claim.execution_intent_id = NEW.execution_intent_id
+          AND claim.venue = NEW.venue
+          AND claim.account_scope = NEW.account_scope
+          AND claim.client_order_id = NEW.client_order_id
+    );
+    SELECT RAISE(ABORT,'B5 V1 permits exactly one dispatch attempt')
+    WHERE NEW.attempt_no != 1;
+END;
+
+CREATE TRIGGER trg_dispatch_attempts_identity_immutable
+BEFORE UPDATE ON dispatch_attempts
+WHEN NEW.attempt_id IS NOT OLD.attempt_id
+  OR NEW.execution_intent_id IS NOT OLD.execution_intent_id
+  OR NEW.client_order_id IS NOT OLD.client_order_id
+  OR NEW.venue IS NOT OLD.venue
+  OR NEW.account_scope IS NOT OLD.account_scope
+  OR NEW.attempt_no IS NOT OLD.attempt_no
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT,'dispatch attempt identity is immutable'); END;
+"""
+
 MIGRATION_PLAN: tuple[Migration, ...] = (
     Migration(version=1, name="runtime_session_cycle_recovery", sql=_MIGRATION_0001_SQL),
     Migration(version=2, name="cycle_journal", sql=_MIGRATION_0002_SQL),
     Migration(version=3, name="execution_transaction_persistence", sql=_MIGRATION_0003_SQL),
     Migration(version=4, name="order_fill_position_persistence", sql=_MIGRATION_0004_SQL),
+    Migration(version=5, name="execution_idempotency_claims", sql=_MIGRATION_0005_SQL),
 )
 
 
