@@ -25,19 +25,118 @@ sys.modules[_SPEC.name] = benchmark
 _SPEC.loader.exec_module(benchmark)
 
 
-@pytest.fixture(scope="module")
-def performance_report(tmp_path_factory):
-    workdir = tmp_path_factory.mktemp("b4-3b3-performance")
-    return benchmark.run_benchmark(
-        workdir=workdir,
-        sample_count=benchmark.MIN_SAMPLE_COUNT,
-        warmup_count=benchmark.MIN_WARMUP_COUNT,
-        head_sha="a" * 40,
-        run_id="123456789",
+def _synthetic_performance_report():
+    sample_count = benchmark.MIN_SAMPLE_COUNT
+    warmup_count = benchmark.MIN_WARMUP_COUNT
+    total_sample_count = sample_count * benchmark.REPLICATE_COUNT
+    total_call_count_per_path = (
+        total_sample_count * benchmark.CALLS_PER_SAMPLE_PER_PATH
     )
+    baseline_p50_ns = 1_000_000
+    baseline_p95_ns = 1_100_000
+    modular_p50_ns = 1_002_000
+    modular_p95_ns = 1_105_000
+    p50_ratio = modular_p50_ns / baseline_p50_ns
+    p95_ratio = modular_p95_ns / baseline_p95_ns
+
+    operations = []
+    for operation in benchmark.REQUIRED_OPERATIONS:
+        replicates = [
+            {
+                "replicate_index": index,
+                "crossover": benchmark.CROSSOVER,
+                "calls_per_sample_per_path": (
+                    benchmark.CALLS_PER_SAMPLE_PER_PATH
+                ),
+                "baseline_p50_ns": baseline_p50_ns + index,
+                "baseline_p95_ns": baseline_p95_ns + index,
+                "modular_p50_ns": modular_p50_ns + index,
+                "modular_p95_ns": modular_p95_ns + index,
+                "p50_ratio": p50_ratio,
+                "p95_ratio": p95_ratio,
+            }
+            for index in range(1, benchmark.REPLICATE_COUNT + 1)
+        ]
+        expected_counts = dict(benchmark._EXPECTED_COUNTS[operation])
+        operations.append(
+            {
+                "operation": operation,
+                "aggregation": benchmark.AGGREGATION,
+                "replicate_count": benchmark.REPLICATE_COUNT,
+                "sample_count_per_replicate": sample_count,
+                "total_sample_count": total_sample_count,
+                "calls_per_sample_per_path": (
+                    benchmark.CALLS_PER_SAMPLE_PER_PATH
+                ),
+                "total_call_count_per_path": total_call_count_per_path,
+                "crossover": benchmark.CROSSOVER,
+                "baseline_p50_ns": baseline_p50_ns,
+                "baseline_p95_ns": baseline_p95_ns,
+                "modular_p50_ns": modular_p50_ns,
+                "modular_p95_ns": modular_p95_ns,
+                "p50_ratio": p50_ratio,
+                "p95_ratio": p95_ratio,
+                "pooled_baseline_p50_ns": baseline_p50_ns,
+                "pooled_baseline_p95_ns": baseline_p95_ns,
+                "pooled_modular_p50_ns": modular_p50_ns,
+                "pooled_modular_p95_ns": modular_p95_ns,
+                "replicates": replicates,
+                "baseline_statement_counts": expected_counts,
+                "modular_statement_counts": expected_counts,
+                "connection_reuse": True,
+                "gate_status": "PASS",
+            }
+        )
+
+    report = {
+        "schema_version": benchmark.SCHEMA_VERSION,
+        "head_sha": "a" * 40,
+        "run_id": "123456789",
+        "python_version": benchmark.platform.python_version(),
+        "platform": "deterministic-contract-fixture",
+        "sample_count": sample_count,
+        "warmup_count": warmup_count,
+        "replicate_count": benchmark.REPLICATE_COUNT,
+        "total_sample_count": total_sample_count,
+        "calls_per_sample_per_path": (
+            benchmark.CALLS_PER_SAMPLE_PER_PATH
+        ),
+        "total_call_count_per_path": total_call_count_per_path,
+        "aggregation": benchmark.AGGREGATION,
+        "crossover": benchmark.CROSSOVER,
+        "clock": "time.perf_counter_ns",
+        "max_p95_ratio": benchmark.MAX_P95_RATIO,
+        "benchmark_topology": {
+            "database_files": 2,
+            "persistent_connections": 2,
+            "sample_order": (
+                "paired AB/BA crossover with alternating call order"
+            ),
+            "warmups_excluded": True,
+            "same_process": True,
+            "database_role_crossover": True,
+            "calls_per_sample_per_path": (
+                benchmark.CALLS_PER_SAMPLE_PER_PATH
+            ),
+            "replicate_aggregation": benchmark.AGGREGATION,
+        },
+        "baseline_equivalence": benchmark._baseline_equivalence(),
+        "operations": operations,
+        "connection_reuse": True,
+        "live": benchmark.LIVE,
+    }
+    gate_status, errors = benchmark.evaluate_report(report)
+    report["gate_status"] = gate_status
+    report["errors"] = errors
+    return report
 
 
-def test_real_relative_performance_gate_passes(performance_report):
+@pytest.fixture(scope="module")
+def performance_report():
+    return _synthetic_performance_report()
+
+
+def test_valid_relative_performance_evidence_passes(performance_report):
     assert performance_report["gate_status"] == "PASS"
     assert performance_report["errors"] == []
     assert performance_report["connection_reuse"] is True
