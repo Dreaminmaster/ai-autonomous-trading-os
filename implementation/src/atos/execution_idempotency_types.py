@@ -27,6 +27,32 @@ CLIENT_ORDER_ID_LENGTH = len(CLIENT_ORDER_ID_VERSION) + CLIENT_ORDER_ID_HEX_LENG
 ATTEMPT_ID_VERSION = "b5.v1"
 ATTEMPT_ID_PREFIX = "att_"
 
+__all__ = (
+    "ATTEMPT_ID_PREFIX",
+    "ATTEMPT_ID_VERSION",
+    "CLIENT_ORDER_ID_HEX_LENGTH",
+    "CLIENT_ORDER_ID_LENGTH",
+    "CLIENT_ORDER_ID_VERSION",
+    "ConcurrentExecutionTransitionError",
+    "DispatchCommitCommand",
+    "DispatchCommitResult",
+    "DispatchOutcomeCommand",
+    "ExecutionClaimResult",
+    "ExecutionIdempotencyClaim",
+    "ExecutionIdempotencyCommand",
+    "ExecutionIdempotencyConflictError",
+    "ExecutionIdempotencyError",
+    "ExecutionIdempotencyInvariantError",
+    "ExecutionIdempotencyOutcome",
+    "ExecutionIdempotencyPreconditionError",
+    "ExecutionIdempotencyValidationError",
+    "ExecutionRecoveryDecision",
+    "LIVE",
+    "derive_attempt_id",
+    "derive_client_order_id",
+    "derive_idempotency_key",
+)
+
 
 class ExecutionIdempotencyError(Exception):
     """Base B5 idempotency error."""
@@ -217,6 +243,47 @@ class ExecutionIdempotencyClaim:
         if self.client_order_id != expected_client_order_id:
             raise ExecutionIdempotencyInvariantError(
                 "stored client_order_id does not match idempotency_key"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionClaimResult:
+    """Typed result for first claim and all deterministic replay outcomes."""
+
+    outcome: ExecutionIdempotencyOutcome
+    claim: ExecutionIdempotencyClaim
+    execution_status: ExecutionStatus
+
+    def __post_init__(self) -> None:
+        if type(self.outcome) is not ExecutionIdempotencyOutcome:
+            raise ExecutionIdempotencyValidationError(
+                "outcome must be ExecutionIdempotencyOutcome"
+            )
+        if type(self.claim) is not ExecutionIdempotencyClaim:
+            raise ExecutionIdempotencyValidationError(
+                "claim must be ExecutionIdempotencyClaim"
+            )
+        if type(self.execution_status) is not ExecutionStatus:
+            raise ExecutionIdempotencyValidationError(
+                "execution_status must be ExecutionStatus"
+            )
+        allowed = {
+            ExecutionIdempotencyOutcome.CLAIMED: {ExecutionStatus.PREPARED},
+            ExecutionIdempotencyOutcome.REPLAY_PREPARED: {ExecutionStatus.PREPARED},
+            ExecutionIdempotencyOutcome.RECONCILE_REQUIRED: {
+                ExecutionStatus.DISPATCH_COMMITTED,
+                ExecutionStatus.DISPATCHED,
+                ExecutionStatus.ACKNOWLEDGED,
+                ExecutionStatus.AMBIGUOUS,
+            },
+            ExecutionIdempotencyOutcome.TERMINAL_NOOP: {
+                ExecutionStatus.FILLED,
+                ExecutionStatus.TERMINAL,
+            },
+        }
+        if self.execution_status not in allowed[self.outcome]:
+            raise ExecutionIdempotencyInvariantError(
+                "claim outcome does not match execution status"
             )
 
 
