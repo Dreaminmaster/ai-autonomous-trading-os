@@ -1,0 +1,40 @@
+name: B4.3B3 Final Failure Log Extract
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/b4_3b3_final_failure_log_extract.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  extract:
+    if: github.head_ref == 'feat/b4.3b3-lifecycle-performance-gate'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download exact failed job logs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/Dreaminmaster/ai-autonomous-trading-os/actions/jobs/86626195016/logs \
+            -o ci-test.log
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/Dreaminmaster/ai-autonomous-trading-os/actions/jobs/86626194813/logs \
+            -o atos-tests.log
+          grep -nE 'FAILED|FAILURES|AssertionError|p95 ratio|gate_status|short test summary|passed|skipped' ci-test.log > ci-failure-summary.txt || true
+          grep -nE 'FAILED|FAILURES|AssertionError|p95 ratio|gate_status|short test summary|passed|skipped' atos-tests.log > atos-failure-summary.txt || true
+      - name: Upload exact failure evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3b3-final-failure-logs
+          path: |
+            ci-test.log
+            atos-tests.log
+            ci-failure-summary.txt
+            atos-failure-summary.txt
+          if-no-files-found: error
+          retention-days: 3
