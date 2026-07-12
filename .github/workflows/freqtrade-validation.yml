@@ -45,7 +45,6 @@ jobs:
           cd implementation
           python scripts/preflight_evidence_artifact.py atos-tests
       - name: Upload ATOS artifacts
-        
         uses: actions/upload-artifact@v4
         with:
           name: atos-validation
@@ -126,13 +125,11 @@ jobs:
           cd implementation
           mkdir -p validation_reports
           python3 scripts/ci_strategy_fix_round1.py
-    
       - name: Preflight evidence freqtrade
         run: |
           cd implementation
           python scripts/preflight_evidence_artifact.py freqtrade
       - name: Upload Freqtrade artifacts
-        
         uses: actions/upload-artifact@v4
         with:
           name: freqtrade-validation
@@ -172,9 +169,26 @@ jobs:
       - name: Verify Simple CI
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          SIMPLE_CI_RUN_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          SIMPLE_CI_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          SIMPLE_CI_EVENT: ${{ github.event_name }}
         run: |
           cd implementation
-          python -c "from atos.simple_ci_evidence import verify_simple_ci_for_sha; from atos.evidence_summary import write_json_atomic; r=verify_simple_ci_for_sha('${GITHUB_SHA}'); write_json_atomic('simple_ci_evidence.json', r); print('Simple CI verified: run_id='+str(r['run_id']))"
+          python - <<'PY'
+          import os
+          from atos.evidence_summary import write_json_atomic
+          from atos.simple_ci_evidence import verify_simple_ci_for_sha
+
+          pr_number = os.environ.get("SIMPLE_CI_PR_NUMBER", "").strip()
+          result = verify_simple_ci_for_sha(
+              os.environ["GITHUB_SHA"],
+              run_head_sha=os.environ["SIMPLE_CI_RUN_HEAD_SHA"],
+              pr_number=int(pr_number) if pr_number else None,
+              run_event=os.environ["SIMPLE_CI_EVENT"],
+          )
+          write_json_atomic("simple_ci_evidence.json", result)
+          print("Simple CI verified: run_id=" + str(result["run_id"]))
+          PY
       - name: Run evidence summary
         run: |
           cd implementation
