@@ -53,6 +53,11 @@ def test_evidence_metadata_is_exact_and_complete(performance_report):
     assert performance_report["clock"] == "time.perf_counter_ns"
     assert performance_report["sample_count"] == benchmark.MIN_SAMPLE_COUNT
     assert performance_report["warmup_count"] == benchmark.MIN_WARMUP_COUNT
+    assert performance_report["replicate_count"] == benchmark.REPLICATE_COUNT
+    assert performance_report["total_sample_count"] == (
+        benchmark.MIN_SAMPLE_COUNT * benchmark.REPLICATE_COUNT
+    )
+    assert performance_report["aggregation"] == benchmark.AGGREGATION
     assert performance_report["max_p95_ratio"] == pytest.approx(1.10)
 
 
@@ -74,6 +79,19 @@ def test_each_operation_meets_latency_and_statement_gate(
     )
     assert record["gate_status"] == "PASS"
     assert record["connection_reuse"] is True
+    assert record["aggregation"] == benchmark.AGGREGATION
+    assert record["replicate_count"] == benchmark.REPLICATE_COUNT
+    assert record["sample_count_per_replicate"] == benchmark.MIN_SAMPLE_COUNT
+    assert record["total_sample_count"] == (
+        benchmark.MIN_SAMPLE_COUNT * benchmark.REPLICATE_COUNT
+    )
+    assert len(record["replicates"]) == benchmark.REPLICATE_COUNT
+    assert [item["replicate_index"] for item in record["replicates"]] == list(
+        range(1, benchmark.REPLICATE_COUNT + 1)
+    )
+    for replicate in record["replicates"]:
+        assert replicate["p50_ratio"] > 0
+        assert replicate["p95_ratio"] > 0
     assert 0 < record["p95_ratio"] <= benchmark.MAX_P95_RATIO
     assert record["p50_ratio"] > 0
     for field in (
@@ -81,6 +99,10 @@ def test_each_operation_meets_latency_and_statement_gate(
         "baseline_p95_ns",
         "modular_p50_ns",
         "modular_p95_ns",
+        "pooled_baseline_p50_ns",
+        "pooled_baseline_p95_ns",
+        "pooled_modular_p50_ns",
+        "pooled_modular_p95_ns",
     ):
         assert type(record[field]) is int
         assert record[field] > 0
@@ -121,6 +143,22 @@ def test_report_evaluator_rejects_latency_regression(performance_report):
     gate, errors = benchmark.evaluate_report(altered)
     assert gate == "FAIL"
     assert any("p95 ratio exceeds" in error for error in errors)
+
+
+def test_report_evaluator_rejects_missing_replicate_evidence(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["operations"][0]["replicates"].pop()
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert any("replicate evidence mismatch" in error for error in errors)
+
+
+def test_report_evaluator_rejects_aggregation_drift(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["aggregation"] = "pooled_percentiles"
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert "aggregation mismatch" in errors
 
 
 def test_report_evaluator_rejects_missing_operation(performance_report):
@@ -234,4 +272,5 @@ def test_topology_proves_two_files_persistent_connections_and_alternation(
         "sample_order": "alternating baseline/modular",
         "warmups_excluded": True,
         "same_process": True,
+        "replicate_aggregation": benchmark.AGGREGATION,
     }

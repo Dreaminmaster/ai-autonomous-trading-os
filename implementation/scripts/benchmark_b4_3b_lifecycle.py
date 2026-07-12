@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import platform
+import statistics
 import sys
 import tempfile
 import time
@@ -48,6 +49,8 @@ MIN_SAMPLE_COUNT = 60
 MIN_WARMUP_COUNT = 10
 DEFAULT_SAMPLE_COUNT = 80
 DEFAULT_WARMUP_COUNT = 12
+REPLICATE_COUNT = 5
+AGGREGATION = "median_of_replicate_percentiles"
 
 OP_NEW_ORDER_ACK = "new_order_acknowledgement"
 OP_NEW_ONE_EVENT_FILL = "new_one_event_fill"
@@ -547,21 +550,24 @@ def _time_call(
     return elapsed, result
 
 
-def _benchmark_operation(
+def _benchmark_replicate(
     scenario: _Scenario,
     baseline_environment: _Environment,
     modular_environment: _Environment,
     *,
     sample_count: int,
     warmup_count: int,
-) -> dict[str, Any]:
+    replicate_index: int,
+) -> tuple[dict[str, Any], list[int], list[int]]:
     baseline_runner = _DirectRunner(baseline_environment.adapter)
     modular_runner = _ModularRunner(modular_environment.adapter)
     baseline_samples: list[int] = []
     modular_samples: list[int] = []
 
     total_iterations = warmup_count + sample_count
-    for ordinal in range(total_iterations):
+    ordinal_offset = replicate_index * total_iterations
+    for local_ordinal in range(total_iterations):
+        ordinal = ordinal_offset + local_ordinal
         baseline_prepared = scenario.prepare(
             baseline_environment,
             baseline_runner,
@@ -585,7 +591,7 @@ def _benchmark_operation(
             elapsed, _ = _time_call(scenario.name, prepared)
             measured[label] = elapsed
 
-        if ordinal >= warmup_count:
+        if local_ordinal >= warmup_count:
             baseline_samples.append(measured["baseline"])
             modular_samples.append(measured["modular"])
 
@@ -596,6 +602,64 @@ def _benchmark_operation(
     baseline_p95 = _percentile_ns(baseline_samples, 0.95)
     modular_p50 = _percentile_ns(modular_samples, 0.50)
     modular_p95 = _percentile_ns(modular_samples, 0.95)
+    return (
+        {
+            "replicate_index": replicate_index + 1,
+            "baseline_p50_ns": baseline_p50,
+            "baseline_p95_ns": baseline_p95,
+            "modular_p50_ns": modular_p50,
+            "modular_p95_ns": modular_p95,
+            "p50_ratio": modular_p50 / baseline_p50,
+            "p95_ratio": modular_p95 / baseline_p95,
+        },
+        baseline_samples,
+        modular_samples,
+    )
+
+
+def _median_int(values: Sequence[int]) -> int:
+    if not values:
+        raise BenchmarkContractError("median requires at least one value")
+    return int(statistics.median(values))
+
+
+def _benchmark_operation(
+    scenario: _Scenario,
+    baseline_environment: _Environment,
+    modular_environment: _Environment,
+    *,
+    sample_count: int,
+    warmup_count: int,
+) -> dict[str, Any]:
+    replicate_records: list[dict[str, Any]] = []
+    pooled_baseline: list[int] = []
+    pooled_modular: list[int] = []
+
+    for replicate_index in range(REPLICATE_COUNT):
+        record, baseline_samples, modular_samples = _benchmark_replicate(
+            scenario,
+            baseline_environment,
+            modular_environment,
+            sample_count=sample_count,
+            warmup_count=warmup_count,
+            replicate_index=replicate_index,
+        )
+        replicate_records.append(record)
+        pooled_baseline.extend(baseline_samples)
+        pooled_modular.extend(modular_samples)
+
+    baseline_p50 = _median_int(
+        [record["baseline_p50_ns"] for record in replicate_records]
+    )
+    baseline_p95 = _median_int(
+        [record["baseline_p95_ns"] for record in replicate_records]
+    )
+    modular_p50 = _median_int(
+        [record["modular_p50_ns"] for record in replicate_records]
+    )
+    modular_p95 = _median_int(
+        [record["modular_p95_ns"] for record in replicate_records]
+    )
     p50_ratio = modular_p50 / baseline_p50
     p95_ratio = modular_p95 / baseline_p95
 
@@ -608,12 +672,21 @@ def _benchmark_operation(
 
     return {
         "operation": scenario.name,
+        "aggregation": AGGREGATION,
+        "replicate_count": REPLICATE_COUNT,
+        "sample_count_per_replicate": sample_count,
+        "total_sample_count": sample_count * REPLICATE_COUNT,
         "baseline_p50_ns": baseline_p50,
         "baseline_p95_ns": baseline_p95,
         "modular_p50_ns": modular_p50,
         "modular_p95_ns": modular_p95,
         "p50_ratio": p50_ratio,
         "p95_ratio": p95_ratio,
+        "pooled_baseline_p50_ns": _percentile_ns(pooled_baseline, 0.50),
+        "pooled_baseline_p95_ns": _percentile_ns(pooled_baseline, 0.95),
+        "pooled_modular_p50_ns": _percentile_ns(pooled_modular, 0.50),
+        "pooled_modular_p95_ns": _percentile_ns(pooled_modular, 0.95),
+        "replicates": replicate_records,
         "baseline_statement_counts": dict(_EXPECTED_COUNTS[scenario.name]),
         "modular_statement_counts": dict(_EXPECTED_COUNTS[scenario.name]),
         "connection_reuse": connection_reuse,
@@ -671,6 +744,12 @@ def evaluate_report(report: Mapping[str, Any]) -> tuple[str, list[str]]:
         errors.append("sample_count below minimum")
     if report.get("warmup_count", 0) < MIN_WARMUP_COUNT:
         errors.append("warmup_count below minimum")
+    if report.get("replicate_count") != REPLICATE_COUNT:
+        errors.append("replicate_count mismatch")
+    if report.get("aggregation") != AGGREGATION:
+        errors.append("aggregation mismatch")
+    if report.get("total_sample_count") != report.get("sample_count", 0) * REPLICATE_COUNT:
+        errors.append("total_sample_count mismatch")
     if report.get("baseline_equivalence") != _baseline_equivalence():
         errors.append("baseline equivalence proof mismatch")
     expected_topology = {
@@ -679,6 +758,7 @@ def evaluate_report(report: Mapping[str, Any]) -> tuple[str, list[str]]:
         "sample_order": "alternating baseline/modular",
         "warmups_excluded": True,
         "same_process": True,
+        "replicate_aggregation": AGGREGATION,
     }
     if report.get("benchmark_topology") != expected_topology:
         errors.append("benchmark topology mismatch")
@@ -711,6 +791,37 @@ def evaluate_report(report: Mapping[str, Any]) -> tuple[str, list[str]]:
             errors.append(f"{name}: modular statement counts mismatch")
         if record.get("connection_reuse") is not True:
             errors.append(f"{name}: connection was not reused")
+        if record.get("aggregation") != AGGREGATION:
+            errors.append(f"{name}: aggregation mismatch")
+        if record.get("replicate_count") != REPLICATE_COUNT:
+            errors.append(f"{name}: replicate_count mismatch")
+        if record.get("sample_count_per_replicate") != report.get("sample_count"):
+            errors.append(f"{name}: sample_count_per_replicate mismatch")
+        if record.get("total_sample_count") != report.get("total_sample_count"):
+            errors.append(f"{name}: total_sample_count mismatch")
+        replicates = record.get("replicates")
+        if not isinstance(replicates, list) or len(replicates) != REPLICATE_COUNT:
+            errors.append(f"{name}: replicate evidence mismatch")
+        else:
+            for expected_index, replicate in enumerate(replicates, start=1):
+                if not isinstance(replicate, Mapping):
+                    errors.append(f"{name}: replicate record must be mapping")
+                    continue
+                if replicate.get("replicate_index") != expected_index:
+                    errors.append(f"{name}: replicate index mismatch")
+                for field in (
+                    "baseline_p50_ns",
+                    "baseline_p95_ns",
+                    "modular_p50_ns",
+                    "modular_p95_ns",
+                ):
+                    value = replicate.get(field)
+                    if type(value) is not int or value <= 0:
+                        errors.append(f"{name}: replicate {field} must be positive int")
+                for field in ("p50_ratio", "p95_ratio"):
+                    value = replicate.get(field)
+                    if not isinstance(value, (int, float)) or value <= 0:
+                        errors.append(f"{name}: replicate {field} must be positive")
         p50_ratio = record.get("p50_ratio")
         if not isinstance(p50_ratio, (int, float)) or p50_ratio <= 0:
             errors.append(f"{name}: p50 ratio must be positive")
@@ -726,6 +837,10 @@ def evaluate_report(report: Mapping[str, Any]) -> tuple[str, list[str]]:
             "baseline_p95_ns",
             "modular_p50_ns",
             "modular_p95_ns",
+            "pooled_baseline_p50_ns",
+            "pooled_baseline_p95_ns",
+            "pooled_modular_p50_ns",
+            "pooled_modular_p95_ns",
         ):
             value = record.get(field)
             if type(value) is not int or value <= 0:
@@ -784,6 +899,9 @@ def run_benchmark(
             "platform": platform.platform(),
             "sample_count": sample_count,
             "warmup_count": warmup_count,
+            "replicate_count": REPLICATE_COUNT,
+            "total_sample_count": sample_count * REPLICATE_COUNT,
+            "aggregation": AGGREGATION,
             "clock": "time.perf_counter_ns",
             "max_p95_ratio": MAX_P95_RATIO,
             "benchmark_topology": {
@@ -792,6 +910,7 @@ def run_benchmark(
                 "sample_order": "alternating baseline/modular",
                 "warmups_excluded": True,
                 "same_process": True,
+                "replicate_aggregation": AGGREGATION,
             },
             "baseline_equivalence": _baseline_equivalence(),
             "operations": operations,
