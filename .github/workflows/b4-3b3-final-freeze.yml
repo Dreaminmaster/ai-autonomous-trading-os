@@ -1,0 +1,183 @@
+name: B4.3B3 Final Freeze Gate
+
+on:
+  push:
+    branches:
+      - validation/b4-3b3-db925b40-freeze
+    paths:
+      - .github/workflows/b4-3b3-final-freeze.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/b4-3b3-final-freeze.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TARGET_SHA: db925b40e28204d70a9dece7847ee9c59a023e8b
+  PREMERGE_SHA: 85449bfe4e98ec0e8296ffcef1f06b35e971be45
+  PREMERGE_BRANCH: validation/b4-3b3-premerge-tree-proof
+  EXPECTED_BENCHMARK_BLOB: d552f906eb650f9ff3876c7461924b26edf012d9
+  EXPECTED_TEST_BLOB: f81b8c556f79923ebc1a0bb9ebb7822c4575a56e
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout final main SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+
+      - name: Verify exact SHA and whole-tree identity
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$TARGET_SHA"
+          git fetch --no-tags origin "$PREMERGE_BRANCH:refs/remotes/origin/b4-3b3-premerge-tree-proof"
+          actual_premerge_sha="$(git rev-parse refs/remotes/origin/b4-3b3-premerge-tree-proof)"
+          test "$actual_premerge_sha" = "$PREMERGE_SHA"
+          target_tree="$(git rev-parse "$TARGET_SHA^{tree}")"
+          premerge_tree="$(git rev-parse "$PREMERGE_SHA^{tree}")"
+          test "$target_tree" = "$premerge_tree"
+          git diff --exit-code "$PREMERGE_SHA" "$TARGET_SHA" -- .
+          benchmark_blob="$(git rev-parse "$TARGET_SHA:implementation/scripts/benchmark_b4_3b_lifecycle.py")"
+          test "$benchmark_blob" = "$EXPECTED_BENCHMARK_BLOB"
+          test_blob="$(git rev-parse "$TARGET_SHA:implementation/tests/test_b4_3b_performance_contract.py")"
+          test "$test_blob" = "$EXPECTED_TEST_BLOB"
+          mkdir -p freeze_evidence
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+
+          evidence = {
+              'schema_version': 1,
+              'target_sha': os.environ['TARGET_SHA'],
+              'premerge_sha': os.environ['PREMERGE_SHA'],
+              'target_tree': git('rev-parse', os.environ['TARGET_SHA'] + '^{tree}'),
+              'premerge_tree': git('rev-parse', os.environ['PREMERGE_SHA'] + '^{tree}'),
+              'tree_identity': True,
+              'benchmark_blob_sha': git('rev-parse', os.environ['TARGET_SHA'] + ':implementation/scripts/benchmark_b4_3b_lifecycle.py'),
+              'performance_test_blob_sha': git('rev-parse', os.environ['TARGET_SHA'] + ':implementation/tests/test_b4_3b_performance_contract.py'),
+              'premerge_validation_run_id': '29197129085',
+              'premerge_validation_artifact_id': '8262176180',
+              'premerge_validation_artifact_digest': 'sha256:296250a4048d06565527d345d24ec9b0c40c4ade0fd51a2d464ba893fe49e155',
+              'premerge_validation_gate_status': 'PASS',
+              'live': 'FORBIDDEN',
+          }
+          assert evidence['target_tree'] == evidence['premerge_tree']
+          Path('freeze_evidence/tree_identity.json').write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          print(json.dumps(evidence, indent=2, sort_keys=True))
+          PY
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ATOS
+        run: |
+          cd implementation
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Run full test suite
+        run: |
+          cd implementation
+          set -o pipefail
+          python -m pytest -q 2>&1 | tee ../freeze_evidence/full_pytest.log
+
+      - name: Run secret leakage scan
+        run: |
+          cd implementation
+          set -o pipefail
+          bash scripts/validate_no_secrets.sh 2>&1 | tee ../freeze_evidence/no_secret_scan.log
+
+      - name: Run exact merge-SHA lifecycle benchmark
+        run: |
+          cd implementation
+          mkdir -p ../freeze_evidence
+          set -o pipefail
+          python scripts/benchmark_b4_3b_lifecycle.py \
+            --output ../freeze_evidence/b4_3b3_merge_performance_report.json \
+            --head-sha "$TARGET_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            2>&1 | tee ../freeze_evidence/b4_3b3_merge_performance.log
+
+      - name: Independently verify final freeze evidence
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          evidence_dir = Path('freeze_evidence')
+          tree = json.loads((evidence_dir / 'tree_identity.json').read_text())
+          report_path = evidence_dir / 'b4_3b3_merge_performance_report.json'
+          report = json.loads(report_path.read_text())
+          target_sha = os.environ['TARGET_SHA']
+          run_id = os.environ['GITHUB_RUN_ID']
+
+          assert tree['target_sha'] == target_sha
+          assert tree['tree_identity'] is True
+          assert tree['target_tree'] == tree['premerge_tree']
+          assert tree['live'] == 'FORBIDDEN'
+          assert report['head_sha'] == target_sha
+          assert report['run_id'] == run_id
+          assert report['gate_status'] == 'PASS'
+          assert report['errors'] == []
+          assert report['live'] == 'FORBIDDEN'
+          assert report['sample_count'] == 80
+          assert report['warmup_count'] == 12
+          assert report['replicate_count'] == 5
+          assert report['boundary_batch_size'] == 20000
+          assert report['boundary_sample_count'] == 40
+          assert report['boundary_replicate_count'] == 5
+          assert report['connection_reuse'] is True
+
+          ratios = {item['operation']: item['p95_ratio'] for item in report['operations']}
+          assert len(ratios) == 5
+          assert all(0 < ratio <= 1.10 for ratio in ratios.values())
+          assert all(item['gate_status'] == 'PASS' for item in report['operations'])
+
+          final = {
+              'schema_version': 1,
+              'target_sha': target_sha,
+              'workflow_run_id': run_id,
+              'gate_status': 'PASS',
+              'tree_identity': True,
+              'premerge_validation_gate_status': tree['premerge_validation_gate_status'],
+              'full_pytest': 'PASS',
+              'secret_scan': 'PASS',
+              'performance_gate': 'PASS',
+              'operation_p95_ratios': ratios,
+              'max_observed_p95_ratio': max(ratios.values()),
+              'performance_report_sha256': hashlib.sha256(report_path.read_bytes()).hexdigest(),
+              'live': 'FORBIDDEN',
+          }
+          (evidence_dir / 'final_freeze_verification.json').write_text(
+              json.dumps(final, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          print(json.dumps(final, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload final freeze evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3b3-final-freeze-db925b40
+          path: freeze_evidence/
+          if-no-files-found: error
+          retention-days: 90
