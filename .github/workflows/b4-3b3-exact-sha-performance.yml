@@ -1,0 +1,137 @@
+name: B4.3B3 Exact SHA Performance
+
+on:
+  push:
+    branches:
+      - validation/b4-3b3-adb3511c-performance
+    paths:
+      - .github/workflows/b4-3b3-exact-sha-performance.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TARGET_SHA: adb3511c0a168b455a9500b8edf46892eab8c1fd
+
+jobs:
+  performance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 1
+
+      - name: Verify exact checkout
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$TARGET_SHA"
+          printf '%s\n' "$actual_sha" > exact_candidate_sha.txt
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ATOS
+        run: |
+          cd implementation
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Run deterministic performance contract tests
+        run: |
+          cd implementation
+          python -m pytest tests/test_b4_3b_performance_contract.py -q
+
+      - name: Run real lifecycle performance benchmark
+        run: |
+          cd implementation
+          mkdir -p performance_evidence
+          set -o pipefail
+          python scripts/benchmark_b4_3b_lifecycle.py \
+            --output performance_evidence/b4_3b3_performance_report.json \
+            --head-sha "$TARGET_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            2>&1 | tee performance_evidence/b4_3b3_performance.log
+
+      - name: Independently verify performance evidence
+        run: |
+          cd implementation
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          report_path = Path('performance_evidence/b4_3b3_performance_report.json')
+          report = json.loads(report_path.read_text(encoding='utf-8'))
+          target_sha = os.environ['TARGET_SHA']
+          run_id = os.environ['GITHUB_RUN_ID']
+          required_operations = {
+              'new_order_acknowledgement',
+              'new_one_event_fill',
+              'new_two_event_zero_crossing',
+              'exact_order_replay',
+              'exact_fill_replay',
+          }
+
+          assert report['head_sha'] == target_sha
+          assert report['run_id'] == run_id
+          assert report['gate_status'] == 'PASS'
+          assert report['errors'] == []
+          assert report['live'] == 'FORBIDDEN'
+          assert report['max_p95_ratio'] == 1.10
+          assert report['sample_count'] == 80
+          assert report['warmup_count'] == 12
+          assert report['replicate_count'] == 5
+          assert report['total_sample_count'] == 400
+          assert report['calls_per_sample_per_path'] == 2
+          assert report['total_call_count_per_path'] == 800
+          assert report['boundary_batch_size'] == 20000
+          assert report['boundary_sample_count'] == 40
+          assert report['boundary_warmup_count'] == 8
+          assert report['boundary_replicate_count'] == 5
+          assert report['connection_reuse'] is True
+
+          operations = report['operations']
+          assert len(operations) == 5
+          assert {item['operation'] for item in operations} == required_operations
+          ratios = {}
+          for item in operations:
+              assert item['gate_status'] == 'PASS'
+              assert item['connection_reuse'] is True
+              assert 0 < item['p95_ratio'] <= 1.10
+              ratios[item['operation']] = item['p95_ratio']
+
+          verification = {
+              'schema_version': 1,
+              'target_sha': target_sha,
+              'workflow_run_id': run_id,
+              'gate_status': 'PASS',
+              'live': 'FORBIDDEN',
+              'operation_p95_ratios': ratios,
+              'max_observed_p95_ratio': max(ratios.values()),
+              'report_sha256': hashlib.sha256(report_path.read_bytes()).hexdigest(),
+          }
+          Path('performance_evidence/exact_sha_verification.json').write_text(
+              json.dumps(verification, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps(verification, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload exact-SHA performance evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3b3-exact-sha-performance-adb3511c
+          path: |
+            exact_candidate_sha.txt
+            implementation/performance_evidence/b4_3b3_performance_report.json
+            implementation/performance_evidence/b4_3b3_performance.log
+            implementation/performance_evidence/exact_sha_verification.json
+          if-no-files-found: error
+          retention-days: 90
