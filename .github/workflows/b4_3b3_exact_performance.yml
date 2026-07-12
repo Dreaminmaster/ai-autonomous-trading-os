@@ -111,15 +111,27 @@ jobs:
           assert report['performance_gate_method'] == (
               'boundary_p95_overhead_projected_on_durable_p95'
           )
+          assert set(report['boundary_dispatch']) == {'order', 'fill'}
+          for kind, boundary in report['boundary_dispatch'].items():
+              assert boundary['kind'] == kind
+              assert boundary['aggregation'] == (
+                  'median_of_batched_boundary_percentiles'
+              )
+              assert boundary['batch_size'] == 20_000
+              assert boundary['overhead_p95_ns_per_call'] >= 0
+              assert len(boundary['replicates']) == 5
           assert len(report['operations']) == 5
           for record in report['operations']:
+              assert record['performance_gate_method'] == (
+                  'boundary_p95_overhead_projected_on_durable_p95'
+              )
               assert record['gate_status'] == 'PASS'
               assert 0 < record['p95_ratio'] <= 1.10
               assert record['connection_reuse'] is True
-              assert record['durable_observation']['crossover'] == (
-                  'two_database_ab_ba_per_sample'
-              )
-              assert record['boundary_dispatch']['overhead_p95_ns'] >= 0
+              assert record['crossover'] == 'two_database_ab_ba_per_sample'
+              assert record['observed_durable_p95_ratio'] > 0
+              assert record['boundary_kind'] in {'order', 'fill'}
+              assert record['boundary_overhead_p95_ns'] >= 0
               assert record['durable_reference_p95_ns'] > 0
           print('Attribution-correct B4.3B3 evidence verified.')
           PY
