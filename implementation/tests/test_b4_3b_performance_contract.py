@@ -1,0 +1,524 @@
+"""B4.3B3 lifecycle performance contract and evidence tests."""
+from __future__ import annotations
+
+import ast
+import copy
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+_SCRIPT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "benchmark_b4_3b_lifecycle.py"
+)
+_SPEC = importlib.util.spec_from_file_location(
+    "atos_b4_3b_lifecycle_benchmark",
+    _SCRIPT_PATH,
+)
+assert _SPEC is not None and _SPEC.loader is not None
+benchmark = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = benchmark
+_SPEC.loader.exec_module(benchmark)
+
+
+
+def _synthetic_performance_report():
+    sample_count = benchmark.MIN_SAMPLE_COUNT
+    warmup_count = benchmark.MIN_WARMUP_COUNT
+    total_sample_count = sample_count * benchmark.REPLICATE_COUNT
+    total_call_count_per_path = (
+        total_sample_count * benchmark.CALLS_PER_SAMPLE_PER_PATH
+    )
+    baseline_p50_ns = 1_000_000
+    baseline_p95_ns = 1_100_000
+    modular_p50_ns = 1_002_000
+    modular_p95_ns = 1_105_000
+    observed_p50_ratio = modular_p50_ns / baseline_p50_ns
+    observed_p95_ratio = modular_p95_ns / baseline_p95_ns
+
+    def boundary(kind, baseline_p50, baseline_p95, modular_p50, modular_p95):
+        return {
+            "kind": kind,
+            "aggregation": benchmark.BOUNDARY_AGGREGATION,
+            "batch_size": benchmark.BOUNDARY_BATCH_SIZE,
+            "sample_count_per_replicate": benchmark.BOUNDARY_SAMPLE_COUNT,
+            "warmup_count_per_replicate": benchmark.BOUNDARY_WARMUP_COUNT,
+            "replicate_count": benchmark.BOUNDARY_REPLICATE_COUNT,
+            "baseline_p50_ns_per_call": baseline_p50,
+            "baseline_p95_ns_per_call": baseline_p95,
+            "modular_p50_ns_per_call": modular_p50,
+            "modular_p95_ns_per_call": modular_p95,
+            "overhead_p50_ns_per_call": max(0, modular_p50 - baseline_p50),
+            "overhead_p95_ns_per_call": max(0, modular_p95 - baseline_p95),
+            "raw_p50_ratio": modular_p50 / baseline_p50,
+            "raw_p95_ratio": modular_p95 / baseline_p95,
+            "replicates": [
+                {
+                    "replicate_index": index,
+                    "baseline_p50_ns_per_call": baseline_p50 + index,
+                    "baseline_p95_ns_per_call": baseline_p95 + index,
+                    "modular_p50_ns_per_call": modular_p50 + index,
+                    "modular_p95_ns_per_call": modular_p95 + index,
+                    "raw_p50_ratio": modular_p50 / baseline_p50,
+                    "raw_p95_ratio": modular_p95 / baseline_p95,
+                }
+                for index in range(1, benchmark.BOUNDARY_REPLICATE_COUNT + 1)
+            ],
+        }
+
+    boundary_dispatch = {
+        "order": boundary("order", 100, 120, 105, 130),
+        "fill": boundary("fill", 110, 125, 112, 129),
+    }
+    operations = []
+    for operation in benchmark.REQUIRED_OPERATIONS:
+        replicates = [
+            {
+                "replicate_index": index,
+                "crossover": benchmark.CROSSOVER,
+                "calls_per_sample_per_path": (
+                    benchmark.CALLS_PER_SAMPLE_PER_PATH
+                ),
+                "baseline_p50_ns": baseline_p50_ns + index,
+                "baseline_p95_ns": baseline_p95_ns + index,
+                "modular_p50_ns": modular_p50_ns + index,
+                "modular_p95_ns": modular_p95_ns + index,
+                "p50_ratio": observed_p50_ratio,
+                "p95_ratio": observed_p95_ratio,
+            }
+            for index in range(1, benchmark.REPLICATE_COUNT + 1)
+        ]
+        expected_counts = dict(benchmark._EXPECTED_COUNTS[operation])
+        boundary_kind = benchmark._boundary_kind_for_operation(operation)
+        boundary_record = boundary_dispatch[boundary_kind]
+        durable_reference_p50 = min(baseline_p50_ns, modular_p50_ns)
+        durable_reference_p95 = min(baseline_p95_ns, modular_p95_ns)
+        boundary_overhead_p50 = boundary_record["overhead_p50_ns_per_call"]
+        boundary_overhead_p95 = boundary_record["overhead_p95_ns_per_call"]
+        p50_ratio = (
+            durable_reference_p50 + boundary_overhead_p50
+        ) / durable_reference_p50
+        p95_ratio = (
+            durable_reference_p95 + boundary_overhead_p95
+        ) / durable_reference_p95
+        operations.append(
+            {
+                "operation": operation,
+                "performance_gate_method": benchmark.PERFORMANCE_GATE_METHOD,
+                "aggregation": benchmark.AGGREGATION,
+                "replicate_count": benchmark.REPLICATE_COUNT,
+                "sample_count_per_replicate": sample_count,
+                "total_sample_count": total_sample_count,
+                "calls_per_sample_per_path": (
+                    benchmark.CALLS_PER_SAMPLE_PER_PATH
+                ),
+                "total_call_count_per_path": total_call_count_per_path,
+                "crossover": benchmark.CROSSOVER,
+                "baseline_p50_ns": baseline_p50_ns,
+                "baseline_p95_ns": baseline_p95_ns,
+                "modular_p50_ns": modular_p50_ns,
+                "modular_p95_ns": modular_p95_ns,
+                "observed_durable_p50_ratio": observed_p50_ratio,
+                "observed_durable_p95_ratio": observed_p95_ratio,
+                "pooled_baseline_p50_ns": baseline_p50_ns,
+                "pooled_baseline_p95_ns": baseline_p95_ns,
+                "pooled_modular_p50_ns": modular_p50_ns,
+                "pooled_modular_p95_ns": modular_p95_ns,
+                "durable_reference_p50_ns": durable_reference_p50,
+                "durable_reference_p95_ns": durable_reference_p95,
+                "boundary_kind": boundary_kind,
+                "boundary_overhead_p50_ns": boundary_overhead_p50,
+                "boundary_overhead_p95_ns": boundary_overhead_p95,
+                "p50_ratio": p50_ratio,
+                "p95_ratio": p95_ratio,
+                "replicates": replicates,
+                "baseline_statement_counts": expected_counts,
+                "modular_statement_counts": expected_counts,
+                "connection_reuse": True,
+                "gate_status": "PASS",
+            }
+        )
+
+    report = {
+        "schema_version": benchmark.SCHEMA_VERSION,
+        "head_sha": "a" * 40,
+        "run_id": "123456789",
+        "python_version": benchmark.platform.python_version(),
+        "platform": "deterministic-contract-fixture",
+        "sample_count": sample_count,
+        "warmup_count": warmup_count,
+        "replicate_count": benchmark.REPLICATE_COUNT,
+        "total_sample_count": total_sample_count,
+        "calls_per_sample_per_path": benchmark.CALLS_PER_SAMPLE_PER_PATH,
+        "total_call_count_per_path": total_call_count_per_path,
+        "aggregation": benchmark.AGGREGATION,
+        "crossover": benchmark.CROSSOVER,
+        "performance_gate_method": benchmark.PERFORMANCE_GATE_METHOD,
+        "boundary_aggregation": benchmark.BOUNDARY_AGGREGATION,
+        "boundary_batch_size": benchmark.BOUNDARY_BATCH_SIZE,
+        "boundary_sample_count": benchmark.BOUNDARY_SAMPLE_COUNT,
+        "boundary_warmup_count": benchmark.BOUNDARY_WARMUP_COUNT,
+        "boundary_replicate_count": benchmark.BOUNDARY_REPLICATE_COUNT,
+        "boundary_dispatch": boundary_dispatch,
+        "clock": "time.perf_counter_ns",
+        "max_p95_ratio": benchmark.MAX_P95_RATIO,
+        "benchmark_topology": {
+            "database_files": 2,
+            "persistent_connections": 2,
+            "sample_order": "paired AB/BA crossover with alternating call order",
+            "warmups_excluded": True,
+            "same_process": True,
+            "database_role_crossover": True,
+            "calls_per_sample_per_path": benchmark.CALLS_PER_SAMPLE_PER_PATH,
+            "replicate_aggregation": benchmark.AGGREGATION,
+            "authoritative_latency_gate": benchmark.PERFORMANCE_GATE_METHOD,
+            "durable_latency_role": "observational_equivalence_evidence",
+            "boundary_batch_size": benchmark.BOUNDARY_BATCH_SIZE,
+            "boundary_sample_count": benchmark.BOUNDARY_SAMPLE_COUNT,
+            "boundary_replicate_count": benchmark.BOUNDARY_REPLICATE_COUNT,
+        },
+        "baseline_equivalence": benchmark._baseline_equivalence(),
+        "operations": operations,
+        "connection_reuse": True,
+        "live": benchmark.LIVE,
+    }
+    gate_status, errors = benchmark.evaluate_report(report)
+    report["gate_status"] = gate_status
+    report["errors"] = errors
+    return report
+
+@pytest.fixture(scope="module")
+def performance_report():
+    return _synthetic_performance_report()
+
+
+def test_valid_relative_performance_evidence_passes(performance_report):
+    assert performance_report["gate_status"] == "PASS"
+    assert performance_report["errors"] == []
+    assert performance_report["connection_reuse"] is True
+    assert performance_report["live"] == "FORBIDDEN"
+
+
+def test_evidence_metadata_is_exact_and_complete(performance_report):
+    assert performance_report["schema_version"] == benchmark.SCHEMA_VERSION
+    assert performance_report["head_sha"] == "a" * 40
+    assert performance_report["run_id"] == "123456789"
+    assert performance_report["python_version"].startswith("3.11")
+    assert performance_report["platform"]
+    assert performance_report["clock"] == "time.perf_counter_ns"
+    assert performance_report["sample_count"] == benchmark.MIN_SAMPLE_COUNT
+    assert performance_report["warmup_count"] == benchmark.MIN_WARMUP_COUNT
+    assert performance_report["replicate_count"] == benchmark.REPLICATE_COUNT
+    assert performance_report["total_sample_count"] == (
+        benchmark.MIN_SAMPLE_COUNT * benchmark.REPLICATE_COUNT
+    )
+    assert performance_report["aggregation"] == benchmark.AGGREGATION
+    assert performance_report["crossover"] == benchmark.CROSSOVER
+    assert performance_report["performance_gate_method"] == (
+        benchmark.PERFORMANCE_GATE_METHOD
+    )
+    assert performance_report["boundary_aggregation"] == (
+        benchmark.BOUNDARY_AGGREGATION
+    )
+    assert performance_report["boundary_batch_size"] == benchmark.BOUNDARY_BATCH_SIZE
+    assert performance_report["boundary_sample_count"] == (
+        benchmark.BOUNDARY_SAMPLE_COUNT
+    )
+    assert performance_report["boundary_replicate_count"] == (
+        benchmark.BOUNDARY_REPLICATE_COUNT
+    )
+    assert performance_report["calls_per_sample_per_path"] == (
+        benchmark.CALLS_PER_SAMPLE_PER_PATH
+    )
+    assert performance_report["total_call_count_per_path"] == (
+        benchmark.MIN_SAMPLE_COUNT
+        * benchmark.REPLICATE_COUNT
+        * benchmark.CALLS_PER_SAMPLE_PER_PATH
+    )
+    assert performance_report["max_p95_ratio"] == pytest.approx(1.10)
+
+
+def test_all_required_operations_are_present_once(performance_report):
+    records = performance_report["operations"]
+    names = [record["operation"] for record in records]
+    assert tuple(names) == benchmark.REQUIRED_OPERATIONS
+    assert len(names) == len(set(names))
+
+
+@pytest.mark.parametrize("operation", benchmark.REQUIRED_OPERATIONS)
+def test_each_operation_meets_latency_and_statement_gate(
+    performance_report,
+    operation,
+):
+    record = next(
+        item for item in performance_report["operations"]
+        if item["operation"] == operation
+    )
+    assert record["gate_status"] == "PASS"
+    assert record["connection_reuse"] is True
+    assert record["aggregation"] == benchmark.AGGREGATION
+    assert record["replicate_count"] == benchmark.REPLICATE_COUNT
+    assert record["sample_count_per_replicate"] == benchmark.MIN_SAMPLE_COUNT
+    assert record["total_sample_count"] == (
+        benchmark.MIN_SAMPLE_COUNT * benchmark.REPLICATE_COUNT
+    )
+    assert record["crossover"] == benchmark.CROSSOVER
+    assert record["calls_per_sample_per_path"] == (
+        benchmark.CALLS_PER_SAMPLE_PER_PATH
+    )
+    assert record["total_call_count_per_path"] == (
+        benchmark.MIN_SAMPLE_COUNT
+        * benchmark.REPLICATE_COUNT
+        * benchmark.CALLS_PER_SAMPLE_PER_PATH
+    )
+    assert len(record["replicates"]) == benchmark.REPLICATE_COUNT
+    assert [item["replicate_index"] for item in record["replicates"]] == list(
+        range(1, benchmark.REPLICATE_COUNT + 1)
+    )
+    for replicate in record["replicates"]:
+        assert replicate["crossover"] == benchmark.CROSSOVER
+        assert replicate["calls_per_sample_per_path"] == (
+            benchmark.CALLS_PER_SAMPLE_PER_PATH
+        )
+        assert replicate["p50_ratio"] > 0
+        assert replicate["p95_ratio"] > 0
+    assert 0 < record["p95_ratio"] <= benchmark.MAX_P95_RATIO
+    assert record["p50_ratio"] > 0
+    assert record["performance_gate_method"] == benchmark.PERFORMANCE_GATE_METHOD
+    assert record["observed_durable_p50_ratio"] > 0
+    assert record["observed_durable_p95_ratio"] > 0
+    assert record["boundary_kind"] in {"order", "fill"}
+    assert record["boundary_overhead_p50_ns"] >= 0
+    assert record["boundary_overhead_p95_ns"] >= 0
+    assert record["durable_reference_p50_ns"] > 0
+    assert record["durable_reference_p95_ns"] > 0
+    for field in (
+        "baseline_p50_ns",
+        "baseline_p95_ns",
+        "modular_p50_ns",
+        "modular_p95_ns",
+        "pooled_baseline_p50_ns",
+        "pooled_baseline_p95_ns",
+        "pooled_modular_p50_ns",
+        "pooled_modular_p95_ns",
+    ):
+        assert type(record[field]) is int
+        assert record[field] > 0
+    expected = dict(benchmark._EXPECTED_COUNTS[operation])
+    assert record["baseline_statement_counts"] == expected
+    assert record["modular_statement_counts"] == expected
+
+
+
+def test_baseline_equivalence_proof_is_fail_closed(performance_report):
+    proof = performance_report["baseline_equivalence"]
+    assert proof == {
+        "baseline_call": "unbound concrete public method",
+        "modular_call": "typed Protocol direct in-process call",
+        "same_public_implementation": True,
+        "same_input_validation": True,
+        "same_decimal_and_utc_normalization": True,
+        "same_sql_statements": True,
+        "same_transaction_mode": "BEGIN IMMEDIATE",
+        "same_schema_and_migrations": True,
+        "same_durability_pragmas": {
+            "foreign_keys": "ON",
+            "journal_mode": "WAL",
+            "synchronous": "FULL",
+            "busy_timeout_ms": 5000,
+        },
+        "same_accounting_policy": "NettingPositionAccountingV1",
+        "policy_indirection_bypassed": False,
+        "network_calls": 0,
+        "reconnects_per_operation": 0,
+        "database_role_crossover": True,
+        "calls_per_sample_per_path": benchmark.CALLS_PER_SAMPLE_PER_PATH,
+        "durable_latency_is_observational": True,
+        "boundary_dispatch_measured_separately": True,
+        "authoritative_gate_method": benchmark.PERFORMANCE_GATE_METHOD,
+        "durable_reference": "minimum pooled p95 across equivalent durable paths",
+        "internal_json_transport": False,
+    }
+
+def test_report_evaluator_rejects_latency_regression(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["operations"][0]["p95_ratio"] = 1.100001
+    altered["operations"][0]["gate_status"] = "FAIL"
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert any("p95 ratio exceeds" in error for error in errors)
+
+
+def test_report_evaluator_rejects_projection_drift(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["operations"][0]["p95_ratio"] += 0.001
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert any("p95 projection mismatch" in error for error in errors)
+
+
+def test_report_evaluator_rejects_boundary_overhead_drift(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["boundary_dispatch"]["order"]["overhead_p95_ns_per_call"] += 1
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert any("boundary p95 overhead mismatch" in error for error in errors)
+
+
+def test_report_evaluator_rejects_missing_replicate_evidence(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["operations"][0]["replicates"].pop()
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert any("replicate evidence mismatch" in error for error in errors)
+
+
+def test_report_evaluator_rejects_aggregation_drift(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["aggregation"] = "pooled_percentiles"
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert "aggregation mismatch" in errors
+
+
+def test_report_evaluator_rejects_crossover_drift(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["crossover"] = "fixed_database_roles"
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert "crossover mismatch" in errors
+
+
+def test_report_evaluator_rejects_call_count_drift(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["operations"][0]["calls_per_sample_per_path"] = 1
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert any("calls_per_sample_per_path mismatch" in error for error in errors)
+
+
+def test_report_evaluator_rejects_missing_operation(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["operations"].pop()
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert "required operation set mismatch" in errors
+
+
+def test_report_evaluator_rejects_statement_drift(performance_report):
+    altered = copy.deepcopy(performance_report)
+    altered["operations"][1]["modular_statement_counts"][
+        "committed_mutations"
+    ] += 1
+    gate, errors = benchmark.evaluate_report(altered)
+    assert gate == "FAIL"
+    assert any("modular statement counts mismatch" in error for error in errors)
+
+
+def test_minimum_samples_and_warmups_are_enforced(tmp_path):
+    with pytest.raises(ValueError, match="sample_count"):
+        benchmark.run_benchmark(
+            workdir=tmp_path / "samples",
+            sample_count=benchmark.MIN_SAMPLE_COUNT - 1,
+            warmup_count=benchmark.MIN_WARMUP_COUNT,
+            head_sha="b" * 40,
+            run_id="1",
+        )
+    with pytest.raises(ValueError, match="warmup_count"):
+        benchmark.run_benchmark(
+            workdir=tmp_path / "warmups",
+            sample_count=benchmark.MIN_SAMPLE_COUNT,
+            warmup_count=benchmark.MIN_WARMUP_COUNT - 1,
+            head_sha="b" * 40,
+            run_id="1",
+        )
+
+
+@pytest.mark.parametrize(
+    ("head_sha", "run_id", "message"),
+    [
+        ("A" * 40, "1", "head_sha"),
+        ("a" * 39, "1", "head_sha"),
+        ("a" * 40, "local", "run_id"),
+        ("a" * 40, "", "run_id"),
+    ],
+)
+def test_exact_sha_and_run_binding_is_required(
+    tmp_path,
+    head_sha,
+    run_id,
+    message,
+):
+    with pytest.raises(ValueError, match=message):
+        benchmark.run_benchmark(
+            workdir=tmp_path / f"invalid-{message}-{len(run_id)}",
+            sample_count=benchmark.MIN_SAMPLE_COUNT,
+            warmup_count=benchmark.MIN_WARMUP_COUNT,
+            head_sha=head_sha,
+            run_id=run_id,
+        )
+
+
+def test_percentile_interpolation_is_deterministic():
+    values = [10, 20, 30, 40, 50]
+    assert benchmark._percentile_ns(values, 0.50) == 30
+    assert benchmark._percentile_ns(values, 0.95) == 48
+    with pytest.raises(ValueError):
+        benchmark._percentile_ns([], 0.95)
+
+
+def test_atomic_report_writer_leaves_no_partial_file(tmp_path, performance_report):
+    output = tmp_path / "evidence" / "performance.json"
+    benchmark.write_report_atomic(output, performance_report)
+    assert json.loads(output.read_text(encoding="utf-8")) == performance_report
+    assert not output.with_name(output.name + ".tmp").exists()
+
+
+def test_benchmark_has_no_network_orm_or_sleep_dependency():
+    source = _SCRIPT_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported_roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_roots.update(alias.name.split(".", 1)[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_roots.add(node.module.split(".", 1)[0])
+    assert imported_roots.isdisjoint(
+        {
+            "requests",
+            "httpx",
+            "aiohttp",
+            "urllib3",
+            "sqlalchemy",
+            "socket",
+        }
+    )
+    assert "time.sleep" not in source
+    assert "sqlite3.connect" not in source
+    assert "http://" not in source
+    assert "https://" not in source
+
+
+
+def test_topology_proves_two_files_persistent_connections_and_alternation(
+    performance_report,
+):
+    assert performance_report["benchmark_topology"] == {
+        "database_files": 2,
+        "persistent_connections": 2,
+        "sample_order": "paired AB/BA crossover with alternating call order",
+        "warmups_excluded": True,
+        "same_process": True,
+        "database_role_crossover": True,
+        "calls_per_sample_per_path": benchmark.CALLS_PER_SAMPLE_PER_PATH,
+        "replicate_aggregation": benchmark.AGGREGATION,
+        "authoritative_latency_gate": benchmark.PERFORMANCE_GATE_METHOD,
+        "durable_latency_role": "observational_equivalence_evidence",
+        "boundary_batch_size": benchmark.BOUNDARY_BATCH_SIZE,
+        "boundary_sample_count": benchmark.BOUNDARY_SAMPLE_COUNT,
+        "boundary_replicate_count": benchmark.BOUNDARY_REPLICATE_COUNT,
+    }
