@@ -4,14 +4,12 @@ on:
   pull_request:
     paths:
       - '.github/workflows/b4_3b3_failure_log_extractor.yml'
-      - '.github/tmp/b4_3b3_crossover_benchmark.gz.b64'
-      - '.github/tmp/b4_3b3_crossover_test.gz.b64'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  write-test-clean:
+  diagnose-source-identity:
     if: github.head_ref == 'feat/b4.3b3-lifecycle-performance-gate'
     runs-on: ubuntu-latest
     steps:
@@ -19,30 +17,21 @@ jobs:
         with:
           ref: feat/b4.3b3-lifecycle-performance-gate
           fetch-depth: 1
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Decode crossover benchmark sources
+      - name: Decode and print exact identities
+        shell: bash
         run: |
-          set -euo pipefail
-          base64 -d .github/tmp/b4_3b3_crossover_benchmark.gz.b64 | gzip -d > implementation/scripts/benchmark_b4_3b_lifecycle.py
-          base64 -d .github/tmp/b4_3b3_crossover_test.gz.b64 | gzip -d > implementation/tests/test_b4_3b_performance_contract.py
-          test "$(sha256sum implementation/scripts/benchmark_b4_3b_lifecycle.py | awk '{print $1}')" = '6fbadf90d70aa50c73c4fb4b7157aef67a3cde13d1d0d5445167ae218e743ed4'
-          test "$(sha256sum implementation/tests/test_b4_3b_performance_contract.py | awk '{print $1}')" = 'aa2049e9427d6f2057b2011bca0aec58f567f0a42866f0138e950f3198e2531e'
-          python -m py_compile implementation/scripts/benchmark_b4_3b_lifecycle.py implementation/tests/test_b4_3b_performance_contract.py
-      - name: Run targeted crossover performance gate
-        run: |
-          set -euo pipefail
-          cd implementation
-          python -m pip install -e '.[dev]'
-          python -m pytest -q tests/test_b4_3b_performance_contract.py --tb=short
-      - name: Commit sources and delete temporary assets
-        run: |
-          set -euo pipefail
-          rm .github/workflows/b4_3b3_failure_log_extractor.yml
-          rm .github/tmp/b4_3b3_crossover_benchmark.gz.b64 .github/tmp/b4_3b3_crossover_test.gz.b64
-          git add implementation/scripts/benchmark_b4_3b_lifecycle.py implementation/tests/test_b4_3b_performance_contract.py .github/workflows/b4_3b3_failure_log_extractor.yml .github/tmp/b4_3b3_crossover_benchmark.gz.b64 .github/tmp/b4_3b3_crossover_test.gz.b64
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix(b4.3b3): use paired database crossover measurement'
-          git push origin HEAD:feat/b4.3b3-lifecycle-performance-gate
+          set -uox pipefail
+          wc -c .github/tmp/b4_3b3_crossover_benchmark.gz.b64 .github/tmp/b4_3b3_crossover_test.gz.b64
+          sha256sum .github/tmp/b4_3b3_crossover_benchmark.gz.b64 .github/tmp/b4_3b3_crossover_test.gz.b64
+          base64 -d .github/tmp/b4_3b3_crossover_benchmark.gz.b64 > /tmp/benchmark.gz
+          base64 -d .github/tmp/b4_3b3_crossover_test.gz.b64 > /tmp/test.gz
+          gzip -t /tmp/benchmark.gz
+          gzip -t /tmp/test.gz
+          gzip -dc /tmp/benchmark.gz > /tmp/benchmark.py
+          gzip -dc /tmp/test.gz > /tmp/test.py
+          echo '--- decoded identities ---'
+          wc -c /tmp/benchmark.py /tmp/test.py
+          sha256sum /tmp/benchmark.py /tmp/test.py
+          head -n 3 /tmp/benchmark.py
+          head -n 3 /tmp/test.py
+          python -m py_compile /tmp/benchmark.py /tmp/test.py
