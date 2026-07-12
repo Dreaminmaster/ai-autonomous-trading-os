@@ -1,4 +1,4 @@
-name: B4.3B3 Exact Performance Gate
+name: B4.3B3 Exact Full Gate
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  exact-performance:
+  exact-full:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +27,18 @@ jobs:
         run: |
           cd implementation
           python -m pip install -e '.[dev]'
+      - name: Run exact full pytest
+        run: |
+          set -euo pipefail
+          cd implementation
+          set -o pipefail
+          python -m pytest -q --tb=short 2>&1 | tee b4_3b3_exact_pytest.log
+      - name: Run exact secret leakage scan
+        run: |
+          set -euo pipefail
+          cd implementation
+          set -o pipefail
+          bash scripts/validate_no_secrets.sh 2>&1 | tee b4_3b3_exact_no_secret_scan.log
       - name: Run exact wall-clock performance gate
         run: |
           set -euo pipefail
@@ -48,7 +60,7 @@ jobs:
 
           report = json.loads(Path('b4_3b3_exact_performance.json').read_text())
           assert report['head_sha'] == '092a75c624f81c5d5b416e66d1dde6d832938d0a'
-          assert report['run_id'].isdigit()
+          assert report['run_id'] == str(__import__('os').environ['GITHUB_RUN_ID'])
           assert report['gate_status'] == 'PASS'
           assert report['errors'] == []
           assert report['live'] == 'FORBIDDEN'
@@ -60,18 +72,16 @@ jobs:
               assert record['connection_reuse'] is True
               assert record['calls_per_sample_per_path'] == 2
               assert record['crossover'] == 'two_database_ab_ba_per_sample'
-          print('Exact B4.3B3 performance evidence verified.')
+          print('Exact B4.3B3 full evidence verified.')
           PY
-      - name: Run deterministic contract tests
-        run: |
-          cd implementation
-          python -m pytest -q tests/test_b4_3b_performance_contract.py --tb=short
-      - name: Upload exact performance artifact
+      - name: Upload exact full artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: b4-3b3-exact-performance
+          name: b4-3b3-exact-full-validation
           path: |
+            implementation/b4_3b3_exact_pytest.log
+            implementation/b4_3b3_exact_no_secret_scan.log
             implementation/b4_3b3_exact_performance.json
             implementation/b4_3b3_exact_performance.log
           if-no-files-found: warn
