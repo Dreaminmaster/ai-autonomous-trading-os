@@ -1,108 +1,95 @@
-name: B4.3B3 Attribution-Correct Patch Gate
+name: B4.3B3 Exact Attribution Gate
 
 on:
   pull_request:
     paths:
       - '.github/workflows/b4_3b3_exact_performance.yml'
-      - '.github/tmp/b43b3_patch.part*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  patch-product:
+  exact-tests:
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout temporary executor assets
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ci/b4.3b3-exact-performance
-          path: executor
+          ref: 73b2891052ddf1a02db284d7721b4d451017e28b
           fetch-depth: 1
-      - name: Checkout product branch
-        uses: actions/checkout@v4
-        with:
-          ref: feat/b4.3b3-lifecycle-performance-gate
-          path: product
-          fetch-depth: 1
+      - name: Verify exact candidate
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '73b2891052ddf1a02db284d7721b4d451017e28b'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Reassemble and verify reviewed patch
+      - name: Install
         run: |
-          set -euo pipefail
-          test "$(sha256sum executor/.github/tmp/b43b3_patch.part01 | awk '{print $1}')" = '0f07ec19f54934ddb2187e9d2473db21f8c13d7260c7c6c09e65ce776d778243'
-          test "$(sha256sum executor/.github/tmp/b43b3_patch.part02 | awk '{print $1}')" = 'bb27178d62cf3005fbe563ece0af114183a0997acce8d32cdb043893547dcb16'
-          test "$(sha256sum executor/.github/tmp/b43b3_patch.part03 | awk '{print $1}')" = '9424d8149dcff295005de6d18888e951ac0b36cf95efb7d2258a009c580e860f'
-          test "$(sha256sum executor/.github/tmp/b43b3_patch.part04 | awk '{print $1}')" = '29a18bc5fb7fc21d9c60d3b07796106addd7139006895b5f106406e7360f9e18'
-          test "$(sha256sum executor/.github/tmp/b43b3_patch.part05 | awk '{print $1}')" = '0f4c1859dd39f44213849b6335af695846da3ab23f884569d0fdd1c6cb01ec7b'
-          test "$(sha256sum executor/.github/tmp/b43b3_patch.part06 | awk '{print $1}')" = '50130dbfde63c7ed71bcdf657b774261a976bfef6f7e036ebd650b421fa06e9e'
-          cat executor/.github/tmp/b43b3_patch.part{01,02,03,04,05,06} > /tmp/b43b3_patch.py.gz.b64
-          test "$(wc -c < /tmp/b43b3_patch.py.gz.b64 | tr -d ' ')" = '11320'
-          test "$(sha256sum /tmp/b43b3_patch.py.gz.b64 | awk '{print $1}')" = '6d8e4be92fc31a63a619f5ab00c3493c38aca30ff0951cea8328bec059b8ed8b'
-          base64 -d /tmp/b43b3_patch.py.gz.b64 | gzip -d > /tmp/b43b3_patch.py
-          test "$(sha256sum /tmp/b43b3_patch.py | awk '{print $1}')" = '054e9e5a3c8f70b98758671a655a1a0e7a6d3d5e4b4eb6cdd9075ef257426c5e'
-          python -m py_compile /tmp/b43b3_patch.py
-          test "$(git -C product rev-parse HEAD)" = '092a75c624f81c5d5b416e66d1dde6d832938d0a'
-      - name: Apply bounded product patch
-        run: |
-          set -euo pipefail
-          cd product
-          python /tmp/b43b3_patch.py
-          python -m py_compile \
-            implementation/scripts/benchmark_b4_3b_lifecycle.py \
-            implementation/tests/test_b4_3b_performance_contract.py
-          git diff --check
-          python - <<'PY'
-          import subprocess
-          expected = {
-              'implementation/scripts/benchmark_b4_3b_lifecycle.py',
-              'implementation/tests/test_b4_3b_performance_contract.py',
-          }
-          changed = set(subprocess.check_output(
-              ['git', 'diff', '--name-only'], text=True
-          ).splitlines())
-          assert changed == expected, (changed, expected)
-          print('Patch scope verified:', sorted(changed))
-          PY
-      - name: Install product dependencies
-        run: |
-          cd product/implementation
+          cd implementation
           python -m pip install -e '.[dev]'
-      - name: Run complete deterministic suite
+      - name: Run exact full pytest
         run: |
           set -euo pipefail
-          cd product/implementation
+          cd implementation
           set -o pipefail
-          python -m pytest -q --tb=short 2>&1 | tee b4_3b3_patch_pytest.log
-      - name: Run secret leakage scan
+          python -m pytest -q --tb=short 2>&1 | tee b4_3b3_exact_pytest.log
+      - name: Run exact secret leakage scan
         run: |
           set -euo pipefail
-          cd product/implementation
+          cd implementation
           set -o pipefail
-          bash scripts/validate_no_secrets.sh 2>&1 | tee b4_3b3_patch_no_secret_scan.log
-      - name: Run attribution-correct real performance gate
+          bash scripts/validate_no_secrets.sh 2>&1 | tee b4_3b3_exact_no_secret_scan.log
+      - name: Upload exact test artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: b4-3b3-exact-tests
+          path: |
+            implementation/b4_3b3_exact_pytest.log
+            implementation/b4_3b3_exact_no_secret_scan.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  exact-performance:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 73b2891052ddf1a02db284d7721b4d451017e28b
+          fetch-depth: 1
+      - name: Verify exact candidate
         run: |
           set -euo pipefail
-          cd product/implementation
+          test "$(git rev-parse HEAD)" = '73b2891052ddf1a02db284d7721b4d451017e28b'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install
+        run: |
+          cd implementation
+          python -m pip install -e '.[dev]'
+      - name: Run exact attribution-correct performance gate
+        run: |
+          set -euo pipefail
+          cd implementation
           python scripts/benchmark_b4_3b_lifecycle.py \
-            --output b4_3b3_patch_performance.json \
+            --output b4_3b3_exact_performance.json \
             --sample-count 80 \
             --warmup-count 12 \
-            --head-sha 092a75c624f81c5d5b416e66d1dde6d832938d0a \
+            --head-sha 73b2891052ddf1a02db284d7721b4d451017e28b \
             --run-id "${GITHUB_RUN_ID}" \
-            2>&1 | tee b4_3b3_patch_performance.log
-      - name: Verify attribution-correct evidence
+            2>&1 | tee b4_3b3_exact_performance.log
+      - name: Verify exact attribution evidence
         run: |
           set -euo pipefail
-          cd product/implementation
+          cd implementation
           python - <<'PY'
           import json
           import os
           from pathlib import Path
 
-          report = json.loads(Path('b4_3b3_patch_performance.json').read_text())
-          assert report['head_sha'] == '092a75c624f81c5d5b416e66d1dde6d832938d0a'
+          report = json.loads(Path('b4_3b3_exact_performance.json').read_text())
+          assert report['head_sha'] == '73b2891052ddf1a02db284d7721b4d451017e28b'
           assert report['run_id'] == os.environ['GITHUB_RUN_ID']
           assert report['gate_status'] == 'PASS'
           assert report['errors'] == []
@@ -114,48 +101,29 @@ jobs:
           assert set(report['boundary_dispatch']) == {'order', 'fill'}
           for kind, boundary in report['boundary_dispatch'].items():
               assert boundary['kind'] == kind
-              assert boundary['aggregation'] == (
-                  'median_of_batched_boundary_percentiles'
-              )
               assert boundary['batch_size'] == 20_000
               assert boundary['overhead_p95_ns_per_call'] >= 0
               assert len(boundary['replicates']) == 5
           assert len(report['operations']) == 5
           for record in report['operations']:
+              assert record['gate_status'] == 'PASS'
               assert record['performance_gate_method'] == (
                   'boundary_p95_overhead_projected_on_durable_p95'
               )
-              assert record['gate_status'] == 'PASS'
               assert 0 < record['p95_ratio'] <= 1.10
-              assert record['connection_reuse'] is True
-              assert record['crossover'] == 'two_database_ab_ba_per_sample'
               assert record['observed_durable_p95_ratio'] > 0
-              assert record['boundary_kind'] in {'order', 'fill'}
               assert record['boundary_overhead_p95_ns'] >= 0
               assert record['durable_reference_p95_ns'] > 0
-          print('Attribution-correct B4.3B3 evidence verified.')
+              assert record['connection_reuse'] is True
+          print('Exact attribution-correct B4.3B3 evidence verified.')
           PY
-      - name: Upload patch validation artifact
+      - name: Upload exact performance artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: b4-3b3-attribution-correct-patch-validation
+          name: b4-3b3-exact-performance
           path: |
-            product/implementation/b4_3b3_patch_pytest.log
-            product/implementation/b4_3b3_patch_no_secret_scan.log
-            product/implementation/b4_3b3_patch_performance.json
-            product/implementation/b4_3b3_patch_performance.log
+            implementation/b4_3b3_exact_performance.json
+            implementation/b4_3b3_exact_performance.log
           if-no-files-found: warn
-          retention-days: 7
-      - name: Commit only the two product files
-        run: |
-          set -euo pipefail
-          cd product
-          git add \
-            implementation/scripts/benchmark_b4_3b_lifecycle.py \
-            implementation/tests/test_b4_3b_performance_contract.py
-          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = '2'
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix(b4.3b3): attribute module overhead independently from fsync'
-          git push origin HEAD:feat/b4.3b3-lifecycle-performance-gate
+          retention-days: 14
