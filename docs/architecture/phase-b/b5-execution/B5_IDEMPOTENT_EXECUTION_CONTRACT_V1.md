@@ -93,18 +93,41 @@ Requirements:
 
 Every idempotency claim owns one deterministic `client_order_id`.
 
+V1 freezes the projection exactly:
+
+```text
+CLIENT_ORDER_ID_VERSION = "a5"
+client_order_id = CLIENT_ORDER_ID_VERSION + idempotency_key[:28]
+```
+
+Therefore the V1 client order ID is exactly 30 lowercase alphanumeric characters: the two-character version prefix plus 28 hexadecimal characters from the full key.
+
 It must:
 
-- derive solely from the full idempotency key and a versioned deterministic projection;
+- derive solely from the full idempotency key;
 - remain unchanged across retries and restarts;
 - be unique within `(venue, account_scope)`;
 - never use current time or randomness;
 - remain queryable during reconciliation;
-- satisfy the target adapter's length and character limits.
+- be rejected if a target adapter has a stricter limit rather than silently transformed.
 
-The full local key remains authority. A shortened remote identity is only a projection and must be locally collision-protected.
+The full 64-character local key remains authority. The 30-character remote identity is a projection and is protected by the local uniqueness constraint. If two different full keys ever project to the same client order ID in one venue/account scope, the second claim fails closed.
 
-## 6. Durable claim schema
+## 6. Deterministic dispatch attempt identity
+
+V1 freezes attempt identity exactly:
+
+```text
+attempt_id = "att_" + sha256(length_delimited([
+  "b5.v1",
+  idempotency_key,
+  str(attempt_no),
+])).hexdigest()
+```
+
+`attempt_no` is a positive integer encoded as canonical base-10 text without sign, whitespace, or leading zeros. Attempt identity is provenance for one dispatch transition and is not part of the semantic idempotency key.
+
+## 7. Durable claim schema
 
 B5 schema implementation adds migration V5.
 
@@ -144,6 +167,11 @@ CREATE TABLE execution_idempotency_claims (
       AND normalized_intent_hash NOT GLOB '*[^0-9a-f]*'
       AND normalized_intent_hash = lower(normalized_intent_hash)
     ),
+    CHECK (
+      length(client_order_id) = 30
+      AND client_order_id NOT GLOB '*[^0-9a-z]*'
+      AND client_order_id = lower(client_order_id)
+    ),
 
     UNIQUE (venue, account_scope, symbol, action, normalized_intent_hash),
     UNIQUE (venue, account_scope, client_order_id),
@@ -167,7 +195,7 @@ Claims are permanent immutable audit records. Triggers reject all updates and de
 
 Every new B5 dispatch attempt must match an existing claim on execution intent, venue, account scope, and client order ID. Database-level enforcement is required through a migration-safe trigger or equivalent constraint. Existing historical rows remain readable; migration V5 must not fabricate historical claims.
 
-## 7. Typed model
+## 8. Typed model
 
 B5 introduces immutable typed values separated from persistence and network I/O:
 
@@ -180,6 +208,10 @@ DispatchCommitResult
 DispatchOutcomeCommand
 ExecutionRecoveryDecision
 ```
+
+`ExecutionIdempotencyCommand` contains only authoritative source components and provenance. It must not accept `idempotency_key`, `client_order_id`, or `attempt_id` as constructor inputs. Those are derived read-only properties calculated by the pure V1 identity policy.
+
+`ExecutionIdempotencyClaim` is the persisted reconstruction and contains the derived values. Reading a claim must recompute all derived values and fail closed on mismatch.
 
 Outcomes:
 
@@ -201,9 +233,9 @@ ExecutionIdempotencyError
   ConcurrentExecutionTransitionError
 ```
 
-Typed constructors validate exact enum types, non-empty identities, lowercase hashes, UTC timestamps, deterministic key/client-ID recomputation, no HOLD execution, and no floating-point identity/notional values.
+Typed constructors validate exact enum types, non-empty identities, lowercase hashes, UTC timestamps, no HOLD execution, and no floating-point identity/notional values. Derived identities are calculated internally, not trusted from callers.
 
-## 8. Claim operation
+## 9. Claim operation
 
 `claim_execution(command)` runs in one `BEGIN IMMEDIATE` transaction.
 
@@ -213,10 +245,10 @@ Before mutation it proves:
 2. symbol, action, and normalized hash match;
 3. the parent risk decision is exactly `APPROVED`;
 4. action is BUY or SELL;
-5. key and client order ID recompute exactly;
+5. the repository independently derives the key and client order ID from command components;
 6. no inconsistent claim or execution state exists.
 
-For a first claim the same transaction inserts one immutable claim, inserts one `execution_states` row in `PREPARED`, re-reads both, commits, and returns `CLAIMED`. Claim and state must never be partially visible.
+For a first claim the same transaction inserts one immutable claim, inserts one `execution_states` row in `PREPARED`, re-reads both, recomputes the derived identities, commits, and returns `CLAIMED`. Claim and state must never be partially visible.
 
 Exact replay behavior:
 
@@ -227,7 +259,7 @@ Exact replay behavior:
 
 Conflicting execution/key ownership, corrupt stored components, a state without a claim, or a non-approved risk decision fails closed with no mutation.
 
-## 9. Dispatch commit operation
+## 10. Dispatch commit operation
 
 The only safe pre-side-effect operation is `commit_dispatch(command)`.
 
@@ -236,16 +268,16 @@ It runs in one `BEGIN IMMEDIATE` transaction and:
 1. proves claim/state consistency;
 2. requires state exactly `PREPARED`;
 3. proves no previous attempt exists;
-4. derives deterministic `attempt_id` from key and attempt number;
+4. derives the frozen V1 `attempt_id` with `attempt_no=1`;
 5. reuses the claim's stable client order ID;
 6. inserts one attempt as `PRE_DISPATCH_PROVEN`;
 7. compare-and-swap transitions state to `DISPATCH_COMMITTED`;
 8. re-reads and verifies;
 9. commits before any executor or network call.
 
-After this commit, a crash is not safely retryable without reconciliation.
+B5 V1 permits exactly one dispatch attempt. Additional attempts require a design erratum defining remote reconciliation and retry authority. After dispatch commit, a crash is not safely retryable without reconciliation.
 
-## 10. Side-effect boundary
+## 11. Side-effect boundary
 
 Only this sequence is permitted:
 
@@ -266,7 +298,7 @@ Forbidden:
 - fresh random client order ID on retry;
 - reset to `PREPARED` after dispatch commitment.
 
-## 11. Outcome and recovery
+## 12. Outcome and recovery
 
 Minimum mapping:
 
@@ -295,7 +327,7 @@ Recovery table:
 
 If authoritative reconciliation is unavailable, runtime enters or remains `PAUSED_RECOVERY_REQUIRED`.
 
-## 12. Concurrency
+## 13. Concurrency
 
 Two SQLite connections racing on one semantic execution must yield one `CLAIMED`, one deterministic replay result, one claim, one PREPARED state, and zero attempts before `commit_dispatch`.
 
@@ -308,7 +340,7 @@ Required failures:
 - CAS row count other than one -> concurrency error;
 - database busy/timeout -> no executor call.
 
-## 13. Transaction boundaries
+## 14. Transaction boundaries
 
 All mutations use one injected `RuntimeDatabase` connection for repository lifetime:
 
@@ -321,19 +353,19 @@ All mutations use one injected `RuntimeDatabase` connection for repository lifet
 - no network/executor import in persistence;
 - no database import in pure key/type policy.
 
-## 14. Migration compatibility
+## 15. Migration compatibility
 
 V5 must append without editing V1-V4 SQL/checksums, preserve existing rows, apply atomically, fail closed on partial creation, be idempotent after success, reject drift, preserve foreign keys, keep historical attempts readable, and create no fake historical claims.
 
 V1-V4 checksums are frozen and asserted by regression tests.
 
-## 15. Paper integration
+## 16. Paper integration
 
 B5 initially integrates only with paper/shadow execution.
 
 The current random-order paper path is not authoritative for B5. The new typed paper adapter accepts the stable client order identity, is deterministic for identical envelopes, never creates a second simulated fill for one claim, keeps fees/slippage deterministic, persists through frozen B4.3 lifecycle writers, and imports no live private endpoint.
 
-## 16. Safety invariants
+## 17. Safety invariants
 
 - `LIVE = FORBIDDEN` in design, tests, examples, and evidence;
 - no API keys/secrets in SQLite, code, logs, fixtures, reports, or artifacts;
@@ -344,7 +376,7 @@ The current random-order paper path is not authoritative for B5. The new typed p
 - ambiguous state means reconciliation, not retry;
 - audit rows are immutable and non-deletable.
 
-## 17. Implementation decomposition
+## 18. Implementation decomposition
 
 ### B5A — contract freeze
 
@@ -362,7 +394,13 @@ Authorized files:
 - `implementation/src/atos/execution_idempotency_types.py`
 - `implementation/tests/test_execution_idempotency_schema.py`
 - `implementation/tests/test_execution_idempotency_types.py`
-- only necessary existing migration checksum/compatibility tests
+- only required checksum assertions in existing migration tests;
+- fixture-only compatibility updates in:
+  - `implementation/tests/test_execution_persistence_schema.py`
+  - `implementation/tests/test_order_fill_position_persistence_schema.py`
+  - `implementation/tests/test_lifecycle_persistence.py`
+
+Fixture compatibility changes may only insert valid V5 claims before new dispatch attempts. They must not remove, relax, skip, or rewrite frozen B4 assertions.
 
 No executor call or mutation repository.
 
@@ -400,20 +438,20 @@ Required evidence:
 - exact-SHA post-merge freeze gate;
 - `LIVE = FORBIDDEN`.
 
-## 18. Minimum acceptance matrix
+## 19. Minimum acceptance matrix
 
-Identity: stable across restart/session/cycle changes; changes for venue/account/symbol/action/hash; random/time inputs cannot affect it; stored components reproduce it; client projection is deterministic and collision-protected.
+Identity: stable across restart/session/cycle changes; changes for venue/account/symbol/action/hash; random/time inputs cannot affect it; stored components reproduce it; client projection is exactly V1 and collision-protected.
 
 Claim: first claim `CLAIMED`; PREPARED replay `REPLAY_PREPARED`; post-dispatch replay `RECONCILE_REQUIRED`; terminal replay `TERMINAL_NOOP`; unapproved risk/HOLD/parent mismatch writes nothing; injected failure rolls back.
 
-Dispatch: only PREPARED commits; evidence commits before executor call; concurrent commits create one attempt; stable client identity reused; no return to PREPARED; timeout becomes AMBIGUOUS.
+Dispatch: only PREPARED commits; attempt number is exactly one; evidence commits before executor call; concurrent commits create one attempt; stable client identity reused; no return to PREPARED; timeout becomes AMBIGUOUS.
 
 Recovery: PREPARED/no attempt retryable; PREPARED/attempt corrupt; DISPATCH_COMMITTED and AMBIGUOUS require query; FILLED/TERMINAL no-op; unavailable reconciliation pauses recovery.
 
 Regression: all B4.1-B4.3 tests pass; V1-V4 checksums unchanged; no lifecycle or Freqtrade regression; no secret leakage; LIVE forbidden.
 
-## 19. Freeze rule
+## 20. Freeze rule
 
-After B5A merges, this V1 contract is authoritative. Any change to identity components, encoding, client order identity, schema ownership, replay outcomes, PREPARED retry rule, ambiguity behavior, or authorized file surfaces requires a design erratum before implementation.
+After B5A merges, this V1 contract is authoritative. Any change to identity components, encoding, exact client/attempt identity algorithms, schema ownership, replay outcomes, PREPARED retry rule, one-attempt rule, ambiguity behavior, or authorized file surfaces requires a design erratum before implementation.
 
 No implementation may claim that timeout proves non-execution or generate a fresh remote identity for retry.
