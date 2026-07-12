@@ -6,6 +6,11 @@ on:
       - validation/b4-3b3-adb3511c-performance
     paths:
       - .github/workflows/b4-3b3-exact-sha-performance.yml
+  pull_request:
+    branches:
+      - feat/b4.3b3-lifecycle-performance-gate
+    paths:
+      - .github/workflows/b4-3b3-exact-sha-performance.yml
   workflow_dispatch:
 
 permissions:
