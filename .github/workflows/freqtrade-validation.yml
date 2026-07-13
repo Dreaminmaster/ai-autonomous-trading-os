@@ -146,7 +146,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
     needs: [atos-tests, freqtrade]
     if: always()
     steps:
@@ -166,28 +165,33 @@ jobs:
         with:
           name: freqtrade-validation
           path: freqtrade_artifacts
-      - name: Verify Simple CI
+      - name: Verify same-run CI equivalence
         env:
-          GITHUB_TOKEN: ${{ github.token }}
           SIMPLE_CI_RUN_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           SIMPLE_CI_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
           SIMPLE_CI_EVENT: ${{ github.event_name }}
+          ATOS_JOB_RESULT: ${{ needs.atos-tests.result }}
         run: |
           cd implementation
           python - <<'PY'
           import os
           from atos.evidence_summary import write_json_atomic
-          from atos.simple_ci_evidence import verify_simple_ci_for_sha
+          from atos.simple_ci_equivalence import verify_same_run_ci_equivalence
 
           pr_number = os.environ.get("SIMPLE_CI_PR_NUMBER", "").strip()
-          result = verify_simple_ci_for_sha(
-              os.environ["GITHUB_SHA"],
-              run_head_sha=os.environ["SIMPLE_CI_RUN_HEAD_SHA"],
+          result = verify_same_run_ci_equivalence(
+              ci_workflow_path="../.github/workflows/ci.yml",
+              validation_workflow_path="../.github/workflows/freqtrade-validation.yml",
+              atos_manifest_path="../atos_artifacts/evidence_manifest.json",
+              head_sha=os.environ["GITHUB_SHA"],
+              run_id=os.environ["GITHUB_RUN_ID"],
+              atos_result=os.environ["ATOS_JOB_RESULT"],
+              event_name=os.environ["SIMPLE_CI_EVENT"],
               pr_number=int(pr_number) if pr_number else None,
-              run_event=os.environ["SIMPLE_CI_EVENT"],
+              run_head_sha=os.environ["SIMPLE_CI_RUN_HEAD_SHA"],
           )
           write_json_atomic("simple_ci_evidence.json", result)
-          print("Simple CI verified: run_id=" + str(result["run_id"]))
+          print("Same-run CI equivalence verified: source_job=" + result["source_job"])
           PY
       - name: Run evidence summary
         run: |
