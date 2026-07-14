@@ -1,0 +1,85 @@
+name: C0B Deterministic Baseline Matrix
+
+on:
+  pull_request:
+    types: [ready_for_review]
+    branches: [main]
+    paths:
+      - '.github/workflows/c0b-baseline-matrix.yml'
+      - 'implementation/config/c0b_matrix.json'
+      - 'implementation/freqtrade_data/strategies/c0b_baselines.py'
+      - 'implementation/scripts/run_c0b_matrix.py'
+      - 'implementation/src/atos/c0b_export.py'
+      - 'implementation/src/atos/c0b_matrix.py'
+      - 'implementation/tests/test_c0b_export.py'
+      - 'implementation/tests/test_c0b_matrix.py'
+      - 'implementation/tests/test_c0b_strategy_contract.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  c0b-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          cd implementation
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev,freqtrade]'
+      - name: Setup Freqtrade
+        run: |
+          cd implementation
+          bash scripts/setup_freqtrade.sh
+          cp config/policy.validation.json config/policy.json
+      - name: Run focused C0B tests first
+        run: |
+          cd implementation
+          python -m pytest \
+            tests/test_c0b_export.py \
+            tests/test_c0b_matrix.py \
+            tests/test_c0b_strategy_contract.py \
+            -q
+      - name: Verify C0B strategies load
+        run: |
+          cd implementation
+          freqtrade list-strategies \
+            --strategy-path freqtrade_data/strategies \
+            2>&1 | tee c0b_list_strategies.log
+          grep -q 'C0BEMATrend' c0b_list_strategies.log
+          grep -q 'C0BDonchianBreakout' c0b_list_strategies.log
+          grep -q 'C0BMeanReversion' c0b_list_strategies.log
+      - name: Download frozen C0B data once
+        run: |
+          cd implementation
+          mkdir -p freqtrade_data/data/okx
+          DATA_TIMERANGE="$(python -c 'import json; print(json.load(open("config/c0b_matrix.json"))["data_timerange"])')"
+          freqtrade download-data \
+            --config freqtrade_data/config.dryrun.json \
+            --datadir freqtrade_data/data/okx \
+            --exchange okx \
+            --pairs BTC/USDT ETH/USDT SOL/USDT \
+            --timeframes 5m 15m 1h 4h \
+            --timerange "${DATA_TIMERANGE}"
+      - name: Run C0B matrix
+        run: |
+          cd implementation
+          python scripts/run_c0b_matrix.py
+      - name: Secret leakage scan
+        run: |
+          cd implementation
+          bash scripts/validate_no_secrets.sh
+      - name: Upload C0B evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c0b-deterministic-baseline-matrix
+          path: implementation/freqtrade_data/backtest_results/c0b/**
+          if-no-files-found: warn
+          retention-days: 90
