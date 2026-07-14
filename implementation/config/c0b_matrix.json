@@ -1,0 +1,55 @@
+{
+  "schema_version": 2,
+  "live": "FORBIDDEN",
+  "data_timerange": "20231101-20250701",
+  "timerange": "20240101-20250701",
+  "pairs": [
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT"
+  ],
+  "timeframes": [
+    "5m",
+    "15m",
+    "1h"
+  ],
+  "informative_timeframes": [
+    "1h",
+    "4h"
+  ],
+  "expected_fee_rate": 0.0015,
+  "fee_multipliers": [
+    1.0,
+    1.5,
+    2.0
+  ],
+  "strategies": [
+    "C0BEMATrend",
+    "C0BDonchianBreakout",
+    "C0BMeanReversion"
+  ],
+  "thresholds": {
+    "minimum_profit_factor": 1.1,
+    "maximum_drawdown_ratio": 0.15,
+    "minimum_trades": 30,
+    "minimum_positive_pairs": 2,
+    "maximum_pair_profit_share": 0.7
+  },
+  "frozen_control_reference": {
+    "strategy": "AISupervisedStrategy",
+    "scope": {
+      "pair": "BTC/USDT",
+      "timeframe": "5m",
+      "timerange": "20250101-20250701"
+    },
+    "run_id": "29322372151",
+    "head_sha": "1f65a4604950719a3fe8bd8dd1441ffe8f2a52ca",
+    "trades": 244,
+    "net_return_ratio": -0.16115080279,
+    "profit_factor": 0.7523746788093448,
+    "max_drawdown_ratio": 0.17850516555369864,
+    "fee_total_abs": 219.05578676193616,
+    "buy_and_hold_return_ratio": 0.14158273565628463,
+    "classification": "FAILED_PLUMBING_CONTROL_NOT_AI_BASELINE"
+  }
+}
