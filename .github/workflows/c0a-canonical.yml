@@ -1,0 +1,60 @@
+name: C0A Canonical Diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  c0a-canonical:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          cd implementation
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev,freqtrade]'
+      - name: Setup Freqtrade
+        run: |
+          cd implementation
+          bash scripts/setup_freqtrade.sh
+          cp config/policy.validation.json config/policy.json
+      - name: Download frozen canonical data
+        run: |
+          cd implementation
+          mkdir -p freqtrade_data/data/okx
+          freqtrade download-data \
+            --config freqtrade_data/config.dryrun.json \
+            --datadir freqtrade_data/data/okx \
+            --exchange okx \
+            --pairs BTC/USDT \
+            --timeframes 5m \
+            --timerange 20250101-20250701
+      - name: Run C0A canonical diagnostics
+        env:
+          TIMERANGE: 20250101-20250701
+        run: |
+          cd implementation
+          python scripts/run_c0a_canonical.py
+      - name: Secret leakage scan
+        run: |
+          cd implementation
+          bash scripts/validate_no_secrets.sh
+      - name: Upload C0A evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c0a-canonical-diagnostics
+          path: |
+            implementation/freqtrade_data/backtest_results/c0a_canonical.json
+            implementation/freqtrade_data/backtest_results/c0a_canonical.log
+            implementation/freqtrade_data/backtest_results/c0a_canonical_summary.json
+            implementation/freqtrade_data/backtest_results/c0a_trade_diagnostics.json
+            implementation/freqtrade_data/backtest_results/c0a_run_manifest.json
+          if-no-files-found: error
+          retention-days: 90
