@@ -69,6 +69,48 @@ def parse_hyperopt_csv_output(
     ]
 
 
+def discover_official_hyperopt_result_file(directory: str | Path) -> Path:
+    """Resolve the single authoritative Freqtrade result via its official pointer.
+
+    Freqtrade 2026.6 writes both a ``strategy_*.fthypt`` result and the
+    non-authoritative ``hyperopt_tickerdata.pkl`` cache. The official
+    ``.last_result.json`` pointer identifies the result that downstream
+    ``hyperopt-list`` and ``hyperopt-show`` must consume.
+    """
+    result_dir = Path(directory)
+    pointer = result_dir / ".last_result.json"
+    try:
+        payload = json.loads(pointer.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise C0CWalkForwardError(
+            f"unable to read official hyperopt result pointer {pointer}: {exc}"
+        ) from exc
+
+    latest = payload.get("latest_hyperopt")
+    if not isinstance(latest, str) or not latest.strip():
+        raise C0CWalkForwardError("official hyperopt result pointer missing latest_hyperopt")
+    latest = latest.strip()
+    latest_path = Path(latest)
+    if latest_path.name != latest or latest_path.suffix.lower() != ".fthypt":
+        raise C0CWalkForwardError(
+            f"official hyperopt result pointer is unsafe or unsupported: {latest!r}"
+        )
+
+    result_file = result_dir / latest
+    if not result_file.is_file():
+        raise C0CWalkForwardError(
+            f"official hyperopt result pointer target is missing: {result_file}"
+        )
+
+    result_files = sorted(path for path in result_dir.glob("*.fthypt") if path.is_file())
+    if result_files != [result_file]:
+        raise C0CWalkForwardError(
+            "expected exactly one authoritative .fthypt result matching the official "
+            f"pointer, found {[path.name for path in result_files]}"
+        )
+    return result_file
+
+
 def _rich_cells(line: str) -> list[str]:
     normalized = line.replace("┃", "|").replace("│", "|")
     if "|" not in normalized:
@@ -306,7 +348,7 @@ def _run_hyperopt(
         "--no-color",
     ]
     core.run(command, log_path, command_path)
-    result_file = core._discover_hyperopt_result_file()
+    result_file = discover_official_hyperopt_result_file(core.HYPEROPT_RESULTS)
 
     list_log = fold_dir / "hyperopt_list.log"
     list_csv = fold_dir / "hyperopt_epochs.csv"
