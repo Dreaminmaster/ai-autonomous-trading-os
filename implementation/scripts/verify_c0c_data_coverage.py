@@ -14,8 +14,10 @@ from atos.profitability_diagnostics import discover_candle_file, load_candles
 IMPL = Path(__file__).resolve().parents[1]
 CONFIG = IMPL / "config/c0c_cost_aware_ema.json"
 DATA_DIR = IMPL / "freqtrade_data/data/okx"
+BOUNDARY = IMPL / "freqtrade_data/c0c_runtime/c0c_data_boundary.json"
 OUTPUT = IMPL / "freqtrade_data/c0c_runtime/c0c_data_coverage.json"
 FROZEN_DOWNLOAD_TIMERANGE = "20231001-20250701"
+FROZEN_HOLDOUT_START = "2025-07-01T00:00:00+00:00"
 
 
 class C0CDataCoverageError(RuntimeError):
@@ -47,6 +49,31 @@ def _step(timeframe: str) -> timedelta:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def validate_boundary_report(payload: Mapping[str, Any], source_head_sha: str) -> None:
+    if payload.get("status") != "PASS":
+        raise C0CDataCoverageError("data boundary sanitization did not pass")
+    if payload.get("source_head_sha") != source_head_sha:
+        raise C0CDataCoverageError("boundary source SHA does not match C0C_SOURCE_SHA")
+    if payload.get("holdout_start") != FROZEN_HOLDOUT_START:
+        raise C0CDataCoverageError("boundary holdout start drift")
+    if payload.get("holdout_state") != "HOLDOUT_CLOSED":
+        raise C0CDataCoverageError("boundary report opened holdout")
+    if payload.get("policy") != "REMOVE_API_OVERSHOOT_AT_OR_AFTER_HOLDOUT_BEFORE_ANY_RESEARCH_READ":
+        raise C0CDataCoverageError("boundary sanitization policy drift")
+    cells = payload.get("cells")
+    if not isinstance(cells, list) or len(cells) != 6:
+        raise C0CDataCoverageError("boundary report must contain six cells")
+    holdout_start = _timestamp(FROZEN_HOLDOUT_START)
+    for cell in cells:
+        if not isinstance(cell, Mapping):
+            raise C0CDataCoverageError("invalid boundary cell")
+        if cell.get("status") != "PASS" or cell.get("post_boundary_rows") != 0:
+            raise C0CDataCoverageError("boundary cell is not sealed")
+        retained_latest = _timestamp(cell.get("retained_latest"))
+        if retained_latest >= holdout_start:
+            raise C0CDataCoverageError("boundary cell retains a holdout candle")
 
 
 def validate_rows(
@@ -141,7 +168,7 @@ def build_report(
     holdout_start = _timestamp(holdout.get("start"))
     if first_fold_start.isoformat() != "2024-01-01T00:00:00+00:00":
         raise C0CDataCoverageError("first fold start drift")
-    if holdout_start.isoformat() != "2025-07-01T00:00:00+00:00":
+    if holdout_start.isoformat() != FROZEN_HOLDOUT_START:
         raise C0CDataCoverageError("holdout start drift")
 
     pairs = config.get("pairs")
@@ -174,6 +201,8 @@ def build_report(
         "holdout_start": holdout_start.isoformat(),
         "startup_candle_count": startup_candles,
         "holdout_state": "HOLDOUT_CLOSED",
+        "data_boundary_path": str(BOUNDARY.relative_to(IMPL)),
+        "data_boundary_sha256": _sha256(BOUNDARY),
         "cells": sorted(cells, key=lambda item: (item["pair"], item["timeframe"])),
     }
 
@@ -188,9 +217,10 @@ def build_failure_report(
         "source_head_sha": source_head_sha,
         "download_timerange": download_timerange,
         "evaluation_data_timerange": "20231101-20250701",
-        "holdout_start": "2025-07-01T00:00:00+00:00",
+        "holdout_start": FROZEN_HOLDOUT_START,
         "startup_candle_count": 1499,
         "holdout_state": "HOLDOUT_CLOSED",
+        "data_boundary_path": str(BOUNDARY.relative_to(IMPL)),
         "error_type": type(error).__name__,
         "error": str(error),
         "cells": [],
@@ -209,6 +239,8 @@ def main() -> int:
     source_head_sha = os.environ.get("C0C_SOURCE_SHA", os.environ.get("GITHUB_SHA", "local"))
     try:
         config = json.loads(CONFIG.read_text(encoding="utf-8"))
+        boundary: dict[str, Any] = json.loads(BOUNDARY.read_text(encoding="utf-8"))
+        validate_boundary_report(boundary, source_head_sha)
         report = build_report(
             config=config,
             data_dir=DATA_DIR,
