@@ -83,11 +83,23 @@ def validate_recursive_analysis_log(
     required_indicators: Sequence[str],
     max_variance_pct: float,
 ) -> dict[str, Any]:
-    """Parse Freqtrade's Rich table, including '<count> (from strategy)' headers."""
+    """Parse Freqtrade 2026.6 Rich recursive output using its emission semantics.
+
+    Freqtrade only emits indicators present in ``DataFrame.compare()``. Therefore
+    a required indicator omitted from the table, or represented by ``-`` at the
+    selected startup column, is explicit zero observed recursive variance rather
+    than missing evidence. The exact selected startup column and the no-lookahead
+    marker remain mandatory, and malformed or excessive numeric values fail closed.
+    """
     try:
         lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as exc:
         raise C0CWalkForwardError(f"unable to read recursive analysis log: {exc}") from exc
+
+    if any("=> found lookahead in indicator" in line for line in lines):
+        raise C0CWalkForwardError("recursive analysis reported indicator lookahead")
+    if not any("No lookahead bias on indicators found." in line for line in lines):
+        raise C0CWalkForwardError("recursive analysis missing no-lookahead proof")
 
     header_index: int | None = None
     startup_column: int | None = None
@@ -107,26 +119,51 @@ def validate_recursive_analysis_log(
             f"recursive analysis table/header missing startup column {startup_count}"
         )
 
-    required = set(required_indicators)
-    observed: dict[str, float] = {}
+    table_values: dict[str, str] = {}
     for line in lines[header_index + 1 :]:
         cells = _rich_cells(line)
         if not cells:
-            if observed:
+            if table_values:
                 break
             continue
         if len(cells) <= startup_column:
             continue
         indicator = cells[0]
-        if indicator not in required:
+        if not indicator or indicator.lower() == "indicators":
             continue
         raw = cells[startup_column].strip()
+        existing = table_values.get(indicator)
+        if existing is not None and existing != raw:
+            raise C0CWalkForwardError(
+                f"conflicting recursive rows for indicator {indicator}"
+            )
+        table_values[indicator] = raw
+
+    required = list(dict.fromkeys(str(item) for item in required_indicators))
+    if not required:
+        raise C0CWalkForwardError("recursive analysis required indicators are empty")
+
+    observed: dict[str, float] = {}
+    evidence_basis: dict[str, str] = {}
+    omitted_as_zero: list[str] = []
+    dashed_as_zero: list[str] = []
+
+    for indicator in required:
+        if indicator not in table_values:
+            observed[indicator] = 0.0
+            evidence_basis[indicator] = "NOT_EMITTED_BY_FREQTRADE_NO_RECURSIVE_DIFFERENCE"
+            omitted_as_zero.append(indicator)
+            continue
+
+        raw = table_values[indicator]
         if not raw or "nan" in raw.lower():
             raise C0CWalkForwardError(
                 f"recursive analysis {indicator} is not calculable at {startup_count}"
             )
         if raw == "-":
             variance = 0.0
+            evidence_basis[indicator] = "DASH_NO_RECORDED_DIFFERENCE_AT_SELECTED_STARTUP"
+            dashed_as_zero.append(indicator)
         else:
             try:
                 variance = abs(float(raw.rstrip("%").replace(",", "")))
@@ -134,20 +171,24 @@ def validate_recursive_analysis_log(
                 raise C0CWalkForwardError(
                     f"invalid recursive variance for {indicator}: {raw!r}"
                 ) from exc
+            evidence_basis[indicator] = "NUMERIC_RICH_TABLE_VALUE"
+
         if variance > max_variance_pct:
             raise C0CWalkForwardError(
                 f"recursive variance {indicator}={variance}% exceeds {max_variance_pct}%"
             )
         observed[indicator] = variance
 
-    missing = sorted(required - set(observed))
-    if missing:
-        raise C0CWalkForwardError(f"recursive analysis missing indicators: {missing}")
     return {
         "status": "PASS",
         "startup_candle_count": startup_count,
         "max_variance_pct": max_variance_pct,
+        "output_semantics": "FREQTRADE_2026_6_ONLY_DIFFERING_INDICATORS_EMITTED",
+        "lookahead_status": "PASS",
         "indicator_variance_pct": dict(sorted(observed.items())),
+        "indicator_evidence_basis": dict(sorted(evidence_basis.items())),
+        "omitted_as_zero_variance": sorted(omitted_as_zero),
+        "dash_as_zero_variance": sorted(dashed_as_zero),
     }
 
 
