@@ -178,18 +178,54 @@ def build_report(
     }
 
 
-def main() -> int:
-    config = json.loads(CONFIG.read_text(encoding="utf-8"))
-    report = build_report(
-        config=config,
-        data_dir=DATA_DIR,
-        download_timerange=os.environ.get("C0C_DOWNLOAD_TIMERANGE", ""),
-        source_head_sha=os.environ.get("C0C_SOURCE_SHA", os.environ.get("GITHUB_SHA", "local")),
-    )
+def build_failure_report(
+    *, error: Exception, download_timerange: str, source_head_sha: str
+) -> dict[str, Any]:
+    """Persist a reviewable fail-closed diagnostic without changing the gate."""
+    return {
+        "schema_version": 1,
+        "status": "FAIL",
+        "source_head_sha": source_head_sha,
+        "download_timerange": download_timerange,
+        "evaluation_data_timerange": "20231101-20250701",
+        "holdout_start": "2025-07-01T00:00:00+00:00",
+        "startup_candle_count": 1499,
+        "holdout_state": "HOLDOUT_CLOSED",
+        "error_type": type(error).__name__,
+        "error": str(error),
+        "cells": [],
+    }
+
+
+def _write_report(report: Mapping[str, Any]) -> None:
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     temporary = OUTPUT.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
     temporary.replace(OUTPUT)
+
+
+def main() -> int:
+    download_timerange = os.environ.get("C0C_DOWNLOAD_TIMERANGE", "")
+    source_head_sha = os.environ.get("C0C_SOURCE_SHA", os.environ.get("GITHUB_SHA", "local"))
+    try:
+        config = json.loads(CONFIG.read_text(encoding="utf-8"))
+        report = build_report(
+            config=config,
+            data_dir=DATA_DIR,
+            download_timerange=download_timerange,
+            source_head_sha=source_head_sha,
+        )
+    except Exception as exc:
+        failure = build_failure_report(
+            error=exc,
+            download_timerange=download_timerange,
+            source_head_sha=source_head_sha,
+        )
+        _write_report(failure)
+        print(f"C0C data coverage FAIL: {failure['error_type']}: {failure['error']}")
+        raise
+
+    _write_report(report)
     print(
         "C0C data coverage PASS: "
         f"{len(report['cells'])} pair/timeframe cells, HOLDOUT_CLOSED"
