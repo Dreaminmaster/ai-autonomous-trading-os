@@ -61,6 +61,9 @@ def validate_rows(
     if not rows:
         raise C0CDataCoverageError(f"no candles for {pair} {timeframe}")
     dates = sorted(_timestamp(row.get("date")) for row in rows)
+    if len(set(dates)) != len(dates):
+        raise C0CDataCoverageError(f"duplicate candles for {pair} {timeframe}")
+
     candle_step = _step(timeframe)
     required_earliest = first_fold_start - candle_step * startup_candles
     required_latest = holdout_start - candle_step
@@ -79,14 +82,34 @@ def validate_rows(
         raise C0CDataCoverageError(
             f"{pair} {timeframe} contains holdout candle {latest.isoformat()}"
         )
+
+    required_dates = [
+        value for value in dates if required_earliest <= value <= required_latest
+    ]
+    expected_rows = int((required_latest - required_earliest) / candle_step) + 1
+    if len(required_dates) != expected_rows:
+        raise C0CDataCoverageError(
+            f"{pair} {timeframe} required rows {len(required_dates)} != {expected_rows}"
+        )
+    if required_dates[0] != required_earliest or required_dates[-1] != required_latest:
+        raise C0CDataCoverageError(f"{pair} {timeframe} required boundary candle missing")
+    for previous, current in zip(required_dates, required_dates[1:]):
+        if current - previous != candle_step:
+            raise C0CDataCoverageError(
+                f"{pair} {timeframe} candle gap {previous.isoformat()} -> {current.isoformat()}"
+            )
+
     return {
         "pair": pair,
         "timeframe": timeframe,
         "rows": len(rows),
+        "required_rows": expected_rows,
         "earliest": earliest.isoformat(),
         "latest": latest.isoformat(),
         "required_earliest": required_earliest.isoformat(),
         "required_latest": required_latest.isoformat(),
+        "duplicates": 0,
+        "gaps": 0,
         "status": "PASS",
     }
 
@@ -104,6 +127,8 @@ def build_report(
         )
     if config.get("holdout_state") != "HOLDOUT_CLOSED":
         raise C0CDataCoverageError("holdout must remain closed")
+    if config.get("data_timerange") != "20231101-20250701":
+        raise C0CDataCoverageError("evaluation data timerange drift")
     startup = config.get("startup_analysis", {})
     startup_candles = int(startup.get("selected_startup_candles", 0))
     if startup_candles != 1499:
@@ -119,13 +144,16 @@ def build_report(
     if holdout_start.isoformat() != "2025-07-01T00:00:00+00:00":
         raise C0CDataCoverageError("holdout start drift")
 
+    pairs = config.get("pairs")
+    if pairs != ["BTC/USDT", "ETH/USDT", "SOL/USDT"]:
+        raise C0CDataCoverageError("pair universe drift")
     cells: list[dict[str, Any]] = []
-    for pair in config.get("pairs", []):
+    for pair in pairs:
         for timeframe in ("5m", "1h"):
-            path = discover_candle_file(data_dir, str(pair), timeframe)
+            path = discover_candle_file(data_dir, pair, timeframe)
             item = validate_rows(
                 load_candles(path),
-                pair=str(pair),
+                pair=pair,
                 timeframe=timeframe,
                 first_fold_start=first_fold_start,
                 holdout_start=holdout_start,
@@ -134,9 +162,8 @@ def build_report(
             item["path"] = str(path.relative_to(IMPL))
             item["sha256"] = _sha256(path)
             cells.append(item)
-    expected = len(config.get("pairs", [])) * 2
-    if len(cells) != expected:
-        raise C0CDataCoverageError(f"coverage cell count {len(cells)} != {expected}")
+    if len(cells) != 6:
+        raise C0CDataCoverageError(f"coverage cell count {len(cells)} != 6")
     return {
         "schema_version": 1,
         "status": "PASS",
