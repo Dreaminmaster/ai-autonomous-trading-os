@@ -11,11 +11,13 @@ on:
       - 'implementation/scripts/run_c0c_development.py'
       - 'implementation/scripts/c0c_development_core.py'
       - 'implementation/scripts/finalize_c0c_manifest.py'
+      - 'implementation/scripts/sanitize_c0c_data_boundary.py'
       - 'implementation/scripts/verify_c0c_data_coverage.py'
       - 'implementation/src/atos/__init__.py'
       - 'implementation/src/atos/c0c_okx_startup.py'
       - 'implementation/src/atos/c0c_validation_gate.py'
       - 'implementation/src/atos/c0c_walk_forward.py'
+      - 'implementation/tests/test_c0c_data_boundary.py'
       - 'implementation/tests/test_c0c_data_coverage.py'
       - 'implementation/tests/test_c0c_okx_startup_contract.py'
       - 'implementation/tests/test_c0c_validation_gate.py'
@@ -56,6 +58,7 @@ jobs:
         run: |
           cd implementation
           python -m pytest \
+            tests/test_c0c_data_boundary.py \
             tests/test_c0c_data_coverage.py \
             tests/test_c0c_okx_startup_contract.py \
             tests/test_c0c_validation_gate.py \
@@ -77,6 +80,10 @@ jobs:
             --pairs BTC/USDT ETH/USDT SOL/USDT \
             --timeframes 5m 1h \
             --timerange "$C0C_DOWNLOAD_TIMERANGE"
+      - name: Seal exchange API overshoot below holdout boundary
+        run: |
+          cd implementation
+          python scripts/sanitize_c0c_data_boundary.py
       - name: Verify startup coverage and holdout boundary
         run: |
           cd implementation
