@@ -91,3 +91,21 @@ def test_holdout_overlap_fails_closed() -> None:
             holdout_start=holdout,
             startup_candles=2,
         )
+
+
+def test_failure_report_preserves_exact_source_and_closed_holdout() -> None:
+    error = coverage.C0CDataCoverageError(
+        "BTC/USDT 5m required rows 10 != 11"
+    )
+    report = coverage.build_failure_report(
+        error=error,
+        download_timerange="20231001-20250701",
+        source_head_sha="a" * 40,
+    )
+    assert report["status"] == "FAIL"
+    assert report["source_head_sha"] == "a" * 40
+    assert report["download_timerange"] == "20231001-20250701"
+    assert report["holdout_state"] == "HOLDOUT_CLOSED"
+    assert report["error_type"] == "C0CDataCoverageError"
+    assert "required rows" in report["error"]
+    assert report["cells"] == []
