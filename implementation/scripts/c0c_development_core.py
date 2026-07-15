@@ -31,7 +31,7 @@ os.chdir(IMPL)
 
 CONFIG_PATH = Path("config/c0c_cost_aware_ema.json")
 STRATEGY_PATH = Path("freqtrade_data/strategies/c0c_cost_aware_ema.py")
-PARAM_PATH = Path("freqtrade_data/strategies/C0CCostAwareEMA.json")
+PARAM_PATH = STRATEGY_PATH.with_suffix(".json")
 DATA_DIR = Path("freqtrade_data/data/okx")
 RESULTS = Path("freqtrade_data/backtest_results/c0c_development")
 HYPEROPT_RESULTS = Path("freqtrade_data/hyperopt_results")
