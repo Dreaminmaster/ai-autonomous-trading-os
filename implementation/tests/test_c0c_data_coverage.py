@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -32,6 +33,29 @@ def _contract_rows() -> tuple[list[dict[str, str]], datetime, datetime]:
         timedelta(hours=1),
     )
     return rows, first_fold, holdout
+
+
+def _boundary_report(source_sha: str = "a" * 40) -> dict:
+    cells = []
+    for pair in ("BTC/USDT", "ETH/USDT", "SOL/USDT"):
+        for timeframe in ("5m", "1h"):
+            cells.append(
+                {
+                    "pair": pair,
+                    "timeframe": timeframe,
+                    "status": "PASS",
+                    "post_boundary_rows": 0,
+                    "retained_latest": "2025-06-30T23:55:00+00:00",
+                }
+            )
+    return {
+        "status": "PASS",
+        "source_head_sha": source_sha,
+        "holdout_start": "2025-07-01T00:00:00+00:00",
+        "holdout_state": "HOLDOUT_CLOSED",
+        "policy": "REMOVE_API_OVERSHOOT_AT_OR_AFTER_HOLDOUT_BEFORE_ANY_RESEARCH_READ",
+        "cells": cells,
+    }
 
 
 def test_contiguous_pre_holdout_coverage_passes() -> None:
@@ -91,6 +115,26 @@ def test_holdout_overlap_fails_closed() -> None:
             holdout_start=holdout,
             startup_candles=2,
         )
+
+
+def test_boundary_report_is_required_and_exact_source_bound() -> None:
+    report = _boundary_report()
+    coverage.validate_boundary_report(report, "a" * 40)
+
+    drift = deepcopy(report)
+    drift["source_head_sha"] = "b" * 40
+    with pytest.raises(coverage.C0CDataCoverageError, match="boundary source SHA"):
+        coverage.validate_boundary_report(drift, "a" * 40)
+
+    drift = deepcopy(report)
+    drift["cells"][0]["post_boundary_rows"] = 1
+    with pytest.raises(coverage.C0CDataCoverageError, match="not sealed"):
+        coverage.validate_boundary_report(drift, "a" * 40)
+
+    drift = deepcopy(report)
+    drift["cells"][0]["retained_latest"] = "2025-07-01T00:00:00+00:00"
+    with pytest.raises(coverage.C0CDataCoverageError, match="retains a holdout candle"):
+        coverage.validate_boundary_report(drift, "a" * 40)
 
 
 def test_failure_report_preserves_exact_source_and_closed_holdout() -> None:
