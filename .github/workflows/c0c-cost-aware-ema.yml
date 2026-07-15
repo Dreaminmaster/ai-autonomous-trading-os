@@ -100,6 +100,6 @@ jobs:
           name: c0c-cost-aware-ema-development
           path: |
             implementation/freqtrade_data/backtest_results/c0c_development/**
-            implementation/freqtrade_data/c0c_runtime/c0c_data_coverage.json
+            implementation/freqtrade_data/c0c_runtime/**
           if-no-files-found: warn
           retention-days: 90
