@@ -258,6 +258,7 @@ def test_hyperopt_csv_parser_fails_closed_on_schema_and_shortlist(tmp_path):
 def _recursive_rich_table(value: str = "0.010%") -> str:
     indicators=c0c.STARTUP_ANALYSIS["required_indicators"]
     rows=[
+        "No lookahead bias on indicators found.",
         "                         Recursive Analysis",
         "┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓",
         "┃ Indicators         ┃    499 ┃    999 ┃ 1999 (from strategy) ┃   3999 ┃",
@@ -271,6 +272,23 @@ def _recursive_rich_table(value: str = "0.010%") -> str:
     return "\n".join(rows)
 
 
+def _recursive_sparse_run4_table() -> str:
+    return "\n".join([
+        "No variance on indicator(s) found due to recursive formula.",
+        "No lookahead bias on indicators found.",
+        "                     Recursive Analysis",
+        "┏━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓",
+        "┃ Indicators     ┃     499 ┃     999 ┃ 1499 (from strategy) ┃",
+        "┡━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩",
+        "│ ema_slow_50    │ -0.000% │       - │                    - │",
+        "│ ema_spread     │ -0.000% │       - │                    - │",
+        "│ slow_slope_12  │ -0.000% │       - │                    - │",
+        "│ htf_ema_100_1h │  0.000% │  0.000% │                    - │",
+        "│ htf_slope_6_1h │ -0.012% │ -0.000% │                    - │",
+        "└────────────────┴─────────┴─────────┴──────────────────────┘",
+    ])
+
+
 def test_recursive_analysis_parser_supports_current_rich_table(tmp_path):
     path=tmp_path/"recursive.log"
     indicators=c0c.STARTUP_ANALYSIS["required_indicators"]
@@ -279,7 +297,44 @@ def test_recursive_analysis_parser_supports_current_rich_table(tmp_path):
         path,startup_count=1999,required_indicators=indicators,max_variance_pct=0.1
     )
     assert result["status"] == "PASS"
+    assert result["lookahead_status"] == "PASS"
     assert set(result["indicator_variance_pct"]) == set(indicators)
+    assert result["omitted_as_zero_variance"] == []
+
+
+def test_recursive_analysis_parser_accepts_official_sparse_zero_variance_output(tmp_path):
+    path=tmp_path/"recursive.log"
+    indicators=[
+        "ema_fast_20",
+        "ema_slow_50",
+        "ema_spread",
+        "slow_slope_12",
+        "atr_ratio_14",
+        "close_1h",
+        "htf_ema_100_1h",
+        "htf_slope_6_1h",
+    ]
+    path.write_text(_recursive_sparse_run4_table())
+    result=validate_recursive_analysis_log(
+        path,startup_count=1499,required_indicators=indicators,max_variance_pct=0.1
+    )
+    assert result["status"] == "PASS"
+    assert result["output_semantics"] == (
+        "FREQTRADE_2026_6_ONLY_DIFFERING_INDICATORS_EMITTED"
+    )
+    assert result["omitted_as_zero_variance"] == [
+        "atr_ratio_14",
+        "close_1h",
+        "ema_fast_20",
+    ]
+    assert result["dash_as_zero_variance"] == [
+        "ema_slow_50",
+        "ema_spread",
+        "htf_ema_100_1h",
+        "htf_slope_6_1h",
+        "slow_slope_12",
+    ]
+    assert all(result["indicator_variance_pct"][name] == 0.0 for name in indicators)
 
 
 def test_recursive_analysis_parser_fails_closed(tmp_path):
@@ -289,4 +344,13 @@ def test_recursive_analysis_parser_fails_closed(tmp_path):
     with pytest.raises(c0c.C0CWalkForwardError,match="exceeds"):
         validate_recursive_analysis_log(
             path,startup_count=1999,required_indicators=indicators,max_variance_pct=0.1
+        )
+
+    path.write_text(_recursive_sparse_run4_table().replace(
+        "No lookahead bias on indicators found.",
+        "=> found lookahead in indicator ema_fast_20",
+    ))
+    with pytest.raises(c0c.C0CWalkForwardError, match="reported indicator lookahead"):
+        validate_recursive_analysis_log(
+            path,startup_count=1499,required_indicators=indicators,max_variance_pct=0.1
         )
