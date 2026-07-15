@@ -10,6 +10,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "c0c-cost-aware-ema.yml"
 RUNNER = ROOT / "implementation" / "scripts" / "run_c0c_development.py"
 CORE = ROOT / "implementation" / "scripts" / "c0c_development_core.py"
 FINALIZER = ROOT / "implementation" / "scripts" / "finalize_c0c_manifest.py"
+COVERAGE = ROOT / "implementation" / "scripts" / "verify_c0c_data_coverage.py"
 GATE = ROOT / "implementation" / "src" / "atos" / "c0c_validation_gate.py"
 WALK = ROOT / "implementation" / "src" / "atos" / "c0c_walk_forward.py"
 STARTUP = ROOT / "implementation" / "src" / "atos" / "c0c_okx_startup.py"
@@ -93,14 +94,18 @@ def test_candidate_has_no_ai_network_or_live_path() -> None:
 
 def test_development_workflow_is_exact_source_and_holdout_closed() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert "20231101-20250701" in workflow
+    assert "C0C_DOWNLOAD_TIMERANGE: '20231001-20250701'" in workflow
+    assert 'C0C_DOWNLOAD_TIMERANGE' in workflow
     assert "20260701" not in workflow
-    assert "holdout" not in workflow.lower()
+    assert "20250701-20260701" not in workflow
     assert "types: [ready_for_review]" in workflow
     assert "C0C_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}" in workflow
     assert "ref: ${{ env.C0C_SOURCE_SHA }}" in workflow
     assert "implementation/src/atos/c0c_okx_startup.py" in workflow
+    assert "implementation/scripts/verify_c0c_data_coverage.py" in workflow
+    assert "implementation/tests/test_c0c_data_coverage.py" in workflow
     assert "implementation/tests/test_c0c_okx_startup_contract.py" in workflow
+    assert "python scripts/verify_c0c_data_coverage.py" in workflow
     assert "scripts/finalize_c0c_manifest.py" in workflow
 
 
@@ -131,6 +136,7 @@ def test_startup_analysis_is_prospective_exchange_reproducible_and_fail_closed()
     walk = WALK.read_text(encoding="utf-8")
     startup_contract = STARTUP.read_text(encoding="utf-8")
     package_init = PACKAGE_INIT.read_text(encoding="utf-8")
+    coverage = COVERAGE.read_text(encoding="utf-8")
     assert "OKX_5M_MAX_STARTUP_CANDLES = 1499" in startup_contract
     assert "apply_okx_startup_contract()" in package_init
     assert '"recursive-analysis"' in core
@@ -138,6 +144,11 @@ def test_startup_analysis_is_prospective_exchange_reproducible_and_fail_closed()
     assert "validate_recursive_analysis_log" in core
     assert "recursive analysis missing indicators" in walk
     assert "exceeds" in walk
+    assert 'FROZEN_DOWNLOAD_TIMERANGE = "20231001-20250701"' in coverage
+    assert "required_rows" in coverage
+    assert "duplicate candles" in coverage
+    assert "candle gap" in coverage
+    assert "contains holdout candle" in coverage
 
 
 def test_three_candidate_shortlist_is_selected_on_validation_only() -> None:
@@ -176,7 +187,10 @@ def test_cost_attribution_and_provenance_are_contract_bound() -> None:
     assert "source_files" in gate
     assert "manifest source SHA does not match C0C_SOURCE_SHA" in finalizer
     assert "src/atos/c0c_okx_startup.py" in finalizer
-    assert "tests/test_c0c_okx_startup_contract.py" in finalizer
+    assert "scripts/verify_c0c_data_coverage.py" in finalizer
+    assert "tests/test_c0c_data_coverage.py" in finalizer
+    assert 'payload["data_coverage"]' in finalizer
+    assert "coverage source SHA does not match C0C_SOURCE_SHA" in finalizer
     assert "prior_run_reached_hyperopt" in finalizer
 
 
