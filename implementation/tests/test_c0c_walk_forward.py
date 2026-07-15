@@ -14,6 +14,9 @@ _RUNNER = runpy.run_path(
     str(Path(__file__).resolve().parents[1] / "scripts" / "run_c0c_development.py")
 )
 parse_hyperopt_csv_output = _RUNNER["parse_hyperopt_csv_output"]
+discover_official_hyperopt_result_file = _RUNNER[
+    "discover_official_hyperopt_result_file"
+]
 validate_recursive_analysis_log = _RUNNER["validate_recursive_analysis_log"]
 
 
@@ -253,6 +256,32 @@ def test_hyperopt_csv_parser_fails_closed_on_schema_and_shortlist(tmp_path):
     path.write_text("Epoch,Trades,Objective\n1,29,0.1\n")
     with pytest.raises(c0c.C0CWalkForwardError,match="eligible epochs"):
         parse_hyperopt_csv_output(path,shortlist_size=1,min_trades=30)
+
+
+def test_hyperopt_result_discovery_uses_official_pointer_and_ignores_cache(tmp_path):
+    result = tmp_path/"strategy_C0CCostAwareEMA_2026-07-15_19-40-27.fthypt"
+    result.write_text("epoch\n")
+    (tmp_path/"hyperopt_tickerdata.pkl").write_bytes(b"cache")
+    (tmp_path/".last_result.json").write_text(json.dumps({
+        "latest_hyperopt": result.name,
+    }))
+
+    assert discover_official_hyperopt_result_file(tmp_path) == result
+
+
+def test_hyperopt_result_discovery_fails_closed_on_pointer_or_result_ambiguity(tmp_path):
+    result = tmp_path/"strategy_one.fthypt"
+    result.write_text("epoch\n")
+    pointer = tmp_path/".last_result.json"
+
+    pointer.write_text(json.dumps({"latest_hyperopt": "../strategy_one.fthypt"}))
+    with pytest.raises(c0c.C0CWalkForwardError, match="unsafe or unsupported"):
+        discover_official_hyperopt_result_file(tmp_path)
+
+    pointer.write_text(json.dumps({"latest_hyperopt": result.name}))
+    (tmp_path/"strategy_two.fthypt").write_text("epoch\n")
+    with pytest.raises(c0c.C0CWalkForwardError, match="exactly one authoritative"):
+        discover_official_hyperopt_result_file(tmp_path)
 
 
 def _recursive_rich_table(value: str = "0.010%") -> str:
