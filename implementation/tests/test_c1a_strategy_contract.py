@@ -104,8 +104,14 @@ def test_daily_context_is_combined_before_single_informative_merge() -> None:
         and node.func.id == "merge_informative_pair"
     ]
     assert len(calls) == 1
+    call = calls[0]
+    assert len(call.args) >= 4
+    assert isinstance(call.args[3], ast.Name) and call.args[3].id == "DAILY_TIMEFRAME"
+    assert any(
+        keyword.arg == "ffill" and isinstance(keyword.value, ast.Constant) and keyword.value.value is True
+        for keyword in call.keywords
+    )
     assert 'validate="one_to_one"' in source
-    assert 'timeframe=DAILY_TIMEFRAME' in source
 
 
 def test_breakout_extrema_exclude_current_candle_and_entry_is_event_based() -> None:
