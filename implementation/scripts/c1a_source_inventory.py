@@ -10,37 +10,44 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from c1a_contract_completion import SOURCE_PATHS as EFFECTIVE_SOURCE_PATHS
+
 
 IMPL = Path(__file__).resolve().parents[1]
 ROOT = IMPL.parent
 RESULTS = IMPL / "freqtrade_data/backtest_results/c1a_family_screen"
 INVENTORY = RESULTS / "c1a_source_inventory.json"
 SNAPSHOT = RESULTS / "source_snapshot"
-SOURCE_PATHS = [
+
+
+def _root_relative(path: Path) -> str:
+    try:
+        return str((IMPL / path).resolve().relative_to(ROOT.resolve()))
+    except ValueError as exc:
+        raise RuntimeError(f"effective source escapes repository root: {path}") from exc
+
+
+SOURCE_PATHS = [_root_relative(path) for path in EFFECTIVE_SOURCE_PATHS]
+_REQUIRED_MARKERS = (
     ".github/workflows/c1a-strategy-family-screen.yml",
-    "docs/architecture/phase-c/c1a-family-screen/C1A_STRATEGY_FAMILY_SCREEN_CONTRACT_V1.md",
-    "implementation/pyproject.toml",
-    "implementation/config/c1a_strategy_family_screen.json",
-    "implementation/config/policy.validation.json",
-    "implementation/freqtrade_data/config.dryrun.json",
-    "implementation/freqtrade_data/strategies/c1a_common.py",
-    "implementation/scripts/c0c_development_core.py",
+    "docs/architecture/phase-c/c0c/C0C_COST_AWARE_EMA_RESULT_V1.md",
+    "implementation/freqtrade_data/c1a_runtime/config.c1a.json",
+    "implementation/scripts/c1a_contract_completion.py",
     "implementation/scripts/c1a_data_guard.py",
     "implementation/scripts/c1a_evidence.py",
     "implementation/scripts/c1a_source_inventory.py",
     "implementation/scripts/finalize_c1a_evidence.py",
-    "implementation/scripts/run_c0c_development.py",
-    "implementation/scripts/setup_freqtrade.sh",
-    "implementation/scripts/validate_no_secrets.sh",
-    "implementation/src/atos/c0b_export.py",
-    "implementation/src/atos/c0c_walk_forward.py",
     "implementation/src/atos/c1a_family_screen.py",
-    "implementation/src/atos/profitability_diagnostics.py",
+    "implementation/tests/test_c1a_contract_completion.py",
     "implementation/tests/test_c1a_data_guard.py",
     "implementation/tests/test_c1a_evidence_contract.py",
     "implementation/tests/test_c1a_family_screen.py",
     "implementation/tests/test_c1a_strategy_contract.py",
-]
+)
+if len(SOURCE_PATHS) != len(set(SOURCE_PATHS)):
+    raise RuntimeError("effective source inventory contains duplicate paths")
+if not set(_REQUIRED_MARKERS).issubset(SOURCE_PATHS):
+    raise RuntimeError("effective source inventory is missing required C1A sources")
 
 
 class C1ASourceInventoryError(RuntimeError):
