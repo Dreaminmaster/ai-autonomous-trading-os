@@ -51,8 +51,8 @@ def _pair_daily(dataframe: DataFrame) -> DataFrame:
     result = dataframe.copy().sort_values("date")
     result["pair_close"] = result["close"]
     result["pair_ema90"] = result["close"].ewm(span=90, adjust=False).mean()
-    result["pair_return_20d"] = result["close"].pct_change(20)
-    result["pair_return_60d"] = result["close"].pct_change(60)
+    result["pair_return_20d"] = result["close"].pct_change(20, fill_method=None)
+    result["pair_return_60d"] = result["close"].pct_change(60, fill_method=None)
     return result[
         ["date", "pair_close", "pair_ema90", "pair_return_20d", "pair_return_60d"]
     ]
@@ -63,8 +63,8 @@ def _btc_daily(dataframe: DataFrame) -> DataFrame:
     result["btc_close"] = result["close"]
     result["btc_ema90"] = result["close"].ewm(span=90, adjust=False).mean()
     result["btc_ema20"] = result["close"].ewm(span=20, adjust=False).mean()
-    result["btc_ema20_slope_5"] = result["btc_ema20"].pct_change(5)
-    result["btc_return_20d"] = result["close"].pct_change(20)
+    result["btc_ema20_slope_5"] = result["btc_ema20"].pct_change(5, fill_method=None)
+    result["btc_return_20d"] = result["close"].pct_change(20, fill_method=None)
     return result[
         ["date", "btc_close", "btc_ema90", "btc_ema20", "btc_ema20_slope_5", "btc_return_20d"]
     ]
@@ -142,7 +142,7 @@ def atr_stoploss_from_entry(
     if not math.isfinite(entry_atr) or entry_atr <= 0.0:
         return None
     stop_price = float(trade.open_rate) - 2.5 * entry_atr
-    if not math.isfinite(stop_price) or stop_price <= 0.0 or stop_price >= current_rate:
+    if not math.isfinite(stop_price) or stop_price <= 0.0:
         return None
     return stoploss_from_absolute(
         stop_price,
