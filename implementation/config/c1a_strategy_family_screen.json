@@ -21,6 +21,10 @@
   "informative_timeframe": "1d",
   "download_timerange": "20230701-20241001",
   "economic_boundary_exclusive": "2024-10-01T00:00:00Z",
+  "coverage_history_candles": {
+    "1h": 1499,
+    "1d": 120
+  },
   "starting_balance": 1000.0,
   "max_open_trades": 3,
   "stake_currency": "USDT",
