@@ -11,10 +11,12 @@ on:
       - 'implementation/config/c1a_strategy_family_screen.json'
       - 'implementation/freqtrade_data/strategies/c1a_common.py'
       - 'implementation/scripts/c1a_contract_completion.py'
+      - 'implementation/scripts/c1a_contract_completion/**'
       - 'implementation/scripts/c1a_data_guard.py'
       - 'implementation/scripts/c1a_evidence.py'
       - 'implementation/scripts/c1a_source_inventory.py'
       - 'implementation/scripts/finalize_c1a_evidence.py'
+      - 'implementation/scripts/run_c0c_development/**'
       - 'implementation/src/atos/c1a_family_screen.py'
       - 'implementation/tests/test_c1a_*.py'
       - 'implementation/pyproject.toml'
@@ -55,6 +57,7 @@ jobs:
             tests/test_c1a_data_guard.py \
             tests/test_c1a_evidence_contract.py \
             tests/test_c1a_contract_completion.py \
+            tests/test_c1a_recursive_adapter.py \
             -q
       - name: Verify all three C1A strategies load
         run: |
@@ -88,7 +91,7 @@ jobs:
       - name: Apply frozen comparator and effective-source bindings
         run: |
           cd implementation
-          python scripts/c1a_contract_completion.py apply
+          PYTHONPATH=scripts python -c 'import c1a_contract_completion as module; raise SystemExit(module.main())' apply
       - name: Capture exact C1A source inventory
         run: |
           cd implementation
@@ -104,7 +107,7 @@ jobs:
       - name: Verify frozen comparator and effective-source bindings
         run: |
           cd implementation
-          python scripts/c1a_contract_completion.py verify
+          PYTHONPATH=scripts python -c 'import c1a_contract_completion as module; raise SystemExit(module.main())' verify
       - name: Secret leakage scan
         run: |
           cd implementation
