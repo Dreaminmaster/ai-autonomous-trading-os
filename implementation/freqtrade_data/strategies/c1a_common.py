@@ -7,7 +7,9 @@ from typing import Any
 import math
 import pandas as pd
 from pandas import DataFrame
-from freqtrade.strategy import Trade, merge_informative_pair, stoploss_from_absolute, timeframe_to_prev_date
+from freqtrade.exchange import timeframe_to_prev_date
+from freqtrade.persistence import Trade
+from freqtrade.strategy import merge_informative_pair, stoploss_from_absolute
 
 
 BTC_PAIR = "BTC/USDT"
@@ -46,15 +48,18 @@ def informative_pairs(strategy: Any) -> list[tuple[str, str]]:
 
 
 def _pair_daily(dataframe: DataFrame) -> DataFrame:
-    result = dataframe.copy()
+    result = dataframe.copy().sort_values("date")
+    result["pair_close"] = result["close"]
     result["pair_ema90"] = result["close"].ewm(span=90, adjust=False).mean()
     result["pair_return_20d"] = result["close"].pct_change(20)
     result["pair_return_60d"] = result["close"].pct_change(60)
-    return result[["date", "close", "pair_ema90", "pair_return_20d", "pair_return_60d"]]
+    return result[
+        ["date", "pair_close", "pair_ema90", "pair_return_20d", "pair_return_60d"]
+    ]
 
 
 def _btc_daily(dataframe: DataFrame) -> DataFrame:
-    result = dataframe.copy()
+    result = dataframe.copy().sort_values("date")
     result["btc_close"] = result["close"]
     result["btc_ema90"] = result["close"].ewm(span=90, adjust=False).mean()
     result["btc_ema20"] = result["close"].ewm(span=20, adjust=False).mean()
@@ -69,7 +74,7 @@ def merge_daily_context(
     strategy: Any, dataframe: DataFrame, metadata: dict[str, Any]
 ) -> DataFrame:
     required = [
-        "close_1d",
+        "pair_close_1d",
         "pair_ema90_1d",
         "pair_return_20d_1d",
         "pair_return_60d_1d",
@@ -87,17 +92,22 @@ def merge_daily_context(
     pair_daily = _pair_daily(
         strategy.dp.get_pair_dataframe(pair=metadata["pair"], timeframe=DAILY_TIMEFRAME)
     )
-    merged = merge_informative_pair(
-        dataframe, pair_daily, strategy.timeframe, DAILY_TIMEFRAME, ffill=True
-    )
-
     btc_daily = _btc_daily(
         strategy.dp.get_pair_dataframe(pair=BTC_PAIR, timeframe=DAILY_TIMEFRAME)
     )
-    merged = merge_informative_pair(
-        merged, btc_daily, strategy.timeframe, DAILY_TIMEFRAME, ffill=True
+    daily = pair_daily.merge(
+        btc_daily,
+        on="date",
+        how="left",
+        validate="one_to_one",
+    ).sort_values("date")
+    return merge_informative_pair(
+        dataframe,
+        daily,
+        strategy.timeframe,
+        DAILY_TIMEFRAME,
+        ffill=True,
     )
-    return merged
 
 
 def broad_regime(dataframe: DataFrame) -> pd.Series:
@@ -108,7 +118,7 @@ def broad_regime(dataframe: DataFrame) -> pd.Series:
 
 
 def pair_regime(dataframe: DataFrame) -> pd.Series:
-    return dataframe["close_1d"] > dataframe["pair_ema90_1d"]
+    return dataframe["pair_close_1d"] > dataframe["pair_ema90_1d"]
 
 
 def atr_stoploss_from_entry(
@@ -118,6 +128,7 @@ def atr_stoploss_from_entry(
     current_time: datetime,
     current_rate: float,
 ) -> float | None:
+    del current_time
     if getattr(strategy, "dp", None) is None:
         return None
     dataframe, _ = strategy.dp.get_analyzed_dataframe(pair, strategy.timeframe)
