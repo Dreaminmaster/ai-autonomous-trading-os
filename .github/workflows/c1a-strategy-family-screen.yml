@@ -11,6 +11,7 @@ on:
       - 'implementation/freqtrade_data/strategies/c1a_common.py'
       - 'implementation/scripts/c1a_data_guard.py'
       - 'implementation/scripts/c1a_evidence.py'
+      - 'implementation/scripts/c1a_source_inventory.py'
       - 'implementation/scripts/finalize_c1a_evidence.py'
       - 'implementation/src/atos/c1a_family_screen.py'
       - 'implementation/tests/test_c1a_*.py'
@@ -81,10 +82,18 @@ jobs:
         run: |
           cd implementation
           python scripts/c1a_evidence.py
+      - name: Capture exact C1A source inventory
+        run: |
+          cd implementation
+          python scripts/c1a_source_inventory.py capture
       - name: Finalize exact-source evidence
         run: |
           cd implementation
           python scripts/finalize_c1a_evidence.py
+      - name: Verify retained C1A source inventory
+        run: |
+          cd implementation
+          python scripts/c1a_source_inventory.py verify
       - name: Secret leakage scan
         run: |
           cd implementation
