@@ -1,0 +1,127 @@
+{
+  "schema_version": 2,
+  "candidate_id": "c0c-cost-aware-ema-v1",
+  "strategy": "C0CCostAwareEMA",
+  "live": "FORBIDDEN",
+  "holdout_state": "HOLDOUT_CLOSED",
+  "data_timerange": "20231101-20250701",
+  "timeframe": "5m",
+  "informative_timeframe": "1h",
+  "pairs": [
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT"
+  ],
+  "expected_fee_rate": 0.0015,
+  "fee_multipliers": [
+    1.0,
+    1.5,
+    2.0
+  ],
+  "startup_analysis": {
+    "pairs": [
+      "BTC/USDT",
+      "ETH/USDT",
+      "SOL/USDT"
+    ],
+    "timerange": "20240101-20240201",
+    "startup_candidates": [
+      499,
+      999,
+      1499
+    ],
+    "selected_startup_candles": 1499,
+    "max_variance_pct": 0.1,
+    "required_indicators": [
+      "ema_fast_20",
+      "ema_slow_50",
+      "ema_spread",
+      "slow_slope_12",
+      "atr_ratio_14",
+      "close_1h",
+      "htf_ema_100_1h",
+      "htf_slope_6_1h"
+    ]
+  },
+  "hyperopt": {
+    "loss": "MultiMetricHyperOptLoss",
+    "space": "enter",
+    "epochs": 200,
+    "random_state": 20260715,
+    "min_trades": 30,
+    "fee_rate": 0.00225,
+    "workers": 2,
+    "shortlist_size": 3,
+    "selection_policy": "top_loss_shortlist_validation_rank_v1"
+  },
+  "validation_gate": {
+    "require_positive_expected_net": true,
+    "require_nonnegative_1_5x_net": true,
+    "minimum_profit_factor": 1.1,
+    "maximum_drawdown_ratio": 0.15
+  },
+  "parameter_ranges": {
+    "enter_spread_threshold": [
+      0.001,
+      0.008
+    ],
+    "enter_slow_slope_min": [
+      0.001,
+      0.01
+    ],
+    "enter_atr_ratio_min": [
+      0.002,
+      0.012
+    ],
+    "enter_htf_slope_min": [
+      0.0,
+      0.01
+    ]
+  },
+  "folds": [
+    {
+      "id": "1",
+      "train_start": "2024-01-01",
+      "train_end": "2024-07-01",
+      "validation_start": "2024-07-01",
+      "validation_end": "2024-10-01",
+      "test_start": "2024-10-01",
+      "test_end": "2025-01-01"
+    },
+    {
+      "id": "2",
+      "train_start": "2024-01-01",
+      "train_end": "2024-10-01",
+      "validation_start": "2024-10-01",
+      "validation_end": "2025-01-01",
+      "test_start": "2025-01-01",
+      "test_end": "2025-04-01"
+    },
+    {
+      "id": "3",
+      "train_start": "2024-01-01",
+      "train_end": "2025-01-01",
+      "validation_start": "2025-01-01",
+      "validation_end": "2025-04-01",
+      "test_start": "2025-04-01",
+      "test_end": "2025-07-01"
+    }
+  ],
+  "holdout": {
+    "start": "2025-07-01",
+    "end": "2026-07-01"
+  },
+  "thresholds": {
+    "minimum_profit_factor": 1.1,
+    "maximum_drawdown_ratio": 0.15,
+    "minimum_trades": 30,
+    "minimum_positive_pairs": 2,
+    "maximum_pair_profit_share": 0.7,
+    "minimum_positive_folds": 2,
+    "maximum_fold_profit_share": 0.6,
+    "maximum_single_trade_profit_share": 0.25,
+    "top_trade_cluster_size": 3,
+    "maximum_top_trade_cluster_profit_share": 0.5,
+    "turnover_definition": "entry_plus_exit_notional_divided_by_starting_balance"
+  }
+}

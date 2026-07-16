@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+import importlib.util
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+MODULE_PATH = ROOT / "implementation" / "scripts" / "verify_c0c_data_coverage.py"
+SPEC = importlib.util.spec_from_file_location("verify_c0c_data_coverage", MODULE_PATH)
+assert SPEC is not None and SPEC.loader is not None
+coverage = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(coverage)
+
+
+def _rows(start: datetime, end: datetime, step: timedelta) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    current = start
+    while current <= end:
+        result.append({"date": current.isoformat()})
+        current += step
+    return result
+
+
+def _contract_rows() -> tuple[list[dict[str, str]], datetime, datetime]:
+    first_fold = datetime(2024, 1, 1, tzinfo=UTC)
+    holdout = datetime(2024, 1, 3, tzinfo=UTC)
+    rows = _rows(
+        first_fold - timedelta(hours=2),
+        holdout - timedelta(hours=1),
+        timedelta(hours=1),
+    )
+    return rows, first_fold, holdout
+
+
+def _boundary_report(source_sha: str = "a" * 40) -> dict:
+    cells = []
+    for pair in ("BTC/USDT", "ETH/USDT", "SOL/USDT"):
+        for timeframe in ("5m", "1h"):
+            cells.append(
+                {
+                    "pair": pair,
+                    "timeframe": timeframe,
+                    "status": "PASS",
+                    "post_boundary_rows": 0,
+                    "retained_latest": "2025-06-30T23:55:00+00:00",
+                }
+            )
+    return {
+        "status": "PASS",
+        "source_head_sha": source_sha,
+        "holdout_start": "2025-07-01T00:00:00+00:00",
+        "holdout_state": "HOLDOUT_CLOSED",
+        "policy": "REMOVE_API_OVERSHOOT_AT_OR_AFTER_HOLDOUT_BEFORE_ANY_RESEARCH_READ",
+        "cells": cells,
+    }
+
+
+def test_contiguous_pre_holdout_coverage_passes() -> None:
+    rows, first_fold, holdout = _contract_rows()
+    result = coverage.validate_rows(
+        rows,
+        pair="BTC/USDT",
+        timeframe="1h",
+        first_fold_start=first_fold,
+        holdout_start=holdout,
+        startup_candles=2,
+    )
+    assert result["status"] == "PASS"
+    assert result["duplicates"] == 0
+    assert result["gaps"] == 0
+    assert result["required_rows"] == len(rows)
+    assert result["latest"] == "2024-01-02T23:00:00+00:00"
+
+
+def test_gap_fails_closed() -> None:
+    rows, first_fold, holdout = _contract_rows()
+    rows.pop(3)
+    with pytest.raises(coverage.C0CDataCoverageError, match="required rows|candle gap"):
+        coverage.validate_rows(
+            rows,
+            pair="ETH/USDT",
+            timeframe="1h",
+            first_fold_start=first_fold,
+            holdout_start=holdout,
+            startup_candles=2,
+        )
+
+
+def test_duplicate_fails_closed() -> None:
+    rows, first_fold, holdout = _contract_rows()
+    rows.append(dict(rows[0]))
+    with pytest.raises(coverage.C0CDataCoverageError, match="duplicate candles"):
+        coverage.validate_rows(
+            rows,
+            pair="SOL/USDT",
+            timeframe="1h",
+            first_fold_start=first_fold,
+            holdout_start=holdout,
+            startup_candles=2,
+        )
+
+
+def test_holdout_overlap_fails_closed() -> None:
+    rows, first_fold, holdout = _contract_rows()
+    rows.append({"date": holdout.isoformat()})
+    with pytest.raises(coverage.C0CDataCoverageError, match="contains holdout candle"):
+        coverage.validate_rows(
+            rows,
+            pair="BTC/USDT",
+            timeframe="1h",
+            first_fold_start=first_fold,
+            holdout_start=holdout,
+            startup_candles=2,
+        )
+
+
+def test_boundary_report_is_required_and_exact_source_bound() -> None:
+    report = _boundary_report()
+    coverage.validate_boundary_report(report, "a" * 40)
+
+    drift = deepcopy(report)
+    drift["source_head_sha"] = "b" * 40
+    with pytest.raises(coverage.C0CDataCoverageError, match="boundary source SHA"):
+        coverage.validate_boundary_report(drift, "a" * 40)
+
+    drift = deepcopy(report)
+    drift["cells"][0]["post_boundary_rows"] = 1
+    with pytest.raises(coverage.C0CDataCoverageError, match="not sealed"):
+        coverage.validate_boundary_report(drift, "a" * 40)
+
+    drift = deepcopy(report)
+    drift["cells"][0]["retained_latest"] = "2025-07-01T00:00:00+00:00"
+    with pytest.raises(coverage.C0CDataCoverageError, match="retains a holdout candle"):
+        coverage.validate_boundary_report(drift, "a" * 40)
+
+
+def test_failure_report_preserves_exact_source_and_closed_holdout() -> None:
+    error = coverage.C0CDataCoverageError(
+        "BTC/USDT 5m required rows 10 != 11"
+    )
+    report = coverage.build_failure_report(
+        error=error,
+        download_timerange="20231001-20250701",
+        source_head_sha="a" * 40,
+    )
+    assert report["status"] == "FAIL"
+    assert report["source_head_sha"] == "a" * 40
+    assert report["download_timerange"] == "20231001-20250701"
+    assert report["holdout_state"] == "HOLDOUT_CLOSED"
+    assert report["error_type"] == "C0CDataCoverageError"
+    assert "required rows" in report["error"]
+    assert report["cells"] == []

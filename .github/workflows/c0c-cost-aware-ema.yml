@@ -1,0 +1,112 @@
+name: C0C Cost-Aware EMA Development
+
+on:
+  pull_request:
+    types: [ready_for_review]
+    branches: [main]
+    paths:
+      - '.github/workflows/c0c-cost-aware-ema.yml'
+      - 'implementation/config/c0c_cost_aware_ema.json'
+      - 'implementation/freqtrade_data/strategies/c0c_cost_aware_ema.py'
+      - 'implementation/scripts/run_c0c_development.py'
+      - 'implementation/scripts/c0c_development_core.py'
+      - 'implementation/scripts/finalize_c0c_manifest.py'
+      - 'implementation/scripts/sanitize_c0c_data_boundary.py'
+      - 'implementation/scripts/verify_c0c_data_coverage.py'
+      - 'implementation/src/atos/__init__.py'
+      - 'implementation/src/atos/c0c_okx_startup.py'
+      - 'implementation/src/atos/c0c_validation_gate.py'
+      - 'implementation/src/atos/c0c_walk_forward.py'
+      - 'implementation/tests/test_c0c_data_boundary.py'
+      - 'implementation/tests/test_c0c_data_coverage.py'
+      - 'implementation/tests/test_c0c_okx_startup_contract.py'
+      - 'implementation/tests/test_c0c_validation_gate.py'
+      - 'implementation/tests/test_c0c_walk_forward.py'
+      - 'implementation/tests/test_c0c_strategy_contract.py'
+      - 'implementation/pyproject.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  c0c-development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      C0C_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      C0C_DOWNLOAD_TIMERANGE: '20231001-20250701'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.C0C_SOURCE_SHA }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dedicated research dependencies
+        run: |
+          cd implementation
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev,research]'
+          python -c 'import optuna; print("optuna", optuna.__version__)'
+      - name: Setup Freqtrade
+        run: |
+          cd implementation
+          bash scripts/setup_freqtrade.sh
+          cp config/policy.validation.json config/policy.json
+      - name: Run focused C0C tests first
+        run: |
+          cd implementation
+          python -m pytest \
+            tests/test_c0c_data_boundary.py \
+            tests/test_c0c_data_coverage.py \
+            tests/test_c0c_okx_startup_contract.py \
+            tests/test_c0c_validation_gate.py \
+            tests/test_c0c_walk_forward.py \
+            tests/test_c0c_strategy_contract.py \
+            -q
+      - name: Verify strategy loads
+        run: |
+          cd implementation
+          freqtrade list-strategies --strategy-path freqtrade_data/strategies 2>&1 | tee c0c_list_strategies.log
+          grep -q 'C0CCostAwareEMA' c0c_list_strategies.log
+      - name: Download development data only
+        run: |
+          cd implementation
+          freqtrade download-data \
+            --config freqtrade_data/config.dryrun.json \
+            --datadir freqtrade_data/data/okx \
+            --exchange okx \
+            --pairs BTC/USDT ETH/USDT SOL/USDT \
+            --timeframes 5m 1h \
+            --timerange "$C0C_DOWNLOAD_TIMERANGE"
+      - name: Seal exchange API overshoot below holdout boundary
+        run: |
+          cd implementation
+          python scripts/sanitize_c0c_data_boundary.py
+      - name: Verify startup coverage and holdout boundary
+        run: |
+          cd implementation
+          python scripts/verify_c0c_data_coverage.py
+      - name: Run preregistered gated development walk-forward
+        run: |
+          cd implementation
+          python scripts/run_c0c_development.py
+      - name: Finalize exact-source evidence manifest
+        run: |
+          cd implementation
+          python scripts/finalize_c0c_manifest.py
+      - name: Secret leakage scan
+        run: |
+          cd implementation
+          bash scripts/validate_no_secrets.sh
+      - name: Upload C0C development evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c0c-cost-aware-ema-development
+          path: |
+            implementation/freqtrade_data/backtest_results/c0c_development/**
+            implementation/freqtrade_data/c0c_runtime/**
+          if-no-files-found: warn
+          retention-days: 90
