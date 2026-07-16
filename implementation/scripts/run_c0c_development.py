@@ -34,7 +34,12 @@ def _integer(value: Any, label: str) -> int:
 def parse_hyperopt_csv_output(
     path: str | Path, *, shortlist_size: int, min_trades: int
 ) -> list[dict[str, Any]]:
-    """Select the deterministic top-loss shortlist from Freqtrade's official CSV export."""
+    """Select the deterministic top-loss shortlist from Freqtrade's official CSV export.
+
+    Freqtrade leaves ``Objective`` blank for epochs rejected by ``--min-trades``.
+    Parse and apply the frozen trade-count eligibility rule before requiring a
+    numeric objective; eligible epochs still fail closed on blank/malformed loss.
+    """
     source = Path(path)
     try:
         with source.open(newline="", encoding="utf-8-sig") as handle:
@@ -49,8 +54,10 @@ def parse_hyperopt_csv_output(
             for row_number, row in enumerate(reader, start=2):
                 epoch = _integer(row.get("Epoch"), f"hyperopt CSV row {row_number} Epoch")
                 trades = _integer(row.get("Trades"), f"hyperopt CSV row {row_number} Trades")
+                if trades < min_trades:
+                    continue
                 loss = _finite(row.get("Objective"), f"hyperopt CSV row {row_number} Objective")
-                if trades < min_trades or loss >= 100000:
+                if loss >= 100000:
                     continue
                 candidate = {"epoch": epoch, "loss": loss}
                 existing = records.get(epoch)
