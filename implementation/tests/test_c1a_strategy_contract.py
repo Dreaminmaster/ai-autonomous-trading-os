@@ -49,6 +49,7 @@ def test_config_freezes_screen_boundary_costs_and_families() -> None:
     assert config["timeframe"] == "1h"
     assert config["informative_timeframe"] == "1d"
     assert config["economic_boundary_exclusive"] == "2024-10-01T00:00:00Z"
+    assert config["coverage_history_candles"] == {"1h": 1499, "1d": 120}
     assert config["expected_fee_rate"] == 0.0015
     assert config["fee_multipliers"] == [1.0, 1.5, 2.0]
     assert config["slippage_rate"] == 0.0
@@ -63,15 +64,18 @@ def test_config_freezes_screen_boundary_costs_and_families() -> None:
     ]
 
 
-def test_all_three_candidates_inherit_fixed_backtest_only_base() -> None:
+def test_all_three_candidates_inherit_fixed_backtest_only_settings() -> None:
     classes = _classes()
     assert FAMILIES.issubset(classes)
-    base = _class_assignments("_C1ABase")
+    base = _class_assignments("_C1ASettingsMixin")
     assert ast.literal_eval(base["can_short"]) is False
     assert ast.literal_eval(base["timeframe"]) == "1h"
     assert ast.literal_eval(base["startup_candle_count"]) == 1499
     assert ast.literal_eval(base["minimal_roi"]) == {}
     assert ast.literal_eval(base["stoploss"]) == -0.30
+    for helper in ("_C1ASettingsMixin", "_C1AATRStopMixin"):
+        bases = _classes()[helper].bases
+        assert all(not (isinstance(node, ast.Name) and node.id == "IStrategy") for node in bases)
     source = SOURCE.read_text(encoding="utf-8").lower()
     for forbidden in (
         "decimalparameter",
