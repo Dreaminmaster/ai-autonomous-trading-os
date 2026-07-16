@@ -1,7 +1,7 @@
-"""Shared deterministic helpers for C1A backtest-only strategies."""
+"""C1A fixed strategy-family screen. Historical backtests only; LIVE forbidden."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import math
@@ -9,7 +9,7 @@ import pandas as pd
 from pandas import DataFrame
 from freqtrade.exchange import timeframe_to_prev_date
 from freqtrade.persistence import Trade
-from freqtrade.strategy import merge_informative_pair, stoploss_from_absolute
+from freqtrade.strategy import IStrategy, merge_informative_pair, stoploss_from_absolute
 
 
 BTC_PAIR = "BTC/USDT"
@@ -150,3 +150,170 @@ def atr_stoploss_from_entry(
         is_short=trade.is_short,
         leverage=trade.leverage,
     )
+
+
+class _C1ABase(IStrategy):
+    INTERFACE_VERSION = 3
+    can_short = False
+    timeframe = "1h"
+    process_only_new_candles = True
+    startup_candle_count = 1499
+    use_exit_signal = True
+    exit_profit_only = False
+    ignore_roi_if_entry_signal = False
+    minimal_roi = {}
+    stoploss = -0.30
+
+    def informative_pairs(self) -> list[tuple[str, str]]:
+        return informative_pairs(self)
+
+
+class _C1AATRStopBase(_C1ABase):
+    use_custom_stoploss = True
+
+    def custom_stoploss(
+        self,
+        pair: str,
+        trade: Trade,
+        current_time: datetime,
+        current_rate: float,
+        current_profit: float,
+        **kwargs: Any,
+    ) -> float | None:
+        del current_profit, kwargs
+        return atr_stoploss_from_entry(self, pair, trade, current_time, current_rate)
+
+
+class C1ARegimeBreakout(_C1AATRStopBase):
+    """Broad-regime 20-day breakout with a 10-day channel exit."""
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict[str, Any]) -> DataFrame:
+        dataframe["atr_14"] = true_range(dataframe).rolling(14).mean()
+        dataframe["donchian_high_480"] = dataframe["high"].shift(1).rolling(480).max()
+        dataframe["donchian_low_240"] = dataframe["low"].shift(1).rolling(240).min()
+        return merge_daily_context(self, dataframe, metadata)
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict[str, Any]) -> DataFrame:
+        del metadata
+        dataframe["enter_long"] = 0
+        dataframe["enter_tag"] = ""
+        cross_up = (
+            (dataframe["close"] > dataframe["donchian_high_480"])
+            & (dataframe["close"].shift(1) <= dataframe["donchian_high_480"].shift(1))
+        )
+        signal = cross_up & broad_regime(dataframe) & pair_regime(dataframe) & (dataframe["volume"] > 0)
+        dataframe.loc[signal, ["enter_long", "enter_tag"]] = (1, "c1a_regime_breakout")
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict[str, Any]) -> DataFrame:
+        del metadata
+        dataframe["exit_long"] = 0
+        dataframe["exit_tag"] = ""
+        cross_down = (
+            (dataframe["close"] < dataframe["donchian_low_240"])
+            & (dataframe["close"].shift(1) >= dataframe["donchian_low_240"].shift(1))
+        )
+        regime_failure = ~broad_regime(dataframe) | ~pair_regime(dataframe)
+        dataframe.loc[cross_down & (dataframe["volume"] > 0), ["exit_long", "exit_tag"]] = (
+            1,
+            "c1a_donchian_failure",
+        )
+        dataframe.loc[
+            regime_failure & (dataframe["volume"] > 0) & (dataframe["exit_long"] == 0),
+            ["exit_long", "exit_tag"],
+        ] = (1, "c1a_regime_failure")
+        return dataframe
+
+
+class C1ATrendPullback(_C1AATRStopBase):
+    """Broad-regime hourly pullback entry with deterministic exits."""
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict[str, Any]) -> DataFrame:
+        dataframe["ema20_1h"] = dataframe["close"].ewm(span=20, adjust=False).mean()
+        dataframe["rsi14_1h"] = rsi_wilder(dataframe["close"], 14)
+        dataframe["atr_14"] = true_range(dataframe).rolling(14).mean()
+        return merge_daily_context(self, dataframe, metadata)
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict[str, Any]) -> DataFrame:
+        del metadata
+        dataframe["enter_long"] = 0
+        dataframe["enter_tag"] = ""
+        signal = (
+            broad_regime(dataframe)
+            & pair_regime(dataframe)
+            & (dataframe["close"] < dataframe["ema20_1h"])
+            & (dataframe["rsi14_1h"] <= 35.0)
+            & (dataframe["volume"] > 0)
+        )
+        dataframe.loc[signal, ["enter_long", "enter_tag"]] = (1, "c1a_trend_pullback")
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict[str, Any]) -> DataFrame:
+        del metadata
+        dataframe["exit_long"] = 0
+        dataframe["exit_tag"] = ""
+        mean_recovery = (dataframe["close"] >= dataframe["ema20_1h"]) | (dataframe["rsi14_1h"] >= 55.0)
+        regime_failure = ~broad_regime(dataframe) | ~pair_regime(dataframe)
+        dataframe.loc[
+            mean_recovery & (dataframe["volume"] > 0), ["exit_long", "exit_tag"]
+        ] = (1, "c1a_pullback_recovered")
+        dataframe.loc[
+            regime_failure & (dataframe["volume"] > 0) & (dataframe["exit_long"] == 0),
+            ["exit_long", "exit_tag"],
+        ] = (1, "c1a_regime_failure")
+        return dataframe
+
+    def custom_exit(
+        self,
+        pair: str,
+        trade: Trade,
+        current_time: datetime,
+        current_rate: float,
+        current_profit: float,
+        **kwargs: Any,
+    ) -> str | None:
+        del pair, current_rate, current_profit, kwargs
+        if current_time - trade.open_date_utc >= timedelta(hours=168):
+            return "c1a_168h_time_stop"
+        return None
+
+
+class C1ADualMomentum(_C1ABase):
+    """Completed-daily-candle absolute and relative momentum candidate."""
+
+    @staticmethod
+    def _condition(dataframe: DataFrame, pair: str) -> pd.Series:
+        condition = (
+            broad_regime(dataframe)
+            & pair_regime(dataframe)
+            & (dataframe["pair_return_20d_1d"] > 0.0)
+            & (dataframe["pair_return_60d_1d"] > 0.0)
+        )
+        if pair != BTC_PAIR:
+            condition &= dataframe["pair_return_20d_1d"] > dataframe["btc_return_20d_1d"]
+        return condition
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict[str, Any]) -> DataFrame:
+        return merge_daily_context(self, dataframe, metadata)
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict[str, Any]) -> DataFrame:
+        dataframe["enter_long"] = 0
+        dataframe["enter_tag"] = ""
+        condition = self._condition(dataframe, metadata["pair"])
+        event = condition & ~condition.shift(1).fillna(False)
+        dataframe.loc[event & (dataframe["volume"] > 0), ["enter_long", "enter_tag"]] = (
+            1,
+            "c1a_dual_momentum",
+        )
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict[str, Any]) -> DataFrame:
+        dataframe["exit_long"] = 0
+        dataframe["exit_tag"] = ""
+        condition = self._condition(dataframe, metadata["pair"])
+        failure = ~condition
+        dataframe.loc[failure & (dataframe["volume"] > 0), ["exit_long", "exit_tag"]] = (
+            1,
+            "c1a_momentum_failure",
+        )
+        return dataframe
