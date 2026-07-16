@@ -40,8 +40,10 @@ def _row(
     pair_profits: tuple[float, float, float] = (4.0, 4.0, 2.0),
 ) -> dict:
     assert abs(gains + losses - net) < 1e-9
+    assert abs(sum(pair_profits) - net) < 1e-9
     positive_trade_count = 5
     positives = [gains / positive_trade_count] * positive_trade_count if gains > 0 else []
+    pair_trades = [trades // 3 + (1 if index < trades % 3 else 0) for index in range(3)]
     return {
         "family_id": family,
         "window_id": window,
@@ -50,24 +52,27 @@ def _row(
         "fee_binding": {
             "verified": True,
             "expected_fee_rate": 0.0015 * cost,
-            "observed_fee_rates": [0.0015 * cost],
+            "observed_fee_rates": [0.0015 * cost] if trades else [],
         },
         "starting_balance": 1000.0,
         "trades": trades,
         "net_profit_abs": net,
         "net_return_ratio": net / 1000.0,
         "max_drawdown_ratio": drawdown,
-        "profit_factor": gains / abs(losses) if losses < 0 else 1e12,
+        "profit_factor": gains / abs(losses) if losses < 0 else (0.0 if gains == 0 else 1e12),
         "positive_profit_abs": gains,
         "negative_profit_abs": losses,
         "positive_trade_profits_abs": positives,
         "pairs": [
-            {"pair": pair, "trades": trades // 3, "net_profit_abs": profit}
-            for pair, profit in zip(PAIRS, pair_profits, strict=True)
+            {"pair": pair, "trades": pair_trade_count, "net_profit_abs": profit}
+            for pair, pair_trade_count, profit in zip(
+                PAIRS, pair_trades, pair_profits, strict=True
+            )
         ],
         "turnover_ratio": turnover,
         "export_sha256": "a" * 64,
         "command_sha256": "b" * 64,
+        "log_sha256": "c" * 64,
     }
 
 
@@ -125,6 +130,10 @@ def test_config_is_exact_and_fail_closed() -> None:
     drifted["gate"]["minimum_total_trades"] = 29
     with pytest.raises(C1AFamilyScreenError, match="gate drift"):
         validate_config(drifted)
+    drifted = _config()
+    drifted["coverage_history_candles"]["1d"] = 119
+    with pytest.raises(C1AFamilyScreenError, match="coverage history drift"):
+        validate_config(drifted)
 
 
 def test_screen_selects_only_eligible_family() -> None:
@@ -154,7 +163,6 @@ def test_valid_negative_screen_is_rejected_without_opening_confirmation() -> Non
 
 def test_ranking_uses_frozen_order_and_family_id_last() -> None:
     rows = _screen_rows(eligible_family="C1ARegimeBreakout")
-    rows += []
     for row in rows:
         if row["family_id"] == "C1ATrendPullback":
             source = next(
@@ -187,6 +195,22 @@ def test_missing_duplicate_or_unverified_evidence_fails_closed() -> None:
     wrong_fee[0]["fee_rate"] = 0.0
     with pytest.raises(C1AFamilyScreenError, match="fee rate"):
         evaluate_screen(wrong_fee, _config())
+
+
+def test_pair_reconciliation_and_hashes_fail_closed() -> None:
+    rows = _screen_rows()
+    bad_trades = copy.deepcopy(rows)
+    bad_trades[0]["pairs"][0]["trades"] -= 1
+    with pytest.raises(C1AFamilyScreenError, match="pair trade counts"):
+        evaluate_screen(bad_trades, _config())
+    bad_profit = copy.deepcopy(rows)
+    bad_profit[0]["pairs"][0]["net_profit_abs"] += 1.0
+    with pytest.raises(C1AFamilyScreenError, match="pair profits"):
+        evaluate_screen(bad_profit, _config())
+    bad_hash = copy.deepcopy(rows)
+    bad_hash[0]["log_sha256"] = "not-a-digest"
+    with pytest.raises(C1AFamilyScreenError, match="lowercase SHA-256"):
+        evaluate_screen(bad_hash, _config())
 
 
 def test_concentration_gate_rejects_single_pair_dependence() -> None:
