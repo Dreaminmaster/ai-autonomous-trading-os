@@ -237,10 +237,11 @@ def test_hyperopt_csv_parser_uses_loss_then_epoch_and_filters_min_trades(tmp_pat
     path=tmp_path/"epochs.csv"
     path.write_text("\n".join([
         "Epoch,Trades,Objective",
+        "1,1,",
         "7,40,0.3",
         "2,35,0.1",
         "1,31,0.1",
-        "9,29,0.01",
+        "9,29,",
         "10,50,100000",
     ]))
     assert parse_hyperopt_csv_output(path,shortlist_size=3,min_trades=30) == [
@@ -253,8 +254,11 @@ def test_hyperopt_csv_parser_fails_closed_on_schema_and_shortlist(tmp_path):
     path.write_text("Epoch,Trades\n1,40\n")
     with pytest.raises(c0c.C0CWalkForwardError,match="missing columns"):
         parse_hyperopt_csv_output(path,shortlist_size=1,min_trades=30)
-    path.write_text("Epoch,Trades,Objective\n1,29,0.1\n")
+    path.write_text("Epoch,Trades,Objective\n1,29,\n")
     with pytest.raises(c0c.C0CWalkForwardError,match="eligible epochs"):
+        parse_hyperopt_csv_output(path,shortlist_size=1,min_trades=30)
+    path.write_text("Epoch,Trades,Objective\n1,30,\n")
+    with pytest.raises(c0c.C0CWalkForwardError,match="must be numeric"):
         parse_hyperopt_csv_output(path,shortlist_size=1,min_trades=30)
 
 
