@@ -121,5 +121,6 @@ jobs:
             implementation/freqtrade_data/backtest_results/c1a_family_screen/**
             implementation/freqtrade_data/c1a_runtime/**
             implementation/c1a_list_strategies.log
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 90
