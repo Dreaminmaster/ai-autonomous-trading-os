@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import importlib
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "implementation" / "scripts" / "c1a_contract_completion.py"
+SCRIPTS = ROOT / "implementation" / "scripts"
+SCRIPT = SCRIPTS / "c1a_contract_completion.py"
+PACKAGE = SCRIPTS / "c1a_contract_completion" / "__init__.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "c1a-strategy-family-screen.yml"
 C0C_RESULT = (
     ROOT
@@ -20,11 +24,20 @@ C0C_RESULT = (
 
 
 def _module():
-    spec = importlib.util.spec_from_file_location("c1a_contract_completion", SCRIPT)
+    spec = importlib.util.spec_from_file_location("c1a_contract_completion_original_test", SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _package_module():
+    sys.path.insert(0, str(SCRIPTS))
+    try:
+        sys.modules.pop("c1a_contract_completion", None)
+        return importlib.import_module("c1a_contract_completion")
+    finally:
+        sys.path.remove(str(SCRIPTS))
 
 
 def _runtime_payload() -> dict:
@@ -73,7 +86,7 @@ def test_effective_runtime_config_is_fail_closed() -> None:
         module.validate_runtime_config_payload(payload)
 
 
-def test_effective_source_set_includes_comparator_runtime_and_verifier() -> None:
+def test_original_effective_source_set_includes_comparator_runtime_and_verifier() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     for required in (
         "C0C_COST_AWARE_EMA_RESULT_V1.md",
@@ -84,6 +97,17 @@ def test_effective_source_set_includes_comparator_runtime_and_verifier() -> None
         "contract:source_inventory_snapshot_verified",
     ):
         assert required in source
+
+
+def test_package_extends_effective_sources_with_recursive_adapter() -> None:
+    module = _package_module()
+    expected = {
+        Path("scripts/run_c0c_development/__init__.py"),
+        Path("scripts/c1a_contract_completion/__init__.py"),
+        Path("tests/test_c1a_recursive_adapter.py"),
+    }
+    assert expected.issubset(set(module.SOURCE_PATHS))
+    assert PACKAGE.is_file()
 
 
 def test_workflow_applies_and_verifies_completion_around_finalizer() -> None:
@@ -99,6 +123,11 @@ def test_workflow_applies_and_verifies_completion_around_finalizer() -> None:
     ]
     positions = [workflow.index(item) for item in ordered]
     assert positions == sorted(positions)
-    assert "python scripts/c1a_contract_completion.py apply" in workflow
-    assert "python scripts/c1a_contract_completion.py verify" in workflow
+    wrapper = (
+        "PYTHONPATH=scripts python -c "
+        "'import c1a_contract_completion as module; raise SystemExit(module.main())'"
+    )
+    assert f"{wrapper} apply" in workflow
+    assert f"{wrapper} verify" in workflow
     assert "tests/test_c1a_contract_completion.py" in workflow
+    assert "tests/test_c1a_recursive_adapter.py" in workflow
