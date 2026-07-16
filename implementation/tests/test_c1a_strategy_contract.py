@@ -112,6 +112,7 @@ def test_daily_context_is_combined_before_single_informative_merge() -> None:
         for keyword in call.keywords
     )
     assert 'validate="one_to_one"' in source
+    assert source.count("fill_method=None") == 4
 
 
 def test_breakout_extrema_exclude_current_candle_and_entry_is_event_based() -> None:
@@ -122,7 +123,8 @@ def test_breakout_extrema_exclude_current_candle_and_entry_is_event_based() -> N
     assert 'dataframe["close"].shift(1) >= dataframe["donchian_low_240"].shift(1)' in source
     assert "2.5 * entry_atr" in source
     assert "timeframe_to_prev_date" in source
-    assert "stoploss_from_absolute" in source
+    assert "return stoploss_from_absolute(" in source
+    assert "stop_price >= current_rate" not in source
 
 
 def test_pullback_constants_and_time_stop_are_frozen() -> None:
