@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 import statistics
 from collections import defaultdict
 from typing import Any, Mapping, Sequence
@@ -32,9 +33,21 @@ def _mapping(value: Any, label: str) -> Mapping[str, Any]:
     return value
 
 
+def _sha256_text(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise C1AFamilyScreenError(f"{label} must be a lowercase SHA-256")
+    return value
+
+
+def _close(left: float, right: float, tolerance: float = 1e-7) -> bool:
+    return abs(left - right) <= tolerance
+
+
 def validate_config(config: Mapping[str, Any]) -> dict[str, Any]:
     if config.get("stage") != "C1A":
         raise C1AFamilyScreenError("stage drift")
+    if config.get("status") != "IMPLEMENTATION_PENDING":
+        raise C1AFamilyScreenError("configuration status drift")
     if config.get("live") != "FORBIDDEN":
         raise C1AFamilyScreenError("LIVE must remain FORBIDDEN")
     if config.get("holdout_state") != "HOLDOUT_CLOSED":
@@ -43,6 +56,9 @@ def validate_config(config: Mapping[str, Any]) -> dict[str, Any]:
         raise C1AFamilyScreenError("confirmation must remain closed")
     if config.get("required_base_sha") != "967497fe726452a60fb6d0e84c10f027873951bf":
         raise C1AFamilyScreenError("base SHA drift")
+    if config.get("strategy_source") != "freqtrade_data/strategies/c1a_common.py":
+        raise C1AFamilyScreenError("strategy source drift")
+
     strategies = config.get("strategies")
     expected_strategies = ["C1ARegimeBreakout", "C1ATrendPullback", "C1ADualMomentum"]
     if strategies != expected_strategies:
@@ -51,14 +67,48 @@ def validate_config(config: Mapping[str, Any]) -> dict[str, Any]:
         raise C1AFamilyScreenError("pair universe drift")
     if config.get("timeframe") != "1h" or config.get("informative_timeframe") != "1d":
         raise C1AFamilyScreenError("timeframe drift")
+    if config.get("download_timerange") != "20230701-20241001":
+        raise C1AFamilyScreenError("download timerange drift")
     if config.get("economic_boundary_exclusive") != "2024-10-01T00:00:00Z":
         raise C1AFamilyScreenError("screen boundary drift")
+    if config.get("coverage_history_candles") != {"1h": 1499, "1d": 120}:
+        raise C1AFamilyScreenError("coverage history drift")
+    if _number(config.get("starting_balance"), "starting_balance") != 1000.0:
+        raise C1AFamilyScreenError("starting balance drift")
+    if _integer(config.get("max_open_trades"), "max_open_trades") != 3:
+        raise C1AFamilyScreenError("max open trades drift")
+    if config.get("stake_currency") != "USDT":
+        raise C1AFamilyScreenError("stake currency drift")
+    if _number(config.get("stake_amount"), "stake_amount") != 300.0:
+        raise C1AFamilyScreenError("stake amount drift")
     if config.get("fee_multipliers") != [1.0, 1.5, 2.0]:
         raise C1AFamilyScreenError("fee multiplier drift")
     if _number(config.get("expected_fee_rate"), "expected_fee_rate") != 0.0015:
         raise C1AFamilyScreenError("expected fee drift")
     if _number(config.get("slippage_rate"), "slippage_rate") != 0.0:
+        raise C1AFamilyScreenError("slippage rate drift")
+    if config.get("slippage_policy") != "ZERO_EXPLICIT_SLIPPAGE_WITH_FEE_STRESS_ONLY":
         raise C1AFamilyScreenError("slippage policy drift")
+
+    startup = _mapping(config.get("startup_analysis"), "startup_analysis")
+    if startup.get("timerange") != "20240101-20240201":
+        raise C1AFamilyScreenError("startup timerange drift")
+    if startup.get("startup_candidates") != [499, 999, 1499]:
+        raise C1AFamilyScreenError("startup candidates drift")
+    if _integer(startup.get("selected_startup_candles"), "startup count") != 1499:
+        raise C1AFamilyScreenError("selected startup drift")
+    if _number(startup.get("max_variance_pct"), "max variance") != 0.1:
+        raise C1AFamilyScreenError("recursive variance gate drift")
+    required_indicators = startup.get("required_indicators")
+    if not isinstance(required_indicators, Mapping) or set(required_indicators) != set(expected_strategies):
+        raise C1AFamilyScreenError("required indicator contract drift")
+    if any(
+        not isinstance(required_indicators[name], list)
+        or not required_indicators[name]
+        or any(not isinstance(value, str) or not value for value in required_indicators[name])
+        for name in expected_strategies
+    ):
+        raise C1AFamilyScreenError("required indicators must be non-empty names")
 
     windows = config.get("screen_windows")
     if not isinstance(windows, list) or windows != [
@@ -123,10 +173,13 @@ def _normalize_pairs(value: Any, expected_pairs: Sequence[str], label: str) -> l
         pair = row.get("pair")
         if pair not in expected_pairs:
             raise C1AFamilyScreenError(f"{label}.pairs[{index}] unexpected pair")
+        trades = _integer(row.get("trades"), f"{label}.{pair}.trades")
+        if trades < 0:
+            raise C1AFamilyScreenError(f"{label}.{pair}.trades must be nonnegative")
         result.append(
             {
                 "pair": pair,
-                "trades": _integer(row.get("trades"), f"{label}.{pair}.trades"),
+                "trades": trades,
                 "net_profit_abs": _number(
                     row.get("net_profit_abs"), f"{label}.{pair}.net_profit_abs"
                 ),
@@ -135,6 +188,12 @@ def _normalize_pairs(value: Any, expected_pairs: Sequence[str], label: str) -> l
     if {item["pair"] for item in result} != set(expected_pairs) or len(result) != len(expected_pairs):
         raise C1AFamilyScreenError(f"{label} pair coverage mismatch")
     return sorted(result, key=lambda item: item["pair"])
+
+
+def _profit_factor(gains: float, losses: float) -> float:
+    if losses < 0:
+        return gains / abs(losses)
+    return 0.0 if gains == 0 else 1e12
 
 
 def normalize_row(
@@ -150,19 +209,33 @@ def normalize_row(
     if cost not in {1.0, 1.5, 2.0}:
         raise C1AFamilyScreenError("unexpected cost multiplier")
     expected_fee = 0.0015 * cost
-    if _number(row.get("fee_rate"), "fee_rate") != expected_fee:
+    if not _close(_number(row.get("fee_rate"), "fee_rate"), expected_fee, 1e-12):
         raise C1AFamilyScreenError("fee rate not bound to cost multiplier")
     binding = _mapping(row.get("fee_binding"), "fee_binding")
     if binding.get("verified") is not True:
         raise C1AFamilyScreenError("fee binding not verified")
-    if _number(binding.get("expected_fee_rate"), "fee_binding.expected_fee_rate") != expected_fee:
+    if not _close(
+        _number(binding.get("expected_fee_rate"), "fee_binding.expected_fee_rate"),
+        expected_fee,
+        1e-12,
+    ):
         raise C1AFamilyScreenError("fee binding expected rate drift")
+
     trades = _integer(row.get("trades"), "trades")
     if trades < 0:
         raise C1AFamilyScreenError("trades must be nonnegative")
+    observed = binding.get("observed_fee_rates")
+    if not isinstance(observed, list):
+        raise C1AFamilyScreenError("fee_binding.observed_fee_rates must be a list")
+    observed_rates = sorted({_number(value, "observed fee rate") for value in observed})
+    if trades > 0 and (len(observed_rates) != 1 or not _close(observed_rates[0], expected_fee, 1e-12)):
+        raise C1AFamilyScreenError("observed trade fees do not match expected rate")
+    if trades == 0 and observed_rates:
+        raise C1AFamilyScreenError("zero-trade row must not claim observed trade fees")
+
     starting = _number(row.get("starting_balance"), "starting_balance")
-    if starting <= 0:
-        raise C1AFamilyScreenError("starting_balance must be positive")
+    if starting != 1000.0:
+        raise C1AFamilyScreenError("row starting balance drift")
     positives = row.get("positive_trade_profits_abs")
     if not isinstance(positives, list):
         raise C1AFamilyScreenError("positive_trade_profits_abs must be a list")
@@ -172,17 +245,38 @@ def normalize_row(
     if any(value <= 0 for value in normalized_positives):
         raise C1AFamilyScreenError("positive trade profit must be positive")
     positive_sum = _number(row.get("positive_profit_abs"), "positive_profit_abs")
-    if abs(sum(normalized_positives) - positive_sum) > 1e-7:
+    if not _close(sum(normalized_positives), positive_sum):
         raise C1AFamilyScreenError("positive trade list does not reconcile")
     negative_sum = _number(row.get("negative_profit_abs"), "negative_profit_abs")
     if negative_sum > 0:
         raise C1AFamilyScreenError("negative_profit_abs must be nonpositive")
     net_profit = _number(row.get("net_profit_abs"), "net_profit_abs")
-    if abs((positive_sum + negative_sum) - net_profit) > 1e-7:
+    if not _close(positive_sum + negative_sum, net_profit):
         raise C1AFamilyScreenError("profit components do not reconcile")
     net_return = _number(row.get("net_return_ratio"), "net_return_ratio")
-    if abs(net_profit / starting - net_return) > 1e-7:
+    if not _close(net_profit / starting, net_return):
         raise C1AFamilyScreenError("net return does not reconcile to starting balance")
+
+    max_drawdown = _number(row.get("max_drawdown_ratio"), "max_drawdown_ratio")
+    if max_drawdown < 0 or max_drawdown > 1:
+        raise C1AFamilyScreenError("max_drawdown_ratio must be within [0, 1]")
+    profit_factor = _number(row.get("profit_factor"), "profit_factor")
+    expected_profit_factor = _profit_factor(positive_sum, negative_sum)
+    if profit_factor < 0 or not _close(profit_factor, expected_profit_factor):
+        raise C1AFamilyScreenError("profit factor does not reconcile")
+    turnover_ratio = _number(row.get("turnover_ratio"), "turnover_ratio")
+    if turnover_ratio < 0:
+        raise C1AFamilyScreenError("turnover_ratio must be nonnegative")
+
+    normalized_pairs = _normalize_pairs(row.get("pairs"), pairs, f"{family}.{window}.{cost}")
+    if sum(item["trades"] for item in normalized_pairs) != trades:
+        raise C1AFamilyScreenError("pair trade counts do not reconcile")
+    if not _close(sum(item["net_profit_abs"] for item in normalized_pairs), net_profit):
+        raise C1AFamilyScreenError("pair profits do not reconcile")
+
+    export_sha = _sha256_text(row.get("export_sha256"), "export_sha256")
+    command_sha = _sha256_text(row.get("command_sha256"), "command_sha256")
+    log_sha = _sha256_text(row.get("log_sha256"), "log_sha256")
     return {
         "family_id": family,
         "window_id": window,
@@ -193,22 +287,17 @@ def normalize_row(
         "trades": trades,
         "net_profit_abs": net_profit,
         "net_return_ratio": net_return,
-        "max_drawdown_ratio": _number(row.get("max_drawdown_ratio"), "max_drawdown_ratio"),
-        "profit_factor": _number(row.get("profit_factor"), "profit_factor"),
+        "max_drawdown_ratio": max_drawdown,
+        "profit_factor": profit_factor,
         "positive_profit_abs": positive_sum,
         "negative_profit_abs": negative_sum,
         "positive_trade_profits_abs": normalized_positives,
-        "pairs": _normalize_pairs(row.get("pairs"), pairs, f"{family}.{window}.{cost}"),
-        "turnover_ratio": _number(row.get("turnover_ratio"), "turnover_ratio"),
-        "export_sha256": row.get("export_sha256"),
-        "command_sha256": row.get("command_sha256"),
+        "pairs": normalized_pairs,
+        "turnover_ratio": turnover_ratio,
+        "export_sha256": export_sha,
+        "command_sha256": command_sha,
+        "log_sha256": log_sha,
     }
-
-
-def _profit_factor(gains: float, losses: float) -> float:
-    if losses < 0:
-        return gains / abs(losses)
-    return 0.0 if gains == 0 else 1e12
 
 
 def evaluate_family(
@@ -243,7 +332,7 @@ def evaluate_family(
     aggregate_expected_profit = sum(row["net_profit_abs"] for row in expected_rows)
     aggregate_stress_profit = sum(row["net_profit_abs"] for row in stress_rows)
     starting = expected_rows[0]["starting_balance"]
-    if any(abs(row["starting_balance"] - starting) > 1e-9 for row in family_rows):
+    if any(not _close(row["starting_balance"], starting, 1e-9) for row in family_rows):
         raise C1AFamilyScreenError(f"{family_id} starting balance drift")
     aggregate_expected_return = aggregate_expected_profit / starting
     aggregate_stress_return = aggregate_stress_profit / starting
