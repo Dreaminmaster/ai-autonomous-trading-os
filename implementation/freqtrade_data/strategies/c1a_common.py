@@ -152,7 +152,7 @@ def atr_stoploss_from_entry(
     )
 
 
-class _C1ABase(IStrategy):
+class _C1ASettingsMixin:
     INTERFACE_VERSION = 3
     can_short = False
     timeframe = "1h"
@@ -168,7 +168,7 @@ class _C1ABase(IStrategy):
         return informative_pairs(self)
 
 
-class _C1AATRStopBase(_C1ABase):
+class _C1AATRStopMixin:
     use_custom_stoploss = True
 
     def custom_stoploss(
@@ -184,7 +184,7 @@ class _C1AATRStopBase(_C1ABase):
         return atr_stoploss_from_entry(self, pair, trade, current_time, current_rate)
 
 
-class C1ARegimeBreakout(_C1AATRStopBase):
+class C1ARegimeBreakout(_C1AATRStopMixin, _C1ASettingsMixin, IStrategy):
     """Broad-regime 20-day breakout with a 10-day channel exit."""
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict[str, Any]) -> DataFrame:
@@ -225,7 +225,7 @@ class C1ARegimeBreakout(_C1AATRStopBase):
         return dataframe
 
 
-class C1ATrendPullback(_C1AATRStopBase):
+class C1ATrendPullback(_C1AATRStopMixin, _C1ASettingsMixin, IStrategy):
     """Broad-regime hourly pullback entry with deterministic exits."""
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict[str, Any]) -> DataFrame:
@@ -278,7 +278,7 @@ class C1ATrendPullback(_C1AATRStopBase):
         return None
 
 
-class C1ADualMomentum(_C1ABase):
+class C1ADualMomentum(_C1ASettingsMixin, IStrategy):
     """Completed-daily-candle absolute and relative momentum candidate."""
 
     @staticmethod
