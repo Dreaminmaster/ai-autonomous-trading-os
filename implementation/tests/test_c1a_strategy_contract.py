@@ -123,6 +123,7 @@ def test_breakout_extrema_exclude_current_candle_and_entry_is_event_based() -> N
     assert 'dataframe["close"].shift(1) >= dataframe["donchian_low_240"].shift(1)' in source
     assert "2.5 * entry_atr" in source
     assert "timeframe_to_prev_date" in source
+    assert 'dataframe["date"] < trade_date' in source
     assert "return stoploss_from_absolute(" in source
     assert "stop_price >= current_rate" not in source
 
