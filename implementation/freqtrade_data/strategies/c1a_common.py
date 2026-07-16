@@ -135,7 +135,7 @@ def atr_stoploss_from_entry(
     if dataframe.empty or "atr_14" not in dataframe:
         return None
     trade_date = timeframe_to_prev_date(strategy.timeframe, trade.open_date_utc)
-    eligible = dataframe.loc[dataframe["date"] <= trade_date]
+    eligible = dataframe.loc[dataframe["date"] < trade_date]
     if eligible.empty:
         return None
     entry_atr = float(eligible.iloc[-1]["atr_14"])
