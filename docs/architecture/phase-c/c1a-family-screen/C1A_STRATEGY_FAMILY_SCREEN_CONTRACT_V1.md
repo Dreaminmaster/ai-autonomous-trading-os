@@ -149,7 +149,7 @@ Exit on first condition:
 
 ### 7.3 `C1ADualMomentum`
 
-Economic hypothesis: own a pair only when it has positive medium-term absolute momentum and positive momentum relative to BTC, otherwise hold cash.
+Economic hypothesis: own a pair only when it has positive medium-term absolute momentum and, for altcoins, positive momentum relative to BTC; otherwise hold cash.
 
 Indicators, calculated from completed daily candles:
 
@@ -165,12 +165,13 @@ Entry, all required:
 - pair daily close > pair daily EMA90;
 - pair 20-day return > 0;
 - pair 60-day return > 0;
-- pair 20-day return > BTC 20-day return;
+- for `ETH/USDT` and `SOL/USDT`, pair 20-day return > BTC 20-day return;
+- for `BTC/USDT`, the relative-momentum comparison is explicitly waived because comparing BTC to itself would make the signal impossible;
 - signal changes from false to true on a completed daily candle.
 
 Exit on first condition:
 
-- any entry momentum/regime condition becomes false on a completed daily candle;
+- any applicable entry momentum/regime condition becomes false on a completed daily candle;
 - no intraday discretionary or AI exit.
 
 ## 8. Evidence requirements before economic classification
