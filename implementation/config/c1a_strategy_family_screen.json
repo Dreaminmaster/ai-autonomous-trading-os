@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "stage": "C1A",
+  "status": "IMPLEMENTATION_PENDING",
+  "live": "FORBIDDEN",
+  "holdout_state": "HOLDOUT_CLOSED",
+  "contract_path": "docs/architecture/phase-c/c1a-family-screen/C1A_STRATEGY_FAMILY_SCREEN_CONTRACT_V1.md",
+  "required_base_sha": "967497fe726452a60fb6d0e84c10f027873951bf",
+  "strategy_source": "freqtrade_data/strategies/c1a_common.py",
+  "strategies": [
+    "C1ARegimeBreakout",
+    "C1ATrendPullback",
+    "C1ADualMomentum"
+  ],
+  "pairs": [
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT"
+  ],
+  "timeframe": "1h",
+  "informative_timeframe": "1d",
+  "download_timerange": "20230701-20241001",
+  "economic_boundary_exclusive": "2024-10-01T00:00:00Z",
+  "starting_balance": 1000.0,
+  "max_open_trades": 3,
+  "stake_currency": "USDT",
+  "stake_amount": 300.0,
+  "expected_fee_rate": 0.0015,
+  "slippage_rate": 0.0,
+  "slippage_policy": "ZERO_EXPLICIT_SLIPPAGE_WITH_FEE_STRESS_ONLY",
+  "fee_multipliers": [
+    1.0,
+    1.5,
+    2.0
+  ],
+  "startup_analysis": {
+    "timerange": "20240101-20240201",
+    "startup_candidates": [
+      499,
+      999,
+      1499
+    ],
+    "selected_startup_candles": 1499,
+    "max_variance_pct": 0.1,
+    "required_indicators": {
+      "C1ARegimeBreakout": [
+        "atr_14",
+        "donchian_high_480",
+        "donchian_low_240",
+        "pair_close_1d",
+        "pair_ema90_1d",
+        "btc_close_1d",
+        "btc_ema90_1d",
+        "btc_ema20_slope_5_1d"
+      ],
+      "C1ATrendPullback": [
+        "ema20_1h",
+        "rsi14_1h",
+        "atr_14",
+        "pair_close_1d",
+        "pair_ema90_1d",
+        "btc_close_1d",
+        "btc_ema90_1d",
+        "btc_ema20_slope_5_1d"
+      ],
+      "C1ADualMomentum": [
+        "pair_close_1d",
+        "pair_ema90_1d",
+        "pair_return_20d_1d",
+        "pair_return_60d_1d",
+        "btc_close_1d",
+        "btc_ema90_1d",
+        "btc_ema20_slope_5_1d",
+        "btc_return_20d_1d"
+      ]
+    }
+  },
+  "screen_windows": [
+    {
+      "id": "S1",
+      "start": "2024-01-01",
+      "end": "2024-04-01"
+    },
+    {
+      "id": "S2",
+      "start": "2024-04-01",
+      "end": "2024-07-01"
+    },
+    {
+      "id": "S3",
+      "start": "2024-07-01",
+      "end": "2024-10-01"
+    }
+  ],
+  "reserved_confirmation_windows": [
+    {
+      "id": "C1",
+      "start": "2024-10-01",
+      "end": "2025-01-01"
+    },
+    {
+      "id": "C2",
+      "start": "2025-01-01",
+      "end": "2025-04-01"
+    },
+    {
+      "id": "C3",
+      "start": "2025-04-01",
+      "end": "2025-07-01"
+    }
+  ],
+  "gate": {
+    "minimum_positive_windows": 2,
+    "require_positive_median_window_return": true,
+    "require_positive_aggregate_expected_return": true,
+    "require_nonnegative_aggregate_1_5x_return": true,
+    "minimum_profit_factor": 1.1,
+    "maximum_window_drawdown_ratio": 0.15,
+    "minimum_total_trades": 30,
+    "minimum_trades_per_window": 5,
+    "minimum_positive_pairs": 2,
+    "maximum_pair_profit_share": 0.7,
+    "maximum_window_profit_share": 0.6,
+    "maximum_single_trade_profit_share": 0.25,
+    "top_trade_cluster_size": 3,
+    "maximum_top_trade_cluster_profit_share": 0.5
+  },
+  "selection_order": [
+    "median_window_return_drawdown_ratio_desc",
+    "aggregate_1_5x_net_return_desc",
+    "aggregate_expected_profit_factor_desc",
+    "maximum_window_drawdown_asc",
+    "turnover_ratio_asc",
+    "total_trades_desc",
+    "family_id_asc"
+  ],
+  "confirmation_opened": false
+}
