@@ -15,8 +15,8 @@ jobs:
       - name: Install
         run: |
           cd implementation
-          python -m pip install -e '.[dev]'
+          python -m pip install -q -e '.[dev]'
       - name: Tests
         run: |
           cd implementation
-          python -m pytest
+          python -m pytest -q --tb=short
