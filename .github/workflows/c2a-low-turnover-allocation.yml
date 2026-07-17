@@ -1,0 +1,128 @@
+name: C2A Low-Turnover Allocation Screen
+
+on:
+  pull_request:
+    types: [ready_for_review]
+    branches: [main]
+    paths:
+      - '.github/workflows/c2a-low-turnover-allocation.yml'
+      - 'docs/architecture/phase-c/c2a-low-turnover-allocation/**'
+      - 'docs/architecture/phase-c/c1a-family-screen/C1A_STRATEGY_FAMILY_SCREEN_RESULT_V1.md'
+      - 'implementation/config/c2a_low_turnover_allocation.json'
+      - 'implementation/src/atos/c2a_allocation.py'
+      - 'implementation/src/atos/c2a_allocation_runtime.py'
+      - 'implementation/scripts/c2a_*.py'
+      - 'implementation/scripts/finalize_c2a_evidence.py'
+      - 'implementation/tests/conftest.py'
+      - 'implementation/tests/test_c2a_*.py'
+      - 'implementation/pyproject.toml'
+
+permissions:
+  contents: read
+
+jobs:
+  c2a-low-turnover-allocation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      C2A_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      C2A_MERGE_REF_SHA: ${{ github.sha }}
+      C2A_DOWNLOAD_TIMERANGE: '20230501-20241001'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.C2A_SOURCE_SHA }}
+          fetch-depth: 1
+      - name: Verify exact source and merge-ref binding
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$C2A_SOURCE_SHA"
+          git fetch --no-tags origin "+refs/pull/${{ github.event.pull_request.number }}/merge:refs/remotes/origin/c2a-authoritative-merge"
+          actual_merge="$(git rev-parse refs/remotes/origin/c2a-authoritative-merge)"
+          test "$actual_merge" = "$C2A_MERGE_REF_SHA"
+          test "$(git rev-parse "$actual_merge^2")" = "$C2A_SOURCE_SHA"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dedicated research dependencies
+        run: |
+          cd implementation
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev,research]'
+      - name: Setup Freqtrade data tooling
+        run: |
+          cd implementation
+          bash scripts/setup_freqtrade.sh
+          cp config/policy.validation.json config/policy.json
+      - name: Run focused C2A tests first
+        run: |
+          cd implementation
+          python -m pytest \
+            tests/test_c2a_allocation.py \
+            tests/test_c2a_data_guard.py \
+            tests/test_c2a_evidence_contract.py \
+            -q
+      - name: Download C2A screen data only
+        run: |
+          cd implementation
+          freqtrade download-data \
+            --config freqtrade_data/config.dryrun.json \
+            --datadir freqtrade_data/data/okx \
+            --exchange okx \
+            --pairs BTC/USDT ETH/USDT SOL/USDT \
+            --timeframes 1d \
+            --timerange "$C2A_DOWNLOAD_TIMERANGE"
+      - name: Seal API overshoot below C2A boundary
+        run: |
+          cd implementation
+          python scripts/c2a_data_guard.py sanitize
+      - name: Verify three-cell startup coverage and boundary
+        run: |
+          cd implementation
+          python scripts/c2a_data_guard.py verify
+      - name: Run preregistered C2A allocation screen
+        run: |
+          cd implementation
+          python scripts/c2a_evidence.py
+      - name: Capture exact C2A source inventory
+        run: |
+          cd implementation
+          python scripts/c2a_source_inventory.py capture
+      - name: Finalize exact-source C2A evidence
+        run: |
+          cd implementation
+          python scripts/finalize_c2a_evidence.py
+      - name: Verify retained C2A source inventory
+        run: |
+          cd implementation
+          python scripts/c2a_source_inventory.py verify
+      - name: Verify final safety state
+        run: |
+          cd implementation
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('freqtrade_data/backtest_results/c2a_low_turnover_allocation/final_evidence.json')
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          assert evidence['status'] == 'PASS'
+          assert evidence['errors'] == []
+          assert evidence['confirmation_opened'] is False
+          assert evidence['holdout_state'] == 'HOLDOUT_CLOSED'
+          assert evidence['live'] == 'FORBIDDEN'
+          assert evidence['economic_result'] in {'SELECTED', 'REJECTED'}
+          PY
+      - name: Secret leakage scan
+        run: |
+          cd implementation
+          bash scripts/validate_no_secrets.sh
+      - name: Upload C2A allocation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c2a-low-turnover-allocation
+          path: |
+            implementation/freqtrade_data/backtest_results/c2a_low_turnover_allocation/**
+            implementation/freqtrade_data/c2a_runtime/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 90
