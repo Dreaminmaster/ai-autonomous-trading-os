@@ -9,6 +9,7 @@ on:
       - 'docs/architecture/phase-c/c2a-low-turnover-allocation/**'
       - 'docs/architecture/phase-c/c1a-family-screen/C1A_STRATEGY_FAMILY_SCREEN_RESULT_V1.md'
       - 'implementation/config/c2a_low_turnover_allocation.json'
+      - 'implementation/config/c2a_public_data.json'
       - 'implementation/src/atos/c2a_allocation.py'
       - 'implementation/src/atos/c2a_allocation_runtime.py'
       - 'implementation/scripts/c2a_*.py'
@@ -44,16 +45,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install dedicated research dependencies
+      - name: Install dedicated spot research dependencies
         run: |
           cd implementation
           python -m pip install --upgrade pip
-          python -m pip install -e '.[dev,research]'
-      - name: Setup Freqtrade data tooling
+          python -m pip install -e '.[dev,freqtrade]'
+          mkdir -p freqtrade_data/data/okx
+      - name: Verify public-data runtime config
         run: |
           cd implementation
-          bash scripts/setup_freqtrade.sh
-          cp config/policy.validation.json config/policy.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('config/c2a_public_data.json').read_text(encoding='utf-8'))
+          exchange = payload['exchange']
+          assert payload['dry_run'] is True
+          assert payload['trading_mode'] == 'spot'
+          assert payload['margin_mode'] == ''
+          assert payload['api_server']['enabled'] is False
+          assert exchange['name'] == 'okx'
+          assert exchange['key'] == exchange['secret'] == exchange['password'] == ''
+          assert exchange['pair_whitelist'] == ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
+          assert payload['initial_state'] == 'stopped'
+          PY
       - name: Run focused C2A tests first
         run: |
           cd implementation
@@ -66,7 +80,7 @@ jobs:
         run: |
           cd implementation
           freqtrade download-data \
-            --config freqtrade_data/config.dryrun.json \
+            --config config/c2a_public_data.json \
             --datadir freqtrade_data/data/okx \
             --exchange okx \
             --pairs BTC/USDT ETH/USDT SOL/USDT \
