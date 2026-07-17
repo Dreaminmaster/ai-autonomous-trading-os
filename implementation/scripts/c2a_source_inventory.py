@@ -24,7 +24,7 @@ SOURCE_PATHS = (
     Path("docs/architecture/phase-c/c2a-low-turnover-allocation/C2A_WINDOW_ACCOUNTING_ADDENDUM_V1.md"),
     Path("docs/architecture/phase-c/c1a-family-screen/C1A_STRATEGY_FAMILY_SCREEN_RESULT_V1.md"),
     Path("implementation/config/c2a_low_turnover_allocation.json"),
-    Path("implementation/freqtrade_data/config.dryrun.json"),
+    Path("implementation/config/c2a_public_data.json"),
     Path("implementation/src/atos/c2a_allocation.py"),
     Path("implementation/src/atos/c2a_allocation_runtime.py"),
     Path("implementation/scripts/c2a_data_guard.py"),
