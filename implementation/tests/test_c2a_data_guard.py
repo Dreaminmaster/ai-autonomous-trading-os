@@ -75,8 +75,11 @@ def test_validate_rows_fails_closed_on_gap_or_duplicate() -> None:
         loaded.validate_rows(duplicated, "SOL/USDT", 220)
 
 
-def test_sanitize_removes_boundary_overshoot(tmp_path: Path) -> None:
+def test_sanitize_removes_boundary_overshoot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     loaded = module()
+    monkeypatch.setattr(loaded, "IMPL", tmp_path)
     path = tmp_path / "BTC_USDT-1d.csv"
     rows = required_rows()
     rows.extend(
