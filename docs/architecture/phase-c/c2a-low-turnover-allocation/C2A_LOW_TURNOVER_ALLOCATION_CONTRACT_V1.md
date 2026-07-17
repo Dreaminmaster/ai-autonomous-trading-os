@@ -37,9 +37,10 @@ A valid answer may be `REJECTED`.
 - Exchange: OKX public spot OHLCV only.
 - Assets: `BTC/USDT`, `ETH/USDT`, `SOL/USDT`.
 - Signal timeframe: `1d`.
-- Startup download may begin at `2023-07-01` solely to calculate fixed trailing indicators.
+- Startup download may begin at `2023-05-01` solely to calculate fixed trailing indicators.
 - Economic screen begins at `2024-01-01`.
 - Exclusive C2A boundary: `2024-10-01T00:00:00Z`.
+- Before the first S1 decision, each asset must retain at least `220` consecutive completed daily candles; this is startup coverage only and is excluded from economic metrics.
 
 ### 4.2 Screen windows
 
