@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "stage": "C2A",
+  "status": "IMPLEMENTATION_PENDING",
+  "live": "FORBIDDEN",
+  "holdout_state": "HOLDOUT_CLOSED",
+  "confirmation_opened": false,
+  "contract_paths": [
+    "docs/architecture/phase-c/c2a-low-turnover-allocation/C2A_LOW_TURNOVER_ALLOCATION_CONTRACT_V1.md",
+    "docs/architecture/phase-c/c2a-low-turnover-allocation/C2A_WINDOW_ACCOUNTING_ADDENDUM_V1.md"
+  ],
+  "required_base_sha": "995dc9aac3c934c01e196270fc2d41d50278063b",
+  "pairs": [
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT"
+  ],
+  "timeframe": "1d",
+  "download_timerange": "20230501-20241001",
+  "economic_boundary_exclusive": "2024-10-01T00:00:00Z",
+  "startup_history_candles": 220,
+  "starting_equity": 1000.0,
+  "no_trade_band": 0.10,
+  "scheduled_turnover_cap": 0.50,
+  "policies": [
+    "C2AEqualWeightRiskOn",
+    "C2AInverseVolRiskOn",
+    "C2ATopTwoPersistentMomentum"
+  ],
+  "screen_windows": [
+    {
+      "id": "S1",
+      "start": "2024-01-01",
+      "end": "2024-04-01"
+    },
+    {
+      "id": "S2",
+      "start": "2024-04-01",
+      "end": "2024-07-01"
+    },
+    {
+      "id": "S3",
+      "start": "2024-07-01",
+      "end": "2024-10-01"
+    }
+  ],
+  "reserved_confirmation_windows": [
+    {
+      "id": "C1",
+      "start": "2024-10-01",
+      "end": "2025-01-01"
+    },
+    {
+      "id": "C2",
+      "start": "2025-01-01",
+      "end": "2025-04-01"
+    },
+    {
+      "id": "C3",
+      "start": "2025-04-01",
+      "end": "2025-07-01"
+    }
+  ],
+  "cost_rates": {
+    "1.0x": 0.0015,
+    "1.5x": 0.00225,
+    "2.0x": 0.003
+  },
+  "signals": {
+    "momentum_short_days": 90,
+    "momentum_long_days": 180,
+    "btc_sma_days": 200,
+    "volatility_days": 30,
+    "inverse_volatility_asset_cap": 0.50,
+    "top_two_single_asset_weight": 0.50
+  },
+  "gate": {
+    "minimum_positive_windows": 2,
+    "require_positive_median_window_return": true,
+    "require_positive_aggregate_expected_return": true,
+    "require_nonnegative_aggregate_1_5x_return": true,
+    "maximum_window_drawdown_ratio": 0.15,
+    "minimum_aggregate_sharpe": 0.75,
+    "minimum_nonzero_scheduled_rebalances": 4,
+    "minimum_nonzero_scheduled_rebalances_per_window": 1,
+    "maximum_annualized_one_way_turnover": 6.0,
+    "minimum_positive_assets": 2,
+    "maximum_asset_positive_pnl_share": 0.70,
+    "maximum_window_positive_pnl_share": 0.60,
+    "maximum_single_positive_daily_contribution_share": 0.25,
+    "top_daily_cluster_size": 3,
+    "maximum_top_daily_cluster_positive_contribution_share": 0.50,
+    "minimum_positive_benchmark_capture": 0.50,
+    "minimum_drawdown_reduction_vs_positive_benchmark": 0.40
+  },
+  "selection_order": [
+    "minimum_window_net_return_desc",
+    "median_window_net_return_desc",
+    "aggregate_1_5x_net_return_desc",
+    "maximum_window_drawdown_asc",
+    "annualized_one_way_turnover_asc",
+    "policy_id_asc"
+  ]
+}
