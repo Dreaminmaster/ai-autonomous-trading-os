@@ -64,6 +64,11 @@ def test_config_keeps_confirmation_holdout_and_live_closed() -> None:
     assert len(payload["policies"]) == 3
     assert len(payload["screen_windows"]) == 3
     assert len(payload["cost_rates"]) == 3
+    assert payload["reserved_confirmation_windows"] == [
+        {"id": "C1", "start": "2024-10-01", "end": "2025-01-01"},
+        {"id": "C2", "start": "2025-01-01", "end": "2025-04-01"},
+        {"id": "C3", "start": "2025-04-01", "end": "2025-07-01"},
+    ]
 
 
 def test_evidence_requires_exact_27_rows_and_54_hidden_pointers() -> None:
@@ -112,21 +117,19 @@ def test_effective_source_inventory_is_complete_and_unique() -> None:
     module.validate_source_paths()
 
 
-def test_no_c2a_code_opens_closed_periods_or_execution_modes() -> None:
-    implementation_text = "\n".join(
+def test_executable_c2a_code_does_not_read_closed_periods_or_enable_execution() -> None:
+    executable_text = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (
-            CONFIG,
             EVIDENCE,
             FINALIZER,
-            INVENTORY,
             RUNTIME,
             IMPL / "scripts/c2a_data_guard.py",
             IMPL / "src/atos/c2a_allocation.py",
         )
     )
-    assert '"confirmation_opened": true' not in implementation_text.lower()
-    assert '"live": "allowed"' not in implementation_text.lower()
-    assert "2025-07-01" not in implementation_text
-    assert "2026-07-01" not in implementation_text
-    assert "private api" not in implementation_text.lower()
+    assert '"confirmation_opened": true' not in executable_text.lower()
+    assert '"live": "allowed"' not in executable_text.lower()
+    assert "2025-07-01" not in executable_text
+    assert "2026-07-01" not in executable_text
+    assert "private api" not in executable_text.lower()
