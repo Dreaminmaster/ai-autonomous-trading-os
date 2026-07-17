@@ -1,0 +1,126 @@
+name: C1A Strategy Family Screen
+
+on:
+  pull_request:
+    types: [ready_for_review]
+    branches: [main]
+    paths:
+      - '.github/workflows/c1a-strategy-family-screen.yml'
+      - 'docs/architecture/phase-c/c1a-family-screen/C1A_STRATEGY_FAMILY_SCREEN_CONTRACT_V1.md'
+      - 'docs/architecture/phase-c/c0c/C0C_COST_AWARE_EMA_RESULT_V1.md'
+      - 'implementation/config/c1a_strategy_family_screen.json'
+      - 'implementation/freqtrade_data/strategies/c1a_common.py'
+      - 'implementation/scripts/c1a_contract_completion.py'
+      - 'implementation/scripts/c1a_contract_completion/**'
+      - 'implementation/scripts/c1a_data_guard.py'
+      - 'implementation/scripts/c1a_evidence.py'
+      - 'implementation/scripts/c1a_source_inventory.py'
+      - 'implementation/scripts/finalize_c1a_evidence.py'
+      - 'implementation/scripts/run_c0c_development/**'
+      - 'implementation/src/atos/c1a_family_screen.py'
+      - 'implementation/tests/test_c1a_*.py'
+      - 'implementation/pyproject.toml'
+
+permissions:
+  contents: read
+
+jobs:
+  c1a-family-screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      C1A_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      C1A_DOWNLOAD_TIMERANGE: '20230701-20241001'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.C1A_SOURCE_SHA }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dedicated research dependencies
+        run: |
+          cd implementation
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev,research]'
+      - name: Setup Freqtrade
+        run: |
+          cd implementation
+          bash scripts/setup_freqtrade.sh
+          cp config/policy.validation.json config/policy.json
+      - name: Run focused C1A tests first
+        run: |
+          cd implementation
+          python -m pytest \
+            tests/test_c1a_strategy_contract.py \
+            tests/test_c1a_family_screen.py \
+            tests/test_c1a_data_guard.py \
+            tests/test_c1a_evidence_contract.py \
+            tests/test_c1a_contract_completion.py \
+            tests/test_c1a_recursive_adapter.py \
+            -q
+      - name: Verify all three C1A strategies load
+        run: |
+          cd implementation
+          freqtrade list-strategies --strategy-path freqtrade_data/strategies 2>&1 | tee c1a_list_strategies.log
+          grep -q 'C1ARegimeBreakout' c1a_list_strategies.log
+          grep -q 'C1ATrendPullback' c1a_list_strategies.log
+          grep -q 'C1ADualMomentum' c1a_list_strategies.log
+      - name: Download screen data only
+        run: |
+          cd implementation
+          freqtrade download-data \
+            --config freqtrade_data/config.dryrun.json \
+            --datadir freqtrade_data/data/okx \
+            --exchange okx \
+            --pairs BTC/USDT ETH/USDT SOL/USDT \
+            --timeframes 1h 1d \
+            --timerange "$C1A_DOWNLOAD_TIMERANGE"
+      - name: Seal API overshoot below C1A boundary
+        run: |
+          cd implementation
+          python scripts/c1a_data_guard.py sanitize
+      - name: Verify six-cell startup coverage and boundary
+        run: |
+          cd implementation
+          python scripts/c1a_data_guard.py verify
+      - name: Run preregistered fixed-family screen
+        run: |
+          cd implementation
+          python scripts/c1a_evidence.py
+      - name: Apply frozen comparator and effective-source bindings
+        run: |
+          cd implementation
+          PYTHONPATH=scripts python -c 'import c1a_contract_completion as module; raise SystemExit(module.main())' apply
+      - name: Capture exact C1A source inventory
+        run: |
+          cd implementation
+          python scripts/c1a_source_inventory.py capture
+      - name: Finalize exact-source evidence
+        run: |
+          cd implementation
+          python scripts/finalize_c1a_evidence.py
+      - name: Verify retained C1A source inventory
+        run: |
+          cd implementation
+          python scripts/c1a_source_inventory.py verify
+      - name: Verify frozen comparator and effective-source bindings
+        run: |
+          cd implementation
+          PYTHONPATH=scripts python -c 'import c1a_contract_completion as module; raise SystemExit(module.main())' verify
+      - name: Secret leakage scan
+        run: |
+          cd implementation
+          bash scripts/validate_no_secrets.sh
+      - name: Upload C1A family-screen evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c1a-strategy-family-screen
+          path: |
+            implementation/freqtrade_data/backtest_results/c1a_family_screen/**
+            implementation/freqtrade_data/c1a_runtime/**
+            implementation/c1a_list_strategies.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 90
