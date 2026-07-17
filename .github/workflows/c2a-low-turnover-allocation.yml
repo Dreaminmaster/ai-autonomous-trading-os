@@ -82,7 +82,6 @@ jobs:
           freqtrade download-data \
             --config config/c2a_public_data.json \
             --datadir freqtrade_data/data/okx \
-            --exchange okx \
             --pairs BTC/USDT ETH/USDT SOL/USDT \
             --timeframes 1d \
             --timerange "$C2A_DOWNLOAD_TIMERANGE"
