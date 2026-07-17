@@ -50,7 +50,7 @@ jobs:
           cd implementation
           python -m pip install --upgrade pip
           python -m pip install -e '.[dev,freqtrade]'
-          mkdir -p freqtrade_data/data/okx
+          mkdir -p freqtrade_data/data/okx freqtrade_data/c2a_runtime
       - name: Verify public-data runtime config
         run: |
           cd implementation
@@ -66,6 +66,8 @@ jobs:
           assert exchange['name'] == 'okx'
           assert exchange['key'] == exchange['secret'] == exchange['password'] == ''
           assert exchange['pair_whitelist'] == ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
+          assert exchange['ccxt_config']['hostname'] == 'openapi.okx.com'
+          assert exchange['ccxt_async_config']['hostname'] == 'openapi.okx.com'
           assert payload['initial_state'] == 'stopped'
           PY
       - name: Run focused C2A tests first
@@ -77,18 +79,30 @@ jobs:
             tests/test_c2a_evidence_contract.py \
             -q
       - name: Download C2A screen data only
+        timeout-minutes: 30
         run: |
           cd implementation
-          # The dedicated --config config/c2a_public_data.json is checked above.
-          freqtrade download-data \
-            --exchange okx \
-            --trading-mode spot \
-            --candle-types spot \
-            --no-parallel-download \
-            --datadir freqtrade_data/data/okx \
-            --pairs BTC/USDT ETH/USDT SOL/USDT \
-            --timeframes 1d \
-            --timerange "$C2A_DOWNLOAD_TIMERANGE"
+          set -o pipefail
+          log='freqtrade_data/c2a_runtime/download_data.log'
+          : > "$log"
+          freqtrade --version 2>&1 | tee -a "$log"
+          for attempt in 1 2 3; do
+            echo "C2A public OKX download attempt ${attempt}/3" | tee -a "$log"
+            if freqtrade download-data \
+              --config config/c2a_public_data.json \
+              --no-parallel-download \
+              --datadir freqtrade_data/data/okx \
+              --pairs BTC/USDT ETH/USDT SOL/USDT \
+              --timeframes 1d \
+              --timerange "$C2A_DOWNLOAD_TIMERANGE" \
+              2>&1 | tee -a "$log"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 20))
+            fi
+          done
+          exit 1
       - name: Seal API overshoot below C2A boundary
         run: |
           cd implementation
