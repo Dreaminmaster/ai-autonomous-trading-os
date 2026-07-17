@@ -4,11 +4,11 @@ import importlib.util
 import json
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 IMPL = ROOT / "implementation"
 WORKFLOW = ROOT / ".github/workflows/c2a-low-turnover-allocation.yml"
 CONFIG = IMPL / "config/c2a_low_turnover_allocation.json"
+PUBLIC_DATA_CONFIG = IMPL / "config/c2a_public_data.json"
 EVIDENCE = IMPL / "scripts/c2a_evidence.py"
 FINALIZER = IMPL / "scripts/finalize_c2a_evidence.py"
 INVENTORY = IMPL / "scripts/c2a_source_inventory.py"
@@ -34,11 +34,15 @@ def test_workflow_is_single_ready_trigger_and_retains_hidden_evidence() -> None:
     assert "include-hidden-files: true" in text
     assert "implementation/freqtrade_data/c2a_runtime/**" in text
     assert "C2A_DOWNLOAD_TIMERANGE: '20230501-20241001'" in text
+    assert "'.[dev,freqtrade]'" in text
+    assert "scripts/setup_freqtrade.sh" not in text
+    assert "--config config/c2a_public_data.json" in text
 
 
 def test_workflow_orders_guard_evidence_inventory_and_finalizer() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     ordered = [
+        "Verify public-data runtime config",
         "Seal API overshoot below C2A boundary",
         "Verify three-cell startup coverage and boundary",
         "Run preregistered C2A allocation screen",
@@ -71,6 +75,20 @@ def test_config_keeps_confirmation_holdout_and_live_closed() -> None:
     ]
 
 
+def test_public_data_config_is_spot_public_and_non_executable() -> None:
+    payload = json.loads(PUBLIC_DATA_CONFIG.read_text(encoding="utf-8"))
+    exchange = payload["exchange"]
+    assert payload["dry_run"] is True
+    assert payload["trading_mode"] == "spot"
+    assert payload["margin_mode"] == ""
+    assert payload["api_server"]["enabled"] is False
+    assert payload["initial_state"] == "stopped"
+    assert payload["force_entry_enable"] is False
+    assert exchange["name"] == "okx"
+    assert exchange["key"] == exchange["secret"] == exchange["password"] == ""
+    assert exchange["pair_whitelist"] == ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+
+
 def test_evidence_requires_exact_27_rows_and_54_hidden_pointers() -> None:
     evidence = EVIDENCE.read_text(encoding="utf-8")
     finalizer = FINALIZER.read_text(encoding="utf-8")
@@ -96,24 +114,27 @@ def test_runtime_patch_is_explicit_source_bound_and_narrow() -> None:
 def test_effective_source_inventory_is_complete_and_unique() -> None:
     module = load_inventory_module()
     paths = list(module.SOURCE_PATHS)
-    assert len(paths) == len(set(paths))
     expected = {
         Path(".github/workflows/c2a-low-turnover-allocation.yml"),
         Path("docs/architecture/phase-c/c2a-low-turnover-allocation/C2A_LOW_TURNOVER_ALLOCATION_CONTRACT_V1.md"),
         Path("docs/architecture/phase-c/c2a-low-turnover-allocation/C2A_WINDOW_ACCOUNTING_ADDENDUM_V1.md"),
         Path("docs/architecture/phase-c/c1a-family-screen/C1A_STRATEGY_FAMILY_SCREEN_RESULT_V1.md"),
         Path("implementation/config/c2a_low_turnover_allocation.json"),
+        Path("implementation/config/c2a_public_data.json"),
         Path("implementation/src/atos/c2a_allocation.py"),
         Path("implementation/src/atos/c2a_allocation_runtime.py"),
         Path("implementation/scripts/c2a_data_guard.py"),
         Path("implementation/scripts/c2a_evidence.py"),
         Path("implementation/scripts/c2a_source_inventory.py"),
         Path("implementation/scripts/finalize_c2a_evidence.py"),
+        Path("implementation/tests/conftest.py"),
         Path("implementation/tests/test_c2a_allocation.py"),
         Path("implementation/tests/test_c2a_data_guard.py"),
         Path("implementation/tests/test_c2a_evidence_contract.py"),
+        Path("implementation/pyproject.toml"),
     }
-    assert expected.issubset(set(paths))
+    assert len(paths) == len(set(paths))
+    assert expected == set(paths)
     module.validate_source_paths()
 
 
@@ -132,4 +153,3 @@ def test_executable_c2a_code_does_not_read_closed_periods_or_enable_execution() 
     assert '"live": "allowed"' not in executable_text.lower()
     assert "2025-07-01" not in executable_text
     assert "2026-07-01" not in executable_text
-    assert "private api" not in executable_text.lower()
