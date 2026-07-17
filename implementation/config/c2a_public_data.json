@@ -37,9 +37,13 @@
     "secret": "",
     "password": "",
     "ccxt_config": {
-      "enableRateLimit": true
+      "enableRateLimit": true,
+      "hostname": "openapi.okx.com"
     },
-    "ccxt_async_config": {},
+    "ccxt_async_config": {
+      "enableRateLimit": true,
+      "hostname": "openapi.okx.com"
+    },
     "pair_whitelist": [
       "BTC/USDT",
       "ETH/USDT",
