@@ -8,6 +8,7 @@ import pytest
 
 import scripts.c3a_evidence as evidence
 import scripts.c3a_source_inventory as inventory
+import scripts.complete_c3a_manifest as completer
 import scripts.finalize_c3a_evidence as finalizer
 
 
@@ -16,13 +17,13 @@ MERGE_SHA = "2" * 40
 
 
 def test_source_inventory_is_exact_and_contains_no_active_workflow() -> None:
-    assert len(inventory.SOURCE_PATHS) == 13
-    assert len(set(inventory.SOURCE_PATHS)) == 13
+    assert len(inventory.SOURCE_PATHS) == 14
+    assert len(set(inventory.SOURCE_PATHS)) == 14
     assert not any(path.startswith(".github/workflows/") for path in inventory.SOURCE_PATHS)
     payload = inventory.build_inventory(EXACT_SHA)
     assert payload["status"] == "PASS"
     assert payload["source_head_sha"] == EXACT_SHA
-    assert payload["file_count"] == 13
+    assert payload["file_count"] == 14
     assert payload["confirmation_opened"] is False
     assert payload["holdout_state"] == "HOLDOUT_CLOSED"
     assert payload["live"] == "FORBIDDEN"
@@ -73,3 +74,37 @@ def test_finalizer_requires_exactly_63_hash_bound_pointers(
     pointer.write_text(json.dumps({"latest": "result.json", "sha256": "0" * 64}), encoding="utf-8")
     with pytest.raises(finalizer.C3AFinalizerError, match="hash mismatch"):
         finalizer.verify_pointers([])
+
+
+def test_final_manifest_must_include_inventory_and_final_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(completer, "RESULTS", tmp_path)
+    files = []
+    for name, payload in (
+        ("source_inventory.json", {"status": "PASS"}),
+        ("final_evidence.json", {"status": "PASS"}),
+    ):
+        path = tmp_path / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        files.append(
+            {
+                "path": name,
+                "size": path.stat().st_size,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        )
+    manifest = {
+        "stage": "C3A",
+        "source_head_sha": EXACT_SHA,
+        "merge_ref_sha": MERGE_SHA,
+        "file_count": len(files),
+        "files": files,
+        "holdout_state": "HOLDOUT_CLOSED",
+        "live": "FORBIDDEN",
+    }
+    completer.verify_final_manifest(manifest, EXACT_SHA, MERGE_SHA)
+    manifest["files"] = manifest["files"][:-1]
+    manifest["file_count"] = len(manifest["files"])
+    with pytest.raises(completer.C3AManifestCompletionError, match="omits final_evidence"):
+        completer.verify_final_manifest(manifest, EXACT_SHA, MERGE_SHA)
