@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "stage": "C3A",
+  "status": "IMPLEMENTATION_PENDING",
+  "live": "FORBIDDEN",
+  "holdout_state": "HOLDOUT_CLOSED",
+  "confirmation_opened": false,
+  "contract_paths": [
+    "docs/architecture/phase-c/c3a-residual-mean-reversion/C3A_RESIDUAL_MEAN_REVERSION_CONTRACT_V1.md",
+    "docs/architecture/phase-c/c3a-residual-mean-reversion/C3A_EXECUTION_ACCOUNTING_ADDENDUM_V1.md",
+    "docs/architecture/phase-c/c3a-residual-mean-reversion/C3A_COOLDOWN_CLARIFICATION_V1.md"
+  ],
+  "contract_required_base_sha": "6546d6ae40c63f38c863dac0f8f1244fde2766bf",
+  "required_design_main_sha": "f8bacea9785dc51783a51ba06948402dfed1a08f",
+  "pairs": [
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT"
+  ],
+  "timeframe": "4h",
+  "download_timerange": "20230901-20241001",
+  "economic_boundary_exclusive": "2024-10-01T00:00:00Z",
+  "startup_history_candles": 450,
+  "starting_equity": 1000.0,
+  "position_target": 0.50,
+  "policies": [
+    "C3AEthResidualReversion",
+    "C3ASolResidualReversion",
+    "C3AStrongestLaggardResidualReversion"
+  ],
+  "comparators": [
+    "cash",
+    "btc_buy_hold",
+    "eth_buy_hold",
+    "sol_buy_hold"
+  ],
+  "screen_windows": [
+    {
+      "id": "S1",
+      "start": "2024-01-01T00:00:00Z",
+      "end": "2024-04-01T00:00:00Z"
+    },
+    {
+      "id": "S2",
+      "start": "2024-04-01T00:00:00Z",
+      "end": "2024-07-01T00:00:00Z"
+    },
+    {
+      "id": "S3",
+      "start": "2024-07-01T00:00:00Z",
+      "end": "2024-10-01T00:00:00Z"
+    }
+  ],
+  "reserved_confirmation_windows": [
+    {
+      "id": "C1",
+      "start": "2024-10-01T00:00:00Z",
+      "end": "2025-01-01T00:00:00Z"
+    },
+    {
+      "id": "C2",
+      "start": "2025-01-01T00:00:00Z",
+      "end": "2025-04-01T00:00:00Z"
+    },
+    {
+      "id": "C3",
+      "start": "2025-04-01T00:00:00Z",
+      "end": "2025-07-01T00:00:00Z"
+    }
+  ],
+  "cost_rates": {
+    "1.0x": 0.0015,
+    "1.5x": 0.00225,
+    "2.0x": 0.003
+  },
+  "signal": {
+    "beta_lookback": 180,
+    "beta_min": 0.25,
+    "beta_max": 2.50,
+    "residual_horizon": 6,
+    "zscore_lookback": 180,
+    "btc_sma_bars": 300,
+    "entry_zscore": -2.00,
+    "exit_zscore": -0.25
+  },
+  "lifecycle": {
+    "time_exit_bars": 18,
+    "price_stop_ratio": -0.06,
+    "cooldown_bars": 6
+  },
+  "gate": {
+    "minimum_positive_windows": 2,
+    "require_positive_median_window_return": true,
+    "require_positive_aggregate_expected_return": true,
+    "require_nonnegative_aggregate_1_5x_return": true,
+    "minimum_aggregate_sharpe": 0.75,
+    "minimum_profit_factor": 1.15,
+    "maximum_window_drawdown_ratio": 0.12,
+    "minimum_closed_trades": 18,
+    "minimum_closed_trades_per_window": 4,
+    "maximum_exposure_ratio": 0.45,
+    "maximum_annualized_one_way_turnover": 36.0,
+    "maximum_window_positive_pnl_share": 0.70,
+    "maximum_single_trade_positive_pnl_share": 0.25,
+    "maximum_top_three_trade_positive_pnl_share": 0.55,
+    "strongest_laggard_maximum_asset_positive_pnl_share": 0.75
+  },
+  "selection_order": [
+    "minimum_window_net_return_desc",
+    "median_window_net_return_desc",
+    "aggregate_1_5x_net_return_desc",
+    "maximum_window_drawdown_asc",
+    "annualized_one_way_turnover_asc",
+    "policy_id_asc"
+  ]
+}
