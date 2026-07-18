@@ -19,7 +19,7 @@ SNAPSHOT = RESULTS / "source_snapshot"
 INVENTORY_PATH = RESULTS / "source_inventory.json"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SOURCE_PATHS = (
-    Path(".github/workflows/c2a-low-turnover-allocation.yml"),
+    Path("docs/architecture/phase-c/c2a-low-turnover-allocation/archive/C2A_AUTHORITATIVE_WORKFLOW_V1.yml"),
     Path("docs/architecture/phase-c/c2a-low-turnover-allocation/C2A_LOW_TURNOVER_ALLOCATION_CONTRACT_V1.md"),
     Path("docs/architecture/phase-c/c2a-low-turnover-allocation/C2A_WINDOW_ACCOUNTING_ADDENDUM_V1.md"),
     Path("docs/architecture/phase-c/c1a-family-screen/C1A_STRATEGY_FAMILY_SCREEN_RESULT_V1.md"),
