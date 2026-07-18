@@ -50,7 +50,7 @@ jobs:
           cd implementation
           python -m pip install --upgrade pip
           python -m pip install -e '.[dev,freqtrade]'
-          mkdir -p freqtrade_data/data/okx freqtrade_data/c2a_runtime
+          mkdir -p user_data freqtrade_data/data/okx freqtrade_data/c2a_runtime
       - name: Verify public-data runtime config
         run: |
           cd implementation
