@@ -6,7 +6,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 IMPL = ROOT / "implementation"
-WORKFLOW = ROOT / ".github/workflows/c2a-low-turnover-allocation.yml"
+ACTIVE_WORKFLOW = ROOT / ".github/workflows/c2a-low-turnover-allocation.yml"
+ARCHIVED_WORKFLOW = (
+    ROOT
+    / "docs/architecture/phase-c/c2a-low-turnover-allocation/archive/C2A_AUTHORITATIVE_WORKFLOW_V1.yml"
+)
 CONFIG = IMPL / "config/c2a_low_turnover_allocation.json"
 PUBLIC_DATA_CONFIG = IMPL / "config/c2a_public_data.json"
 EVIDENCE = IMPL / "scripts/c2a_evidence.py"
@@ -23,8 +27,9 @@ def load_inventory_module():
     return module
 
 
-def test_workflow_is_single_ready_trigger_and_retains_hidden_evidence() -> None:
-    text = WORKFLOW.read_text(encoding="utf-8")
+def test_authoritative_workflow_is_archived_and_no_longer_active() -> None:
+    assert not ACTIVE_WORKFLOW.exists()
+    text = ARCHIVED_WORKFLOW.read_text(encoding="utf-8")
     assert "types: [ready_for_review]" in text
     assert "workflow_dispatch" not in text
     assert "schedule:" not in text
@@ -39,8 +44,8 @@ def test_workflow_is_single_ready_trigger_and_retains_hidden_evidence() -> None:
     assert "--config config/c2a_public_data.json" in text
 
 
-def test_workflow_orders_guard_evidence_inventory_and_finalizer() -> None:
-    text = WORKFLOW.read_text(encoding="utf-8")
+def test_archived_workflow_orders_guard_evidence_inventory_and_finalizer() -> None:
+    text = ARCHIVED_WORKFLOW.read_text(encoding="utf-8")
     ordered = [
         "Verify public-data runtime config",
         "Seal API overshoot below C2A boundary",
@@ -115,7 +120,10 @@ def test_effective_source_inventory_is_complete_and_unique() -> None:
     module = load_inventory_module()
     paths = list(module.SOURCE_PATHS)
     expected = {
-        Path(".github/workflows/c2a-low-turnover-allocation.yml"),
+        Path(
+            "docs/architecture/phase-c/c2a-low-turnover-allocation/archive/"
+            "C2A_AUTHORITATIVE_WORKFLOW_V1.yml"
+        ),
         Path("docs/architecture/phase-c/c2a-low-turnover-allocation/C2A_LOW_TURNOVER_ALLOCATION_CONTRACT_V1.md"),
         Path("docs/architecture/phase-c/c2a-low-turnover-allocation/C2A_WINDOW_ACCOUNTING_ADDENDUM_V1.md"),
         Path("docs/architecture/phase-c/c1a-family-screen/C1A_STRATEGY_FAMILY_SCREEN_RESULT_V1.md"),
