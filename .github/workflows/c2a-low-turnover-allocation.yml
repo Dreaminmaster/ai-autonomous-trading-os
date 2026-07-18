@@ -59,10 +59,15 @@ jobs:
           from pathlib import Path
           payload = json.loads(Path('config/c2a_public_data.json').read_text(encoding='utf-8'))
           exchange = payload['exchange']
+          api_server = payload['api_server']
           assert payload['dry_run'] is True
           assert payload['trading_mode'] == 'spot'
           assert payload['margin_mode'] == ''
-          assert payload['api_server']['enabled'] is False
+          assert api_server['enabled'] is False
+          assert api_server['listen_ip_address'] == '127.0.0.1'
+          assert api_server['listen_port'] == 8080
+          assert api_server['username'] == api_server['password'] == ''
+          assert len(api_server['jwt_secret_key']) >= 32
           assert exchange['name'] == 'okx'
           assert exchange['key'] == exchange['secret'] == exchange['password'] == ''
           assert exchange['pair_whitelist'] == ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
