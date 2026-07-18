@@ -24,6 +24,7 @@ SOURCE_PATHS = (
     "implementation/scripts/c3a_evidence.py",
     "implementation/scripts/c3a_source_inventory.py",
     "implementation/scripts/finalize_c3a_evidence.py",
+    "implementation/scripts/complete_c3a_manifest.py",
     "implementation/tests/test_c3a_residual_reversion.py",
     "implementation/tests/test_c3a_data_guard.py",
     "implementation/tests/test_c3a_evidence_contract.py",
