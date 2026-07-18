@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-import scripts.c3a_evidence as evidence
+try:  # pytest imports through the repository namespace; direct execution uses the script directory.
+    import scripts.c3a_evidence as evidence
+except ModuleNotFoundError:  # pragma: no cover - exercised by direct workflow execution
+    import c3a_evidence as evidence  # type: ignore
 
 
 RESULTS = evidence.RESULTS
