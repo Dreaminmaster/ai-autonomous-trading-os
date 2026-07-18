@@ -1,0 +1,166 @@
+name: C3A Residual Mean-Reversion Screen
+
+on:
+  pull_request:
+    types: [ready_for_review]
+    branches: [main]
+    paths:
+      - '.github/workflows/c3a-residual-mean-reversion.yml'
+      - 'docs/architecture/phase-c/c3a-residual-mean-reversion/**'
+      - 'docs/architecture/phase-c/c2a-low-turnover-allocation/C2A_LOW_TURNOVER_ALLOCATION_RESULT_V1.md'
+      - 'implementation/config/c3a_residual_mean_reversion.json'
+      - 'implementation/config/c3a_public_data.json'
+      - 'implementation/src/atos/c3a_residual*.py'
+      - 'implementation/scripts/c3a_*.py'
+      - 'implementation/scripts/finalize_c3a_evidence.py'
+      - 'implementation/tests/test_c3a_*.py'
+      - 'implementation/pyproject.toml'
+
+permissions:
+  contents: read
+
+jobs:
+  c3a-residual-mean-reversion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      C3A_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      C3A_MERGE_REF_SHA: ${{ github.sha }}
+      C3A_DOWNLOAD_TIMERANGE: '20230901-20241001'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.C3A_SOURCE_SHA }}
+          fetch-depth: 1
+      - name: Verify exact source and merge-ref binding
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$C3A_SOURCE_SHA"
+          git fetch --no-tags origin "+refs/pull/${{ github.event.pull_request.number }}/merge:refs/remotes/origin/c3a-authoritative-merge"
+          actual_merge="$(git rev-parse refs/remotes/origin/c3a-authoritative-merge)"
+          test "$actual_merge" = "$C3A_MERGE_REF_SHA"
+          test "$(git rev-parse "$actual_merge^2")" = "$C3A_SOURCE_SHA"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dedicated spot research dependencies
+        run: |
+          cd implementation
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev,freqtrade]'
+          mkdir -p user_data freqtrade_data/data/okx freqtrade_data/c3a_runtime
+      - name: Verify public-data runtime config
+        run: |
+          cd implementation
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('config/c3a_public_data.json').read_text(encoding='utf-8'))
+          exchange = payload['exchange']
+          api_server = payload['api_server']
+          assert payload['dry_run'] is True
+          assert payload['trading_mode'] == 'spot'
+          assert payload['margin_mode'] == ''
+          assert payload['entry_pricing']['use_order_book'] is False
+          assert payload['exit_pricing']['use_order_book'] is False
+          assert api_server['enabled'] is False
+          assert api_server['listen_ip_address'] == '127.0.0.1'
+          assert api_server['listen_port'] == 8080
+          assert api_server['username'] == api_server['password'] == ''
+          assert len(api_server['jwt_secret_key']) >= 32
+          assert exchange['name'] == 'okx'
+          assert exchange['key'] == exchange['secret'] == exchange['password'] == ''
+          assert exchange['pair_whitelist'] == ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
+          assert exchange['ccxt_config']['hostname'] == 'openapi.okx.com'
+          assert exchange['ccxt_async_config']['hostname'] == 'openapi.okx.com'
+          assert payload['initial_state'] == 'stopped'
+          assert payload['force_entry_enable'] is False
+          PY
+      - name: Run focused C3A tests first
+        run: |
+          cd implementation
+          python -m pytest \
+            tests/test_c3a_residual.py \
+            tests/test_c3a_data_guard.py \
+            tests/test_c3a_evidence_contract.py \
+            -q
+      - name: Download C3A screen data only
+        timeout-minutes: 30
+        run: |
+          cd implementation
+          set -o pipefail
+          log='freqtrade_data/c3a_runtime/download_data.log'
+          : > "$log"
+          freqtrade --version 2>&1 | tee -a "$log"
+          for attempt in 1 2 3; do
+            echo "C3A public OKX download attempt ${attempt}/3" | tee -a "$log"
+            if freqtrade download-data \
+              --config config/c3a_public_data.json \
+              --no-parallel-download \
+              --datadir freqtrade_data/data/okx \
+              --pairs BTC/USDT ETH/USDT SOL/USDT \
+              --timeframes 4h \
+              --timerange "$C3A_DOWNLOAD_TIMERANGE" \
+              2>&1 | tee -a "$log"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 20))
+            fi
+          done
+          exit 1
+      - name: Seal API overshoot below C3A boundary
+        run: |
+          cd implementation
+          python scripts/c3a_data_guard.py sanitize
+      - name: Verify aligned four-hour startup coverage and boundary
+        run: |
+          cd implementation
+          python scripts/c3a_data_guard.py verify
+      - name: Run preregistered C3A residual screen
+        run: |
+          cd implementation
+          python scripts/c3a_evidence.py
+      - name: Capture exact C3A source inventory
+        run: |
+          cd implementation
+          python scripts/c3a_source_inventory.py capture
+      - name: Finalize exact-source C3A evidence
+        run: |
+          cd implementation
+          python scripts/finalize_c3a_evidence.py
+      - name: Verify retained C3A source inventory
+        run: |
+          cd implementation
+          python scripts/c3a_source_inventory.py verify
+      - name: Verify final safety state
+        run: |
+          cd implementation
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('freqtrade_data/backtest_results/c3a_residual_mean_reversion/final_evidence.json')
+          evidence = json.loads(path.read_text(encoding='utf-8'))
+          assert evidence['status'] == 'PASS'
+          assert evidence['errors'] == []
+          assert evidence['confirmation_opened'] is False
+          assert evidence['c3b_state'] == 'CLOSED'
+          assert evidence['holdout_state'] == 'HOLDOUT_CLOSED'
+          assert evidence['live'] == 'FORBIDDEN'
+          assert evidence['economic_result'] in {'SELECTED', 'REJECTED'}
+          PY
+      - name: Secret leakage scan
+        run: |
+          cd implementation
+          bash scripts/validate_no_secrets.sh
+      - name: Upload C3A residual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c3a-residual-mean-reversion
+          path: |
+            implementation/freqtrade_data/backtest_results/c3a_residual_mean_reversion/**
+            implementation/freqtrade_data/c3a_runtime/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 90
