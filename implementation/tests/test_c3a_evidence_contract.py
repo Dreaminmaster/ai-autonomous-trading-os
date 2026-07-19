@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import scripts.c3a_evidence as evidence
+import scripts.c3a_reference_recompute as reference
 import scripts.c3a_source_inventory as inventory
 import scripts.complete_c3a_manifest as completer
 import scripts.finalize_c3a_evidence as finalizer
@@ -17,16 +18,25 @@ MERGE_SHA = "2" * 40
 
 
 def test_source_inventory_is_exact_and_contains_no_active_workflow() -> None:
-    assert len(inventory.SOURCE_PATHS) == 14
-    assert len(set(inventory.SOURCE_PATHS)) == 14
+    assert len(inventory.SOURCE_PATHS) == 17
+    assert len(set(inventory.SOURCE_PATHS)) == 17
     assert not any(path.startswith(".github/workflows/") for path in inventory.SOURCE_PATHS)
+    assert "implementation/scripts/c3a_reference_recompute.py" in inventory.SOURCE_PATHS
+    assert "implementation/scripts/c3a_contract_guard.py" in inventory.SOURCE_PATHS
     payload = inventory.build_inventory(EXACT_SHA)
     assert payload["status"] == "PASS"
     assert payload["source_head_sha"] == EXACT_SHA
-    assert payload["file_count"] == 14
+    assert payload["file_count"] == 17
     assert payload["confirmation_opened"] is False
     assert payload["holdout_state"] == "HOLDOUT_CLOSED"
     assert payload["live"] == "FORBIDDEN"
+
+
+def test_finalizer_uses_separate_reference_model() -> None:
+    assert finalizer.reference is reference
+    assert reference.__name__.endswith("c3a_reference_recompute")
+    assert not hasattr(reference, "run_screen")
+    assert hasattr(reference, "reference_run_screen")
 
 
 def test_evidence_exact_sha_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -35,6 +45,19 @@ def test_evidence_exact_sha_fails_closed(monkeypatch: pytest.MonkeyPatch) -> Non
         evidence.exact_sha("C3A_SOURCE_SHA")
     monkeypatch.setenv("C3A_SOURCE_SHA", EXACT_SHA)
     assert evidence.exact_sha("C3A_SOURCE_SHA") == EXACT_SHA
+
+
+def test_independent_compare_allows_only_small_float_roundoff() -> None:
+    checks: list[str] = []
+    finalizer.require_equal(
+        "sample",
+        {"value": 1.0, "nested": [2.0, "ok"]},
+        {"value": 1.0 + 1e-12, "nested": [2.0 - 1e-12, "ok"]},
+        checks,
+    )
+    assert checks == ["sample:INDEPENDENT_MATCH"]
+    with pytest.raises(finalizer.C3AFinalizerError, match="numeric mismatch"):
+        finalizer.require_equal("sample", {"value": 1.0}, {"value": 1.01}, [])
 
 
 def test_manifest_binds_every_retained_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -74,6 +97,38 @@ def test_finalizer_requires_exactly_63_hash_bound_pointers(
     pointer.write_text(json.dumps({"latest": "result.json", "sha256": "0" * 64}), encoding="utf-8")
     with pytest.raises(finalizer.C3AFinalizerError, match="hash mismatch"):
         finalizer.verify_pointers([])
+
+
+def test_finalizer_rehashes_inventoried_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "root"
+    results = tmp_path / "results"
+    source = root / "implementation/example.py"
+    source.parent.mkdir(parents=True)
+    results.mkdir()
+    source.write_text("value = 1\n", encoding="utf-8")
+    payload = {
+        "status": "PASS",
+        "source_head_sha": EXACT_SHA,
+        "file_count": 1,
+        "files": [{
+            "path": "implementation/example.py",
+            "size": source.stat().st_size,
+            "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        }],
+        "holdout_state": "HOLDOUT_CLOSED",
+        "live": "FORBIDDEN",
+    }
+    (results / "source_inventory.json").write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(finalizer, "ROOT", root)
+    monkeypatch.setattr(finalizer, "RESULTS", results)
+    checks: list[str] = []
+    finalizer.verify_source_inventory(EXACT_SHA, checks)
+    assert checks == ["source_inventory:1"]
+    source.write_text("value = 2\n", encoding="utf-8")
+    with pytest.raises(finalizer.C3AFinalizerError, match="hash mismatch"):
+        finalizer.verify_source_inventory(EXACT_SHA, [])
 
 
 def test_final_manifest_must_include_inventory_and_final_evidence(
