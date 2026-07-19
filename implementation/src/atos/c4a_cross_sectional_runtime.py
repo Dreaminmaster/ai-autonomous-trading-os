@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+import pandas as pd
+
 from . import c4a_cross_sectional_momentum as _base
 
 C4AError = _base.C4AError
@@ -80,6 +82,44 @@ def _event_by_time(row: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     return events
 
 
+def _retain_forced_stub_signal(
+    row: dict[str, Any],
+    market: Any,
+    *,
+    selected_pairs: Sequence[str],
+    policy: str,
+    config: Mapping[str, Any],
+) -> None:
+    if row["window_id"] != "S3":
+        return
+    forced = [item for item in row["signals"] if item.get("forced_cash")]
+    if len(forced) != 1:
+        raise C4AError("missing unique forced-stub signal record")
+    audit = _base.signal_snapshot(
+        market,
+        execution_time=pd.Timestamp("2024-09-30T00:00:00Z"),
+        selected_pairs=selected_pairs,
+        policy=policy,
+        config=config,
+    )
+    record = forced[0]
+    pre_override_targets = dict(audit["target_weights"])
+    rows = []
+    for item in audit["rows"]:
+        enriched = dict(item)
+        enriched["pre_boundary_selected_target"] = bool(item["selected_target"])
+        enriched["selected_target"] = False
+        rows.append(enriched)
+    record.update(audit)
+    record["risk_on_before_boundary_override"] = bool(audit["risk_on"])
+    record["pre_boundary_target_weights"] = pre_override_targets
+    record["chosen_pairs"] = []
+    record["target_weights"] = {}
+    record["risk_on"] = False
+    record["forced_cash"] = True
+    record["rows"] = rows
+
+
 def _enrich_week_evidence(row: dict[str, Any]) -> None:
     events = _event_by_time(row)
     for week in row["full_weeks"]:
@@ -132,6 +172,13 @@ def simulate_window(
         policy=policy,
         window=window,
         cost_label=cost_label,
+        config=config,
+    )
+    _retain_forced_stub_signal(
+        row,
+        market,
+        selected_pairs=selected_pairs,
+        policy=policy,
         config=config,
     )
     _enrich_week_evidence(row)
