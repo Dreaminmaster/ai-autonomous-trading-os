@@ -19,9 +19,12 @@ env:
   C3A_BASE_SHA: ${{ github.event.pull_request.base.sha }}
   C3A_CI_RUN_ID: '29672938761'
   C3A_VALIDATION_RUN_ID: '29672938732'
-  C3A_RECOVERY_OF_RUN_ID: '29675135871'
-  C3A_RECOVERY_HEAD_SHA: 878904bfe7dd934542a0684f69234f4043513bf0
-  C3A_RECOVERY_ARTIFACT_DIGEST: sha256:363fa1934ac2ad429ae9dbf069406de7d5a07ca49580977c290537cd8129f6b5
+  C3A_FAILURE1_RUN_ID: '29675135871'
+  C3A_FAILURE1_HEAD_SHA: 878904bfe7dd934542a0684f69234f4043513bf0
+  C3A_FAILURE1_ARTIFACT_DIGEST: sha256:363fa1934ac2ad429ae9dbf069406de7d5a07ca49580977c290537cd8129f6b5
+  C3A_FAILURE2_RUN_ID: '29683819964'
+  C3A_FAILURE2_HEAD_SHA: 268436dac26f1d9ddd4079185cf5fb157f0750e8
+  C3A_FAILURE2_ARTIFACT_DIGEST: sha256:7defbcfad37d2f596a49e34e598cad387e2d833cd9888bb250af218722f6cba6
   C3A_RESULT_DIR: ${{ github.workspace }}/implementation/freqtrade_data/backtest_results/c3a_residual_mean_reversion
   C3A_RUNTIME_DIR: ${{ github.workspace }}/implementation/freqtrade_data/c3a_authoritative_runtime
   C3A_PUBLIC_CONFIG: ${{ github.workspace }}/implementation/freqtrade_data/config.c3a-public.json
@@ -47,12 +50,11 @@ jobs:
           {
             "schema_version": 1,
             "stage": "C3A",
-            "status": "RUNNING_RECOVERY",
+            "status": "RUNNING_CONTROLLED_RECOVERY_2",
             "event": "${GITHUB_EVENT_NAME}",
             "event_action": "${{ github.event.action }}",
             "run_id": "${GITHUB_RUN_ID}",
             "run_attempt": "${GITHUB_RUN_ATTEMPT}",
-            "recovery_of_run_id": "${C3A_RECOVERY_OF_RUN_ID}",
             "source_head_sha": "${C3A_SOURCE_SHA}",
             "workflow_head_sha": "${C3A_WORKFLOW_HEAD_SHA}",
             "merge_ref_sha": "${C3A_MERGE_REF_SHA}",
@@ -82,7 +84,7 @@ jobs:
               print(name, md.version(name))
           PY
 
-      - name: Bind frozen source and prove pre-economic recovery eligibility
+      - name: Bind frozen source and prove recovery chain is pre-economic
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -130,76 +132,96 @@ jobs:
               with urllib.request.urlopen(request, timeout=30) as response:
                   return json.load(response)
 
-          prior = []
-          expected = {
+          validations = []
+          for run_id, expected_name in {
               os.environ["C3A_CI_RUN_ID"]: "CI",
               os.environ["C3A_VALIDATION_RUN_ID"]: "Freqtrade Validation",
-          }
-          for run_id, workflow_name in expected.items():
-              payload = get(f"/actions/runs/{run_id}")
-              assert payload["name"] == workflow_name, payload
-              assert payload["event"] == "pull_request", payload
-              assert payload["head_sha"] == source, payload
-              assert payload["status"] == "completed", payload
-              assert payload["conclusion"] == "success", payload
-              prior.append({
+          }.items():
+              run = get(f"/actions/runs/{run_id}")
+              assert run["name"] == expected_name, run
+              assert run["event"] == "pull_request", run
+              assert run["head_sha"] == source, run
+              assert run["status"] == "completed" and run["conclusion"] == "success", run
+              validations.append({
                   "run_id": int(run_id),
-                  "workflow_name": payload["name"],
-                  "head_sha": payload["head_sha"],
-                  "status": payload["status"],
-                  "conclusion": payload["conclusion"],
-                  "html_url": payload["html_url"],
+                  "workflow_name": run["name"],
+                  "head_sha": run["head_sha"],
+                  "conclusion": run["conclusion"],
+                  "html_url": run["html_url"],
               })
 
-          recovery_id = os.environ["C3A_RECOVERY_OF_RUN_ID"]
-          recovery = get(f"/actions/runs/{recovery_id}")
-          assert recovery["name"] == "C3A Authoritative Screen", recovery
-          assert recovery["event"] == "pull_request", recovery
-          assert recovery["head_sha"] == os.environ["C3A_RECOVERY_HEAD_SHA"], recovery
-          assert recovery["status"] == "completed", recovery
-          assert recovery["conclusion"] == "failure", recovery
+          specs = [
+              {
+                  "run_id": os.environ["C3A_FAILURE1_RUN_ID"],
+                  "head_sha": os.environ["C3A_FAILURE1_HEAD_SHA"],
+                  "artifact_digest": os.environ["C3A_FAILURE1_ARTIFACT_DIGEST"],
+                  "required": {
+                      "Prove frozen implementation and safety tests": "failure",
+                      "Download only preregistered public OKX candles": "skipped",
+                      "Seal boundary and prove exact full-range coverage": "skipped",
+                      "Run the single authoritative C3A screen and independent finalizer": "skipped",
+                  },
+                  "failure_stage": "pre_economic_runtime_configuration",
+                  "economic_information_observed": False,
+              },
+              {
+                  "run_id": os.environ["C3A_FAILURE2_RUN_ID"],
+                  "head_sha": os.environ["C3A_FAILURE2_HEAD_SHA"],
+                  "artifact_digest": os.environ["C3A_FAILURE2_ARTIFACT_DIGEST"],
+                  "required": {
+                      "Prove frozen implementation and create public-only runtime config": "success",
+                      "Download only preregistered public OKX candles": "failure",
+                      "Seal boundary and prove exact full-range coverage": "skipped",
+                      "Run the single authoritative C3A screen and independent finalizer": "skipped",
+                  },
+                  "failure_stage": "pre_economic_missing_freqtrade_userdir",
+                  "economic_information_observed": False,
+              },
+          ]
 
-          jobs = get(f"/actions/runs/{recovery_id}/jobs")["jobs"]
-          assert len(jobs) == 1, jobs
-          steps = {item["name"]: item for item in jobs[0]["steps"]}
-          assert steps["Prove frozen implementation and safety tests"]["conclusion"] == "failure", steps
-          for name in (
-              "Download only preregistered public OKX candles",
-              "Seal boundary and prove exact full-range coverage",
-              "Run the single authoritative C3A screen and independent finalizer",
-          ):
-              assert steps[name]["conclusion"] == "skipped", steps
-          assert steps["Upload final C3A evidence even on failure"]["conclusion"] == "success", steps
+          incidents = []
+          for spec in specs:
+              run_id = spec["run_id"]
+              run = get(f"/actions/runs/{run_id}")
+              assert run["name"] == "C3A Authoritative Screen", run
+              assert run["event"] == "pull_request", run
+              assert run["head_sha"] == spec["head_sha"], run
+              assert run["status"] == "completed" and run["conclusion"] == "failure", run
+              jobs = get(f"/actions/runs/{run_id}/jobs")["jobs"]
+              assert len(jobs) == 1, jobs
+              steps = {item["name"]: item for item in jobs[0]["steps"]}
+              for name, conclusion in spec["required"].items():
+                  assert steps[name]["conclusion"] == conclusion, (name, steps[name])
+              assert steps["Upload final C3A evidence even on failure"]["conclusion"] == "success", steps
+              artifacts = get(f"/actions/runs/{run_id}/artifacts")["artifacts"]
+              matches = [a for a in artifacts if a["name"] == f"c3a-authoritative-evidence-{run_id}"]
+              assert len(matches) == 1, artifacts
+              artifact = matches[0]
+              assert artifact.get("digest") == spec["artifact_digest"], artifact
+              assert artifact.get("expired") is False, artifact
+              incidents.append({
+                  "run_id": int(run_id),
+                  "head_sha": run["head_sha"],
+                  "conclusion": run["conclusion"],
+                  "failure_stage": spec["failure_stage"],
+                  "economic_information_observed": spec["economic_information_observed"],
+                  "artifact_name": artifact["name"],
+                  "artifact_digest": artifact["digest"],
+              })
 
-          artifacts = get(f"/actions/runs/{recovery_id}/artifacts")["artifacts"]
-          matches = [item for item in artifacts if item["name"] == f"c3a-authoritative-evidence-{recovery_id}"]
-          assert len(matches) == 1, artifacts
-          artifact = matches[0]
-          assert artifact.get("digest") == os.environ["C3A_RECOVERY_ARTIFACT_DIGEST"], artifact
-          assert artifact.get("expired") is False, artifact
-
-          incident = {
+          chain = {
               "schema_version": 1,
               "stage": "C3A",
-              "status": "EVIDENCE_FAILURE",
-              "failed_run_id": int(recovery_id),
-              "failed_head_sha": recovery["head_sha"],
-              "failed_conclusion": recovery["conclusion"],
-              "failure_stage": "pre_economic_runtime_configuration",
-              "market_download_step": "SKIPPED",
-              "economic_screen_step": "SKIPPED",
-              "economic_information_observed": False,
-              "artifact_name": artifact["name"],
-              "artifact_digest": artifact["digest"],
-              "recovery_scope": "workflow-only creation of an explicit public dry-run config",
+              "status": "PRE_ECONOMIC_RECOVERY_ELIGIBLE",
+              "source_head_sha": source,
+              "incidents": incidents,
               "confirmation_opened": False,
               "holdout_state": "HOLDOUT_CLOSED",
               "live": "FORBIDDEN",
           }
-          (runtime / "recovery_incident.json").write_text(
-              json.dumps(incident, indent=2, sort_keys=True), encoding="utf-8"
+          (runtime / "recovery_chain.json").write_text(
+              json.dumps(chain, indent=2, sort_keys=True), encoding="utf-8"
           )
-
           binding = {
               "schema_version": 1,
               "stage": "C3A",
@@ -209,8 +231,8 @@ jobs:
               "merge_ref_sha": os.environ["C3A_MERGE_REF_SHA"],
               "base_sha": os.environ["C3A_BASE_SHA"],
               "allowed_delta": [".github/workflows/c3a-authoritative-screen.yml"],
-              "prior_validation_runs": prior,
-              "recovery_incident": incident,
+              "prior_validation_runs": validations,
+              "recovery_chain": chain,
               "confirmation_opened": False,
               "holdout_state": "HOLDOUT_CLOSED",
               "live": "FORBIDDEN",
@@ -220,7 +242,7 @@ jobs:
           )
           PY
 
-      - name: Prove frozen implementation and create public-only runtime config
+      - name: Prove frozen implementation and create public-only runtime
         run: |
           set -euo pipefail
           cd implementation
@@ -235,7 +257,7 @@ jobs:
           bash scripts/validate_no_secrets.sh 2>&1 | tee "$C3A_RUNTIME_DIR/no_secret_scan.log"
           python scripts/c3a_contract_guard.py config
 
-          mkdir -p freqtrade_data
+          mkdir -p freqtrade_data user_data
           cat > "$C3A_PUBLIC_CONFIG" <<'JSON'
           {
             "max_open_trades": 1,
@@ -249,70 +271,44 @@ jobs:
             "trading_mode": "spot",
             "margin_mode": "",
             "cancel_open_orders_on_exit": false,
-            "unfilledtimeout": {
-              "entry": 10,
-              "exit": 10,
-              "exit_timeout_count": 0,
-              "unit": "minutes"
-            },
+            "unfilledtimeout": {"entry": 10, "exit": 10, "exit_timeout_count": 0, "unit": "minutes"},
             "entry_pricing": {
               "price_side": "other",
               "use_order_book": false,
               "price_last_balance": 0.0,
-              "check_depth_of_market": {
-                "enabled": false,
-                "bids_to_ask_delta": 1
-              }
+              "check_depth_of_market": {"enabled": false, "bids_to_ask_delta": 1}
             },
-            "exit_pricing": {
-              "price_side": "other",
-              "use_order_book": false
-            },
+            "exit_pricing": {"price_side": "other", "use_order_book": false},
             "exchange": {
               "name": "okx",
               "key": "",
               "secret": "",
               "password": "",
-              "ccxt_config": {
-                "enableRateLimit": true,
-                "urls": {
-                  "api": {
-                    "public": "https://www.okx.com"
-                  }
-                }
-              },
+              "ccxt_config": {"enableRateLimit": true},
               "ccxt_async_config": {},
-              "pair_whitelist": [
-                "BTC/USDT",
-                "ETH/USDT",
-                "SOL/USDT"
-              ],
+              "pair_whitelist": ["BTC/USDT", "ETH/USDT", "SOL/USDT"],
               "pair_blacklist": []
             },
-            "pairlists": [
-              {"method": "StaticPairList"}
-            ],
+            "pairlists": [{"method": "StaticPairList"}],
             "bot_name": "c3a_public_data_only",
             "initial_state": "stopped",
             "force_entry_enable": false
           }
           JSON
-
           python - <<'PY'
           import json
           import os
           from pathlib import Path
-          path = Path(os.environ["C3A_PUBLIC_CONFIG"])
-          public = json.loads(path.read_text(encoding="utf-8"))
-          exchange = public["exchange"]
-          assert public["dry_run"] is True
-          assert public["trading_mode"] == "spot"
-          assert public["margin_mode"] == ""
-          assert public["entry_pricing"]["use_order_book"] is False
-          assert public["exit_pricing"]["use_order_book"] is False
+          config = json.loads(Path(os.environ["C3A_PUBLIC_CONFIG"]).read_text(encoding="utf-8"))
+          exchange = config["exchange"]
+          assert config["dry_run"] is True
+          assert config["trading_mode"] == "spot" and config["margin_mode"] == ""
+          assert config["entry_pricing"]["use_order_book"] is False
+          assert config["exit_pricing"]["use_order_book"] is False
           assert not exchange["key"] and not exchange["secret"] and not exchange["password"]
           assert exchange["pair_whitelist"] == ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
-          print("Explicit public-data-only runtime configuration PASS")
+          assert Path("user_data").is_dir()
+          print("Public-only runtime and required Freqtrade user_data directory PASS")
           PY
 
       - name: Download only preregistered public OKX candles
@@ -321,10 +317,11 @@ jobs:
           set -euo pipefail
           cd implementation
           rm -rf freqtrade_data/data/okx
-          mkdir -p freqtrade_data/data/okx
+          mkdir -p freqtrade_data/data/okx user_data
           set -o pipefail
           freqtrade download-data \
             --config "$C3A_PUBLIC_CONFIG" \
+            --userdir user_data \
             --datadir freqtrade_data/data/okx \
             --exchange okx \
             --pairs BTC/USDT ETH/USDT SOL/USDT \
@@ -345,7 +342,7 @@ jobs:
           python scripts/c3a_contract_guard.py postcheck
           cp freqtrade_data/c3a_runtime/c3a_contract_guard.json "$C3A_RUNTIME_DIR/contract_guard_postcheck.json"
 
-      - name: Run the single authoritative C3A screen and independent finalizer
+      - name: Run authoritative screen and independent finalizer
         run: |
           set -euo pipefail
           cd implementation
@@ -353,7 +350,7 @@ jobs:
 
           mkdir -p "$C3A_RESULT_DIR/workflow_provenance"
           cp "$C3A_RUNTIME_DIR"/exact_binding.json "$C3A_RESULT_DIR/workflow_provenance/"
-          cp "$C3A_RUNTIME_DIR"/recovery_incident.json "$C3A_RESULT_DIR/workflow_provenance/"
+          cp "$C3A_RUNTIME_DIR"/recovery_chain.json "$C3A_RESULT_DIR/workflow_provenance/"
           cp "$C3A_RUNTIME_DIR"/workflow_only_delta.txt "$C3A_RESULT_DIR/workflow_provenance/"
           cp "$C3A_RUNTIME_DIR"/contract_guard_precheck.json "$C3A_RESULT_DIR/workflow_provenance/"
           cp "$C3A_RUNTIME_DIR"/contract_guard_postcheck.json "$C3A_RESULT_DIR/workflow_provenance/"
@@ -371,7 +368,6 @@ jobs:
           import os
           import shutil
           from pathlib import Path
-
           root = Path.cwd().parent
           results = Path(os.environ["C3A_RESULT_DIR"])
           inventory = json.loads((results / "source_inventory.json").read_text())
@@ -383,33 +379,27 @@ jobs:
               destination = snapshot_root / relative
               destination.parent.mkdir(parents=True, exist_ok=True)
               shutil.copy2(source, destination)
-              digest = hashlib.sha256(destination.read_bytes()).hexdigest()
-              assert digest == item["sha256"]
+              assert hashlib.sha256(destination.read_bytes()).hexdigest() == item["sha256"]
               assert destination.stat().st_size == item["size"]
               copied.append(str(relative))
-          (results / "source_snapshot_index.json").write_text(
-              json.dumps({
-                  "schema_version": 1,
-                  "stage": "C3A",
-                  "status": "PASS",
-                  "source_head_sha": os.environ["C3A_SOURCE_SHA"],
-                  "file_count": len(copied),
-                  "files": copied,
-                  "confirmation_opened": False,
-                  "holdout_state": "HOLDOUT_CLOSED",
-                  "live": "FORBIDDEN",
-              }, indent=2, sort_keys=True),
-              encoding="utf-8",
-          )
+          (results / "source_snapshot_index.json").write_text(json.dumps({
+              "schema_version": 1,
+              "stage": "C3A",
+              "status": "PASS",
+              "source_head_sha": os.environ["C3A_SOURCE_SHA"],
+              "file_count": len(copied),
+              "files": copied,
+              "confirmation_opened": False,
+              "holdout_state": "HOLDOUT_CLOSED",
+              "live": "FORBIDDEN"
+          }, indent=2, sort_keys=True), encoding="utf-8")
           PY
 
           python scripts/finalize_c3a_evidence.py
-
           python - <<'PY'
           import json
           import os
           from pathlib import Path
-
           results = Path(os.environ["C3A_RESULT_DIR"])
           source = os.environ["C3A_SOURCE_SHA"]
           merge_ref = os.environ["C3A_MERGE_REF_SHA"]
@@ -417,29 +407,21 @@ jobs:
           decision = json.loads((results / "decision.json").read_text())
           final = json.loads((results / "final_evidence.json").read_text())
           inventory = json.loads((results / "source_inventory.json").read_text())
-          snapshot_index = json.loads((results / "source_snapshot_index.json").read_text())
-
+          snapshots = json.loads((results / "source_snapshot_index.json").read_text())
           assert summary["status"] == "PASS" and summary["errors"] == []
-          assert summary["source_head_sha"] == source
-          assert summary["merge_ref_sha"] == merge_ref
+          assert summary["source_head_sha"] == source and summary["merge_ref_sha"] == merge_ref
           assert final["status"] == "PASS" and final["errors"] == []
-          assert final["source_head_sha"] == source
-          assert final["merge_ref_sha"] == merge_ref
+          assert final["source_head_sha"] == source and final["merge_ref_sha"] == merge_ref
           assert decision["economic_result"] in {"SELECTED", "REJECTED"}
           assert decision["confirmation_opened"] is False
-          assert decision["holdout_state"] == "HOLDOUT_CLOSED"
-          assert decision["live"] == "FORBIDDEN"
-          assert summary["policy_row_count"] == 27
-          assert summary["comparator_row_count"] == 36
-          assert summary["result_pointer_count"] == 63
-          assert summary["result_export_count"] == 63
-          pointers = list(results.rglob(".last_result.json"))
-          exports = list(results.rglob("result.json"))
-          assert len(pointers) == 63 and len(exports) == 63
-          assert snapshot_index["file_count"] == inventory["file_count"]
-          assert snapshot_index["files"] == [item["path"] for item in inventory["files"]]
-
-          payload = {
+          assert decision["holdout_state"] == "HOLDOUT_CLOSED" and decision["live"] == "FORBIDDEN"
+          assert summary["policy_row_count"] == 27 and summary["comparator_row_count"] == 36
+          assert summary["result_pointer_count"] == 63 and summary["result_export_count"] == 63
+          assert len(list(results.rglob(".last_result.json"))) == 63
+          assert len(list(results.rglob("result.json"))) == 63
+          assert snapshots["file_count"] == inventory["file_count"]
+          assert snapshots["files"] == [item["path"] for item in inventory["files"]]
+          (results / "pre_manifest_verification.json").write_text(json.dumps({
               "schema_version": 1,
               "stage": "C3A",
               "status": "PASS",
@@ -453,44 +435,33 @@ jobs:
               "result_exports": 63,
               "source_snapshots": inventory["file_count"],
               "finalizer_checks": final["checks_passed"],
-              "recovery_of_run_id": int(os.environ["C3A_RECOVERY_OF_RUN_ID"]),
+              "recovery_run_ids": [int(os.environ["C3A_FAILURE1_RUN_ID"]), int(os.environ["C3A_FAILURE2_RUN_ID"])],
               "confirmation_opened": False,
               "holdout_state": "HOLDOUT_CLOSED",
               "live": "FORBIDDEN",
-              "errors": [],
-          }
-          (results / "pre_manifest_verification.json").write_text(
-              json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-          )
+              "errors": []
+          }, indent=2, sort_keys=True), encoding="utf-8")
           PY
 
           python scripts/complete_c3a_manifest.py
-
           python - <<'PY'
           import hashlib
           import json
           import os
           from pathlib import Path
-
           results = Path(os.environ["C3A_RESULT_DIR"])
           manifest = json.loads((results / "manifest.json").read_text())
           assert manifest["source_head_sha"] == os.environ["C3A_SOURCE_SHA"]
           assert manifest["merge_ref_sha"] == os.environ["C3A_MERGE_REF_SHA"]
-          assert manifest["holdout_state"] == "HOLDOUT_CLOSED"
-          assert manifest["live"] == "FORBIDDEN"
+          assert manifest["holdout_state"] == "HOLDOUT_CLOSED" and manifest["live"] == "FORBIDDEN"
           files = manifest["files"]
           assert manifest["file_count"] == len(files)
           indexed = {item["path"]: item for item in files}
           required = {
-              "run_summary.json",
-              "decision.json",
-              "final_evidence.json",
-              "source_inventory.json",
-              "source_snapshot_index.json",
-              "pre_manifest_verification.json",
-              "workflow_provenance/exact_binding.json",
-              "workflow_provenance/recovery_incident.json",
-              "workflow_provenance/public_runtime_config.json",
+              "run_summary.json", "decision.json", "final_evidence.json",
+              "source_inventory.json", "source_snapshot_index.json",
+              "pre_manifest_verification.json", "workflow_provenance/exact_binding.json",
+              "workflow_provenance/recovery_chain.json", "workflow_provenance/public_runtime_config.json"
           }
           assert required.issubset(indexed)
           for relative, item in indexed.items():
@@ -502,10 +473,9 @@ jobs:
           print("C3A_AUTHORITATIVE_RESULT=" + decision["economic_result"])
           print("C3A_SELECTED_POLICY=" + str(decision["selected_policy"]))
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
-              handle.write("# C3A Authoritative Screen Recovery\n\n")
+              handle.write("# C3A Authoritative Screen\n\n")
               handle.write(f"- Source SHA: `{os.environ['C3A_SOURCE_SHA']}`\n")
               handle.write(f"- Merge-ref SHA: `{os.environ['C3A_MERGE_REF_SHA']}`\n")
-              handle.write(f"- Recovery of pre-economic failure: `{os.environ['C3A_RECOVERY_OF_RUN_ID']}`\n")
               handle.write(f"- Economic result: **{decision['economic_result']}**\n")
               handle.write(f"- Selected policy: `{decision['selected_policy']}`\n")
               handle.write("- C3B: `CLOSED`\n- Holdout: `CLOSED`\n- Live: `FORBIDDEN`\n")
@@ -523,7 +493,6 @@ jobs:
             "status": "EVIDENCE_FAILURE",
             "run_id": "${GITHUB_RUN_ID}",
             "run_attempt": "${GITHUB_RUN_ATTEMPT}",
-            "recovery_of_run_id": "${C3A_RECOVERY_OF_RUN_ID}",
             "source_head_sha": "${C3A_SOURCE_SHA}",
             "workflow_head_sha": "${C3A_WORKFLOW_HEAD_SHA}",
             "merge_ref_sha": "${C3A_MERGE_REF_SHA}",
