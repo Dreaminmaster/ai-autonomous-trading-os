@@ -11,7 +11,7 @@
 - Holdout: `HOLDOUT_CLOSED`
 - Live: `FORBIDDEN`
 
-This clarification is normative and controls where it differs from the parent addendum. It prevents a weekly DSR observation from reading the next independent window's opening candle and prevents a one-day terminal-stub entry in S3.
+This clarification is normative and controls where it differs from the parent addendum. It prevents a weekly DSR observation from reading the next independent window's opening candle, requires every weekly DSR return to include its own Monday rebalance cost, and prevents a one-day terminal-stub entry in S3.
 
 ## 2. Full-week economic mark
 
@@ -19,18 +19,18 @@ OKX four-hour candle timestamps identify candle opens. The candle timestamped Su
 
 A full C4A weekly return observation therefore uses:
 
-- starting equity: immediately after the scheduled Monday `00:00 UTC` rebalance;
-- ending equity: marked at the close of the Sunday `20:00 UTC` candle;
+- starting equity: gross equity immediately before the scheduled Monday `00:00 UTC` rebalance and before that rebalance's fee;
+- ending equity: marked at the close of the Sunday `20:00 UTC` candle after any terminal liquidation required at that close;
 - exactly `42` completed four-hour candles;
 - no next-Monday candle open.
 
 Frozen equation:
 
-`weekly_net_return = equity_at_sunday_20_close / equity_after_monday_00_rebalance - 1`
+`weekly_net_return = equity_at_sunday_20_close_after_required_terminal_liquidation / gross_equity_before_monday_00_rebalance - 1`
 
-The next Monday rebalance and its fee belong to the next economic week, not the prior weekly observation.
+The Monday rebalance fee belongs to the week that begins at that Monday open and is therefore included in that week's net return. The next Monday rebalance and its fee belong to the next economic week, not the prior weekly observation.
 
-This convention avoids reading a timestamp at or beyond an independent window's exclusive boundary.
+This convention is net of scheduled transaction costs and avoids reading a timestamp at or beyond an independent window's exclusive boundary.
 
 ## 3. Final full weeks in S1 and S2
 
@@ -39,7 +39,7 @@ For S1:
 - final scheduled risk decision: `2024-03-25T00:00:00Z`;
 - final full-week ending mark: close of candle `2024-03-31T20:00:00Z`;
 - S1 terminal liquidation occurs at that same final close and pays the applicable cost;
-- the final S1 weekly DSR return includes that terminal liquidation cost;
+- the final S1 weekly DSR return includes both its `2024-03-25` rebalance cost and that terminal liquidation cost;
 - no `2024-04-01T00:00:00Z` price is read by the S1 economic cell.
 
 For S2:
@@ -47,10 +47,10 @@ For S2:
 - final scheduled risk decision: `2024-06-24T00:00:00Z`;
 - final full-week ending mark: close of candle `2024-06-30T20:00:00Z`;
 - S2 terminal liquidation occurs at that same final close and pays the applicable cost;
-- the final S2 weekly DSR return includes that terminal liquidation cost;
+- the final S2 weekly DSR return includes both its `2024-06-24` rebalance cost and that terminal liquidation cost;
 - no `2024-07-01T00:00:00Z` price is read by the S2 economic cell.
 
-S2 and S3 still begin independently with `1000 USDT` at their own first window opens.
+S2 and S3 still begin independently with `1000 USDT` gross equity at their own first window opens. Their first weekly returns include their own first scheduled rebalance costs.
 
 ## 4. S3 terminal stub
 
@@ -78,7 +78,7 @@ The full-week DSR sample remains exactly:
 - S3: `13` observations;
 - total: `39` observations per policy.
 
-Each observation is formed entirely from timestamps inside its independent economic window.
+Each observation is formed entirely from timestamps inside its independent economic window and includes all scheduled and terminal transaction costs assigned to that full week.
 
 ## 6. Scheduled decision counts
 
@@ -101,10 +101,11 @@ The eligibility gate named “scheduled active rebalances” uses `scheduled_act
 
 Implementation tests must prove:
 
+- weekly returns begin from gross equity before the Monday rebalance and include that Monday's transaction cost;
 - weekly returns end at the Sunday `20:00 UTC` candle close;
 - S1 does not read the `2024-04-01T00:00:00Z` open;
 - S2 does not read the `2024-07-01T00:00:00Z` open;
-- the final S1 and S2 weekly DSR observations include terminal liquidation costs;
+- the final S1 and S2 weekly DSR observations include both their Monday rebalance costs and terminal liquidation costs;
 - the `2024-09-30T00:00:00Z` S3 decision is forced cash for all policies;
 - the S3 stub is excluded from all 39-value DSR arrays but included in ordinary economic metrics;
 - the 40 decision records and 39 DSR observations are exact;
