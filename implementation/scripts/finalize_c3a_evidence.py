@@ -4,19 +4,26 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import sys
 from pathlib import Path
 from typing import Any, Mapping
 
-from atos.c3a_residual_reversion import PAIR_ORDER, prepare_market, run_screen, validate_config
+try:  # pytest package import versus direct workflow execution.
+    import scripts.c3a_reference_recompute as reference
+except ModuleNotFoundError:  # pragma: no cover
+    import c3a_reference_recompute as reference  # type: ignore
 
 
 IMPL = Path(__file__).resolve().parents[1]
+ROOT = IMPL.parent
 RESULTS = IMPL / "freqtrade_data/backtest_results/c3a_residual_mean_reversion"
 FINAL_PATH = RESULTS / "final_evidence.json"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+FLOAT_REL_TOL = 1e-10
+FLOAT_ABS_TOL = 1e-12
 
 
 class C3AFinalizerError(RuntimeError):
@@ -51,14 +58,39 @@ def exact_sha(name: str) -> str:
     return value
 
 
-def canonical(payload: Any) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+def _compare(path: str, retained: Any, recomputed: Any) -> None:
+    if isinstance(retained, bool) or isinstance(recomputed, bool):
+        if retained is not recomputed:
+            raise C3AFinalizerError(f"retained {path} boolean mismatch")
+        return
+    if isinstance(retained, (int, float)) and isinstance(recomputed, (int, float)):
+        left = float(retained)
+        right = float(recomputed)
+        if not math.isfinite(left) or not math.isfinite(right):
+            if left != right:
+                raise C3AFinalizerError(f"retained {path} non-finite mismatch")
+        elif not math.isclose(left, right, rel_tol=FLOAT_REL_TOL, abs_tol=FLOAT_ABS_TOL):
+            raise C3AFinalizerError(f"retained {path} numeric mismatch: {left} != {right}")
+        return
+    if isinstance(retained, Mapping) and isinstance(recomputed, Mapping):
+        if set(retained) != set(recomputed):
+            raise C3AFinalizerError(f"retained {path} key mismatch")
+        for key in retained:
+            _compare(f"{path}.{key}", retained[key], recomputed[key])
+        return
+    if isinstance(retained, list) and isinstance(recomputed, list):
+        if len(retained) != len(recomputed):
+            raise C3AFinalizerError(f"retained {path} length mismatch")
+        for index, (left, right) in enumerate(zip(retained, recomputed)):
+            _compare(f"{path}[{index}]", left, right)
+        return
+    if retained != recomputed:
+        raise C3AFinalizerError(f"retained {path} mismatch")
 
 
 def require_equal(label: str, retained: Any, recomputed: Any, checks: list[str]) -> None:
-    if canonical(retained) != canonical(recomputed):
-        raise C3AFinalizerError(f"retained {label} does not match independent recomputation")
-    checks.append(f"{label}:MATCH")
+    _compare(label, retained, recomputed)
+    checks.append(f"{label}:INDEPENDENT_MATCH")
 
 
 def verify_manifest(manifest: Mapping[str, Any], source_sha: str, merge_ref_sha: str, checks: list[str]) -> None:
@@ -71,10 +103,15 @@ def verify_manifest(manifest: Mapping[str, Any], source_sha: str, merge_ref_sha:
     files = manifest.get("files")
     if not isinstance(files, list) or int(manifest.get("file_count", -1)) != len(files):
         raise C3AFinalizerError("manifest file count mismatch")
+    indexed: set[str] = set()
     for item in files:
         if not isinstance(item, Mapping):
             raise C3AFinalizerError("manifest file entry must be an object")
-        path = RESULTS / str(item.get("path", ""))
+        relative = str(item.get("path", ""))
+        if not relative or relative in indexed:
+            raise C3AFinalizerError("manifest contains empty or duplicate path")
+        indexed.add(relative)
+        path = RESULTS / relative
         if not path.is_file():
             raise C3AFinalizerError(f"manifest file missing: {path}")
         if path.stat().st_size != int(item.get("size", -1)):
@@ -82,6 +119,35 @@ def verify_manifest(manifest: Mapping[str, Any], source_sha: str, merge_ref_sha:
         if sha256_file(path) != item.get("sha256"):
             raise C3AFinalizerError(f"manifest hash mismatch: {path}")
     checks.append(f"manifest_files:{len(files)}")
+
+
+def verify_source_inventory(source_sha: str, checks: list[str]) -> None:
+    payload = read_json(RESULTS / "source_inventory.json")
+    if not isinstance(payload, Mapping) or payload.get("status") != "PASS":
+        raise C3AFinalizerError("source inventory is not PASS")
+    if payload.get("source_head_sha") != source_sha:
+        raise C3AFinalizerError("source inventory SHA mismatch")
+    if payload.get("holdout_state") != "HOLDOUT_CLOSED" or payload.get("live") != "FORBIDDEN":
+        raise C3AFinalizerError("source inventory safety drift")
+    files = payload.get("files")
+    if not isinstance(files, list) or int(payload.get("file_count", -1)) != len(files):
+        raise C3AFinalizerError("source inventory count mismatch")
+    seen: set[str] = set()
+    for item in files:
+        if not isinstance(item, Mapping):
+            raise C3AFinalizerError("source inventory entry must be an object")
+        relative = str(item.get("path", ""))
+        if not relative or relative in seen:
+            raise C3AFinalizerError("source inventory contains empty or duplicate path")
+        seen.add(relative)
+        path = ROOT / relative
+        if not path.is_file():
+            raise C3AFinalizerError(f"inventoried source missing: {relative}")
+        if path.stat().st_size != int(item.get("size", -1)):
+            raise C3AFinalizerError(f"inventoried source size mismatch: {relative}")
+        if sha256_file(path) != item.get("sha256"):
+            raise C3AFinalizerError(f"inventoried source hash mismatch: {relative}")
+    checks.append(f"source_inventory:{len(files)}")
 
 
 def verify_pointers(checks: list[str]) -> None:
@@ -100,13 +166,12 @@ def verify_pointers(checks: list[str]) -> None:
         referenced.add(result_path.resolve())
     if referenced != {path.resolve() for path in exports}:
         raise C3AFinalizerError("pointer/export set mismatch")
-    checks.append("pointers:63")
-    checks.append("exports:63")
+    checks.extend(("pointers:63", "exports:63"))
 
 
 def load_market() -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = {}
-    for pair in PAIR_ORDER:
+    for pair in reference.PAIR_ORDER:
         path = RESULTS / "input_candles" / f"{pair.replace('/', '_')}_4h.json"
         payload = read_json(path)
         if not isinstance(payload, list) or not payload:
@@ -127,36 +192,37 @@ def main() -> int:
         if not isinstance(manifest, Mapping):
             raise C3AFinalizerError("manifest must be an object")
         verify_manifest(manifest, source_sha, merge_ref_sha, checks)
+        verify_source_inventory(source_sha, checks)
         verify_pointers(checks)
 
         config = read_json(RESULTS / "config.json")
         if not isinstance(config, Mapping):
             raise C3AFinalizerError("retained config must be an object")
-        validate_config(config)
-        checks.append("config:VALID")
+        reference.verify_config(config)
+        checks.append("config:INDEPENDENT_VALID")
 
         candles = load_market()
-        market = prepare_market(candles)
-        if market.index.max().isoformat() >= "2024-10-01T00:00:00+00:00":
+        market = reference.reference_prepare_market(candles)
+        if max(market.timestamps) >= reference._timestamp("2024-10-01T00:00:00Z"):
             raise C3AFinalizerError("retained primitive market crosses the C3A boundary")
         checks.append("market_boundary:PASS")
-        recomputed = run_screen(market, config)
+        recomputed = reference.reference_run_screen(market, config)
 
-        retained_policy_rows = read_json(RESULTS / "policy_rows.json")
-        retained_comparator_rows = read_json(RESULTS / "comparator_rows.json")
-        retained_policy_aggregates = read_json(RESULTS / "policy_aggregates.json")
-        retained_comparator_aggregates = read_json(RESULTS / "comparator_aggregates.json")
-        retained_decision = read_json(RESULTS / "decision.json")
-        require_equal("policy_rows", retained_policy_rows, recomputed["policy_rows"], checks)
-        require_equal("comparator_rows", retained_comparator_rows, recomputed["comparator_rows"], checks)
-        require_equal("policy_aggregates", retained_policy_aggregates, recomputed["policy_aggregates"], checks)
+        require_equal("policy_rows", read_json(RESULTS / "policy_rows.json"), recomputed["policy_rows"], checks)
+        require_equal("comparator_rows", read_json(RESULTS / "comparator_rows.json"), recomputed["comparator_rows"], checks)
+        require_equal(
+            "policy_aggregates",
+            read_json(RESULTS / "policy_aggregates.json"),
+            recomputed["policy_aggregates"],
+            checks,
+        )
         require_equal(
             "comparator_aggregates",
-            retained_comparator_aggregates,
+            read_json(RESULTS / "comparator_aggregates.json"),
             recomputed["comparator_aggregates"],
             checks,
         )
-        require_equal("decision", retained_decision, recomputed["decision"], checks)
+        require_equal("decision", read_json(RESULTS / "decision.json"), recomputed["decision"], checks)
 
         summary = read_json(RESULTS / "run_summary.json")
         if not isinstance(summary, Mapping):
@@ -194,6 +260,7 @@ def main() -> int:
         "status": "PASS" if not errors else "EVIDENCE_FAILURE",
         "source_head_sha": source_sha,
         "merge_ref_sha": merge_ref_sha,
+        "independent_reference": "scripts/c3a_reference_recompute.py",
         "checks_passed": len(checks),
         "checks": checks,
         "errors": errors,
@@ -206,7 +273,7 @@ def main() -> int:
         raise C3AFinalizerError(errors[0])
     print(
         f"C3A final evidence PASS: {len(checks)} checks / "
-        "C3B_CLOSED / HOLDOUT_CLOSED / LIVE FORBIDDEN"
+        "independent reference / C3B_CLOSED / HOLDOUT_CLOSED / LIVE FORBIDDEN"
     )
     return 0
 
