@@ -12,7 +12,7 @@
 - Holdout: `HOLDOUT_CLOSED`
 - Live: `FORBIDDEN`
 
-This clarification is normative. It corrects the unit convention used inside the Probabilistic/Deflated Sharpe inference and narrows what a C4A result may claim about the fixed candidate universe. Where prior C4A wording refers to an annualized weekly Sharpe inside the DSR equation, this clarification controls.
+This clarification is normative. It corrects the unit convention used inside the Probabilistic/Deflated Sharpe inference and narrows what a C4A result may claim about the fixed candidate universe and the broader sequential research program. Where prior C4A wording refers to an annualized weekly Sharpe inside the DSR equation, this clarification controls.
 
 ## 2. Sharpe unit used inside DSR
 
@@ -116,18 +116,40 @@ Consequently:
 
 No pair may be substituted after formation coverage or economic results are observed. Missing coverage remains `EVIDENCE_FAILURE`.
 
-## 7. Independent-review requirements
+## 7. Within-stage versus program-level selection bias
+
+The frozen `N = 3` DSR trial set corrects only for selection among the three preregistered C4A policies.
+
+It does not mathematically correct for:
+
+- the earlier C1A, C2A, and C3A candidate families;
+- the human choice to investigate cross-sectional momentum after those stages were rejected;
+- unpublished ideas that were considered but never preregistered;
+- the fixed-incumbent-universe choice described above.
+
+Therefore:
+
+- the C4A DSR field must be labelled `within_stage_dsr_probability` or an equally explicit schema name;
+- reports may not call it a program-wide, global, or all-research DSR;
+- a C4A `SELECTED` result would remain a development-screen candidate, not confirmed edge and not authorization to trade;
+- any later C4B design must treat C1-C3 as untouched confirmation data and must explicitly address the accumulated sequential-research selection problem before defining its own statistical acceptance rule;
+- paper, shadow, private exchange access, and live remain unavailable even when every C4A gate passes.
+
+The within-stage DSR gate remains `>= 0.90`; this clarification changes only the interpretation and required field naming, not the threshold.
+
+## 8. Independent-review requirements
 
 Before C4A design can be frozen, review must verify:
 
 - every DSR input uses raw weekly Sharpe units inside the inference equation;
 - annualization appears only as an explicit report-only transform;
 - the trial vector contains exactly all three policies, including weak or cash-heavy policies;
-- `T` is exactly 39 and uses the boundary convention in the weekly clarification;
+- `T` is exactly 39 and uses the cost-inclusive boundary convention in the weekly clarification;
 - the result language preserves the fixed-incumbent-universe limitation;
+- the result language labels DSR as within-stage and does not imply correction for prior research stages;
 - no wording implies C4B, holdout, paper, shadow, private API, leverage, derivatives, shorts, or live authorization.
 
-## 8. Safety state
+## 9. Safety state
 
 This clarification changes no market data boundary, policy signal, cost, gate probability, execution authorization, or reserved-window state.
 
