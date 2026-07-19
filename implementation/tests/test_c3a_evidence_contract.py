@@ -15,6 +15,31 @@ import scripts.finalize_c3a_evidence as finalizer
 
 EXACT_SHA = "1" * 40
 MERGE_SHA = "2" * 40
+ROOT = Path(__file__).resolve().parents[2]
+ACTIVE_WORKFLOW = ROOT / ".github/workflows/c3a-authoritative-screen.yml"
+RESULT_DOCUMENT = (
+    ROOT
+    / "docs/architecture/phase-c/c3a-residual-mean-reversion/"
+    "C3A_RESIDUAL_MEAN_REVERSION_RESULT_V1.md"
+)
+
+
+def test_authoritative_workflow_is_no_longer_active() -> None:
+    assert not ACTIVE_WORKFLOW.exists()
+
+
+def test_result_document_freezes_authoritative_rejection() -> None:
+    text = RESULT_DOCUMENT.read_text(encoding="utf-8")
+    assert "Economic result: `REJECTED`" in text
+    assert "Selected policy: `null`" in text
+    assert "Workflow run ID: `29688657555`" in text
+    assert "Artifact ID: `8442879943`" in text
+    assert "sha256:4079ef14a16969115e0666c2f9527b107a2f797e384197e468107afa34ef3aeb" in text
+    assert "Independent artifact audit comment: `5016168856`" in text
+    assert "Workflow-only head SHA: `2fa745fabb4f988c71901a64c0e86e191bdaac83`" in text
+    assert "C3B_CLOSED" in text
+    assert "HOLDOUT_CLOSED" in text
+    assert "LIVE_FORBIDDEN" in text
 
 
 def test_source_inventory_is_exact_and_contains_no_active_workflow() -> None:
