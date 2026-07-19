@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "stage": "C4A",
+  "status": "IMPLEMENTATION_PENDING",
+  "live": "FORBIDDEN",
+  "holdout_state": "HOLDOUT_CLOSED",
+  "confirmation_opened": false,
+  "required_design_main_sha": "96015f9f15c04a4a834878bb32215194ce05c7eb",
+  "contract_paths": [
+    "docs/architecture/phase-c/c4a-large-liquid-cross-sectional-momentum/C4A_LARGE_LIQUID_CROSS_SECTIONAL_MOMENTUM_CONTRACT_V1.md",
+    "docs/architecture/phase-c/c4a-large-liquid-cross-sectional-momentum/C4A_UNIVERSE_AND_MULTIPLE_TESTING_ADDENDUM_V1.md",
+    "docs/architecture/phase-c/c4a-large-liquid-cross-sectional-momentum/C4A_WEEKLY_BOUNDARY_CLARIFICATION_V1.md",
+    "docs/architecture/phase-c/c4a-large-liquid-cross-sectional-momentum/C4A_DSR_AND_UNIVERSE_SCOPE_CLARIFICATION_V1.md",
+    "docs/architecture/phase-c/c4a-large-liquid-cross-sectional-momentum/C4A_ACCOUNTING_AND_CONTRIBUTION_CLARIFICATION_V1.md",
+    "docs/architecture/phase-c/c4a-large-liquid-cross-sectional-momentum/C4A_EXPOSURE_ERRATUM_V1.md"
+  ],
+  "candidate_pairs": [
+    "ADA/USDT",
+    "AVAX/USDT",
+    "BCH/USDT",
+    "BTC/USDT",
+    "DOGE/USDT",
+    "DOT/USDT",
+    "ETH/USDT",
+    "LINK/USDT",
+    "LTC/USDT",
+    "SOL/USDT",
+    "TRX/USDT",
+    "XRP/USDT"
+  ],
+  "policies": [
+    "C4AWeeklyReturnTopTwo",
+    "C4AHighProximityTopTwo",
+    "C4ACompositeMomentumTopTwo"
+  ],
+  "comparators": [
+    "cash",
+    "btc_buy_hold",
+    "top8_equal_weight_buy_hold",
+    "btc_eth_sol_equal_weight_buy_hold"
+  ],
+  "timeframe": "4h",
+  "download_timerange": "20230901-20241001",
+  "economic_boundary_exclusive": "2024-10-01T00:00:00Z",
+  "formation_start": "2023-09-01T00:00:00Z",
+  "formation_end": "2024-01-01T00:00:00Z",
+  "starting_equity": 1000.0,
+  "selected_universe_size": 8,
+  "position_count": 2,
+  "invested_weight": 0.9,
+  "target_weight_per_asset": 0.45,
+  "weekly_lookback_intervals": 42,
+  "weekly_high_bars": 42,
+  "minimum_breadth": 0.5,
+  "dsr_trial_count": 3,
+  "dsr_sample_count": 39,
+  "screen_windows": [
+    {"id": "S1", "start": "2024-01-01T00:00:00Z", "end": "2024-04-01T00:00:00Z"},
+    {"id": "S2", "start": "2024-04-01T00:00:00Z", "end": "2024-07-01T00:00:00Z"},
+    {"id": "S3", "start": "2024-07-01T00:00:00Z", "end": "2024-10-01T00:00:00Z"}
+  ],
+  "reserved_confirmation_windows": [
+    {"id": "C1", "start": "2024-10-01T00:00:00Z", "end": "2025-01-01T00:00:00Z"},
+    {"id": "C2", "start": "2025-01-01T00:00:00Z", "end": "2025-04-01T00:00:00Z"},
+    {"id": "C3", "start": "2025-04-01T00:00:00Z", "end": "2025-07-01T00:00:00Z"}
+  ],
+  "cost_rates": {
+    "1.0x": 0.0015,
+    "1.5x": 0.00225,
+    "2.0x": 0.003
+  },
+  "gate": {
+    "minimum_positive_windows": 2,
+    "minimum_aggregate_sharpe": 0.75,
+    "minimum_within_stage_dsr_probability": 0.9,
+    "maximum_window_drawdown_ratio": 0.15,
+    "minimum_active_rebalances": 12,
+    "minimum_active_rebalances_per_window": 3,
+    "minimum_closed_asset_lots": 18,
+    "maximum_annualized_one_way_turnover": 18.0,
+    "maximum_exposure_ratio": 0.9,
+    "minimum_positive_assets": 4,
+    "maximum_window_positive_pnl_share": 0.7,
+    "maximum_asset_positive_pnl_share": 0.45,
+    "maximum_week_positive_pnl_share": 0.25,
+    "maximum_top_three_week_positive_pnl_share": 0.55
+  },
+  "selection_order": [
+    "minimum_window_net_return_desc",
+    "within_stage_dsr_probability_desc",
+    "median_window_net_return_desc",
+    "aggregate_1_5x_net_return_desc",
+    "maximum_window_drawdown_asc",
+    "annualized_one_way_turnover_asc",
+    "policy_id_asc"
+  ]
+}
