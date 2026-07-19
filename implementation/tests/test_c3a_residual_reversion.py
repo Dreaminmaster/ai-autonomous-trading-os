@@ -157,10 +157,53 @@ def test_extreme_residual_enters_next_open_and_terminally_liquidates() -> None:
     assert pd.Timestamp(entries[0]["time"]) > pd.Timestamp(shock_time)
     assert pd.Timestamp(entries[0]["time"]) - pd.Timestamp(shock_time) == pd.Timedelta(hours=4)
     assert entries[0]["post_cost_asset_share"] == pytest.approx(0.5)
-    assert row["daily"][-1]["terminal"] in (True, False)
     assert row["daily"][-1]["asset"] is None
     assert row["final_equity"] > 0
     assert row["live"] == "FORBIDDEN"
+
+
+def test_exact_holding_period_and_cooldown_boundaries() -> None:
+    payload = config()
+    market = prepare_market(candles(eth_shocks={
+        "2024-01-10T00:00:00+00:00": -0.16,
+        "2024-01-14T04:00:00+00:00": -0.16,
+    }))
+    row = simulate_window(
+        market,
+        policy="C3AEthResidualReversion",
+        window=payload["screen_windows"][0],
+        cost_label="1.0x",
+        config=payload,
+    )
+    for trade in row["trades"]:
+        if trade["reason"] == "TIME_EXIT":
+            assert trade["held_bars"] == 18
+            assert pd.Timestamp(trade["exit_time"]) - pd.Timestamp(trade["entry_time"]) == pd.Timedelta(hours=72)
+    events = row["events"]
+    for index, event in enumerate(events):
+        if event["kind"] != "EXIT":
+            continue
+        later_entries = [item for item in events[index + 1 :] if item["kind"] == "ENTRY"]
+        if later_entries:
+            assert pd.Timestamp(later_entries[0]["time"]) - pd.Timestamp(event["time"]) >= pd.Timedelta(hours=24)
+
+
+def test_cost_stress_is_monotonic_for_identical_trade_path() -> None:
+    payload = config()
+    market = prepare_market(candles(eth_shocks={"2024-01-10T00:00:00+00:00": -0.16}))
+    cells = [
+        simulate_window(
+            market,
+            policy="C3AEthResidualReversion",
+            window=payload["screen_windows"][0],
+            cost_label=label,
+            config=payload,
+        )
+        for label in COST_LABELS
+    ]
+    paths = [[(item["kind"], item["time"], item.get("asset"), item.get("reason")) for item in cell["events"]] for cell in cells]
+    assert paths[0] == paths[1] == paths[2]
+    assert cells[0]["final_equity"] >= cells[1]["final_equity"] >= cells[2]["final_equity"]
 
 
 def test_complete_screen_has_exact_contract_counts_and_remains_closed() -> None:
