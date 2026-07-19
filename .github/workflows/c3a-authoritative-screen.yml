@@ -19,8 +19,12 @@ env:
   C3A_BASE_SHA: ${{ github.event.pull_request.base.sha }}
   C3A_CI_RUN_ID: '29672938761'
   C3A_VALIDATION_RUN_ID: '29672938732'
+  C3A_RECOVERY_OF_RUN_ID: '29675135871'
+  C3A_RECOVERY_HEAD_SHA: 878904bfe7dd934542a0684f69234f4043513bf0
+  C3A_RECOVERY_ARTIFACT_DIGEST: sha256:363fa1934ac2ad429ae9dbf069406de7d5a07ca49580977c290537cd8129f6b5
   C3A_RESULT_DIR: ${{ github.workspace }}/implementation/freqtrade_data/backtest_results/c3a_residual_mean_reversion
   C3A_RUNTIME_DIR: ${{ github.workspace }}/implementation/freqtrade_data/c3a_authoritative_runtime
+  C3A_PUBLIC_CONFIG: ${{ github.workspace }}/implementation/freqtrade_data/config.c3a-public.json
 
 jobs:
   authoritative-screen:
@@ -43,11 +47,12 @@ jobs:
           {
             "schema_version": 1,
             "stage": "C3A",
-            "status": "RUNNING",
+            "status": "RUNNING_RECOVERY",
             "event": "${GITHUB_EVENT_NAME}",
             "event_action": "${{ github.event.action }}",
             "run_id": "${GITHUB_RUN_ID}",
             "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "recovery_of_run_id": "${C3A_RECOVERY_OF_RUN_ID}",
             "source_head_sha": "${C3A_SOURCE_SHA}",
             "workflow_head_sha": "${C3A_WORKFLOW_HEAD_SHA}",
             "merge_ref_sha": "${C3A_MERGE_REF_SHA}",
@@ -77,7 +82,7 @@ jobs:
               print(name, md.version(name))
           PY
 
-      - name: Bind frozen source, workflow-only delta, merge ref, and prior validations
+      - name: Bind frozen source and prove pre-economic recovery eligibility
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -108,18 +113,14 @@ jobs:
           from pathlib import Path
 
           runtime = Path(os.environ["C3A_RUNTIME_DIR"])
-          source = os.environ["C3A_SOURCE_SHA"]
           api = os.environ["GITHUB_API_URL"].rstrip("/")
           repository = os.environ["GITHUB_REPOSITORY"]
           token = os.environ["GH_TOKEN"]
-          expected = {
-              os.environ["C3A_CI_RUN_ID"]: "CI",
-              os.environ["C3A_VALIDATION_RUN_ID"]: "Freqtrade Validation",
-          }
-          runs = []
-          for run_id, workflow_name in expected.items():
+          source = os.environ["C3A_SOURCE_SHA"]
+
+          def get(path):
               request = urllib.request.Request(
-                  f"{api}/repos/{repository}/actions/runs/{run_id}",
+                  f"{api}/repos/{repository}{path}",
                   headers={
                       "Authorization": f"Bearer {token}",
                       "Accept": "application/vnd.github+json",
@@ -127,13 +128,21 @@ jobs:
                   },
               )
               with urllib.request.urlopen(request, timeout=30) as response:
-                  payload = json.load(response)
+                  return json.load(response)
+
+          prior = []
+          expected = {
+              os.environ["C3A_CI_RUN_ID"]: "CI",
+              os.environ["C3A_VALIDATION_RUN_ID"]: "Freqtrade Validation",
+          }
+          for run_id, workflow_name in expected.items():
+              payload = get(f"/actions/runs/{run_id}")
               assert payload["name"] == workflow_name, payload
               assert payload["event"] == "pull_request", payload
               assert payload["head_sha"] == source, payload
               assert payload["status"] == "completed", payload
               assert payload["conclusion"] == "success", payload
-              runs.append({
+              prior.append({
                   "run_id": int(run_id),
                   "workflow_name": payload["name"],
                   "head_sha": payload["head_sha"],
@@ -141,6 +150,55 @@ jobs:
                   "conclusion": payload["conclusion"],
                   "html_url": payload["html_url"],
               })
+
+          recovery_id = os.environ["C3A_RECOVERY_OF_RUN_ID"]
+          recovery = get(f"/actions/runs/{recovery_id}")
+          assert recovery["name"] == "C3A Authoritative Screen", recovery
+          assert recovery["event"] == "pull_request", recovery
+          assert recovery["head_sha"] == os.environ["C3A_RECOVERY_HEAD_SHA"], recovery
+          assert recovery["status"] == "completed", recovery
+          assert recovery["conclusion"] == "failure", recovery
+
+          jobs = get(f"/actions/runs/{recovery_id}/jobs")["jobs"]
+          assert len(jobs) == 1, jobs
+          steps = {item["name"]: item for item in jobs[0]["steps"]}
+          assert steps["Prove frozen implementation and safety tests"]["conclusion"] == "failure", steps
+          for name in (
+              "Download only preregistered public OKX candles",
+              "Seal boundary and prove exact full-range coverage",
+              "Run the single authoritative C3A screen and independent finalizer",
+          ):
+              assert steps[name]["conclusion"] == "skipped", steps
+          assert steps["Upload final C3A evidence even on failure"]["conclusion"] == "success", steps
+
+          artifacts = get(f"/actions/runs/{recovery_id}/artifacts")["artifacts"]
+          matches = [item for item in artifacts if item["name"] == f"c3a-authoritative-evidence-{recovery_id}"]
+          assert len(matches) == 1, artifacts
+          artifact = matches[0]
+          assert artifact.get("digest") == os.environ["C3A_RECOVERY_ARTIFACT_DIGEST"], artifact
+          assert artifact.get("expired") is False, artifact
+
+          incident = {
+              "schema_version": 1,
+              "stage": "C3A",
+              "status": "EVIDENCE_FAILURE",
+              "failed_run_id": int(recovery_id),
+              "failed_head_sha": recovery["head_sha"],
+              "failed_conclusion": recovery["conclusion"],
+              "failure_stage": "pre_economic_runtime_configuration",
+              "market_download_step": "SKIPPED",
+              "economic_screen_step": "SKIPPED",
+              "economic_information_observed": False,
+              "artifact_name": artifact["name"],
+              "artifact_digest": artifact["digest"],
+              "recovery_scope": "workflow-only creation of an explicit public dry-run config",
+              "confirmation_opened": False,
+              "holdout_state": "HOLDOUT_CLOSED",
+              "live": "FORBIDDEN",
+          }
+          (runtime / "recovery_incident.json").write_text(
+              json.dumps(incident, indent=2, sort_keys=True), encoding="utf-8"
+          )
 
           binding = {
               "schema_version": 1,
@@ -151,7 +209,8 @@ jobs:
               "merge_ref_sha": os.environ["C3A_MERGE_REF_SHA"],
               "base_sha": os.environ["C3A_BASE_SHA"],
               "allowed_delta": [".github/workflows/c3a-authoritative-screen.yml"],
-              "prior_validation_runs": runs,
+              "prior_validation_runs": prior,
+              "recovery_incident": incident,
               "confirmation_opened": False,
               "holdout_state": "HOLDOUT_CLOSED",
               "live": "FORBIDDEN",
@@ -161,7 +220,7 @@ jobs:
           )
           PY
 
-      - name: Prove frozen implementation and safety tests
+      - name: Prove frozen implementation and create public-only runtime config
         run: |
           set -euo pipefail
           cd implementation
@@ -175,20 +234,85 @@ jobs:
             2>&1 | tee "$C3A_RUNTIME_DIR/c3a_authoritative_pytest.log"
           bash scripts/validate_no_secrets.sh 2>&1 | tee "$C3A_RUNTIME_DIR/no_secret_scan.log"
           python scripts/c3a_contract_guard.py config
+
+          mkdir -p freqtrade_data
+          cat > "$C3A_PUBLIC_CONFIG" <<'JSON'
+          {
+            "max_open_trades": 1,
+            "stake_currency": "USDT",
+            "stake_amount": "unlimited",
+            "tradable_balance_ratio": 0.99,
+            "fiat_display_currency": "USD",
+            "dry_run": true,
+            "timeframe": "4h",
+            "stoploss": -0.10,
+            "trading_mode": "spot",
+            "margin_mode": "",
+            "cancel_open_orders_on_exit": false,
+            "unfilledtimeout": {
+              "entry": 10,
+              "exit": 10,
+              "exit_timeout_count": 0,
+              "unit": "minutes"
+            },
+            "entry_pricing": {
+              "price_side": "other",
+              "use_order_book": false,
+              "price_last_balance": 0.0,
+              "check_depth_of_market": {
+                "enabled": false,
+                "bids_to_ask_delta": 1
+              }
+            },
+            "exit_pricing": {
+              "price_side": "other",
+              "use_order_book": false
+            },
+            "exchange": {
+              "name": "okx",
+              "key": "",
+              "secret": "",
+              "password": "",
+              "ccxt_config": {
+                "enableRateLimit": true,
+                "urls": {
+                  "api": {
+                    "public": "https://www.okx.com"
+                  }
+                }
+              },
+              "ccxt_async_config": {},
+              "pair_whitelist": [
+                "BTC/USDT",
+                "ETH/USDT",
+                "SOL/USDT"
+              ],
+              "pair_blacklist": []
+            },
+            "pairlists": [
+              {"method": "StaticPairList"}
+            ],
+            "bot_name": "c3a_public_data_only",
+            "initial_state": "stopped",
+            "force_entry_enable": false
+          }
+          JSON
+
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
-          config = json.loads(Path("config/c3a_residual_mean_reversion.json").read_text())
-          assert config["live"] == "FORBIDDEN"
-          assert config["holdout_state"] == "HOLDOUT_CLOSED"
-          assert config["confirmation_opened"] is False
-          public = json.loads(Path("freqtrade_data/config.dryrun.json").read_text())
-          exchange = public.get("exchange", {})
-          assert not exchange.get("key")
-          assert not exchange.get("secret")
-          assert not exchange.get("password")
-          assert public.get("dry_run") is True
-          print("Public-data-only configuration PASS")
+          path = Path(os.environ["C3A_PUBLIC_CONFIG"])
+          public = json.loads(path.read_text(encoding="utf-8"))
+          exchange = public["exchange"]
+          assert public["dry_run"] is True
+          assert public["trading_mode"] == "spot"
+          assert public["margin_mode"] == ""
+          assert public["entry_pricing"]["use_order_book"] is False
+          assert public["exit_pricing"]["use_order_book"] is False
+          assert not exchange["key"] and not exchange["secret"] and not exchange["password"]
+          assert exchange["pair_whitelist"] == ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+          print("Explicit public-data-only runtime configuration PASS")
           PY
 
       - name: Download only preregistered public OKX candles
@@ -200,7 +324,7 @@ jobs:
           mkdir -p freqtrade_data/data/okx
           set -o pipefail
           freqtrade download-data \
-            --config freqtrade_data/config.dryrun.json \
+            --config "$C3A_PUBLIC_CONFIG" \
             --datadir freqtrade_data/data/okx \
             --exchange okx \
             --pairs BTC/USDT ETH/USDT SOL/USDT \
@@ -216,6 +340,8 @@ jobs:
           cp freqtrade_data/c3a_runtime/c3a_contract_guard.json "$C3A_RUNTIME_DIR/contract_guard_precheck.json"
           python scripts/c3a_data_guard.py sanitize
           python scripts/c3a_data_guard.py verify
+          cp freqtrade_data/c3a_runtime/c3a_data_boundary.json "$C3A_RUNTIME_DIR/"
+          cp freqtrade_data/c3a_runtime/c3a_data_coverage.json "$C3A_RUNTIME_DIR/"
           python scripts/c3a_contract_guard.py postcheck
           cp freqtrade_data/c3a_runtime/c3a_contract_guard.json "$C3A_RUNTIME_DIR/contract_guard_postcheck.json"
 
@@ -227,12 +353,16 @@ jobs:
 
           mkdir -p "$C3A_RESULT_DIR/workflow_provenance"
           cp "$C3A_RUNTIME_DIR"/exact_binding.json "$C3A_RESULT_DIR/workflow_provenance/"
+          cp "$C3A_RUNTIME_DIR"/recovery_incident.json "$C3A_RESULT_DIR/workflow_provenance/"
           cp "$C3A_RUNTIME_DIR"/workflow_only_delta.txt "$C3A_RESULT_DIR/workflow_provenance/"
           cp "$C3A_RUNTIME_DIR"/contract_guard_precheck.json "$C3A_RESULT_DIR/workflow_provenance/"
           cp "$C3A_RUNTIME_DIR"/contract_guard_postcheck.json "$C3A_RESULT_DIR/workflow_provenance/"
+          cp "$C3A_RUNTIME_DIR"/c3a_data_boundary.json "$C3A_RESULT_DIR/workflow_provenance/"
+          cp "$C3A_RUNTIME_DIR"/c3a_data_coverage.json "$C3A_RESULT_DIR/workflow_provenance/"
           cp "$C3A_RUNTIME_DIR"/c3a_authoritative_pytest.log "$C3A_RESULT_DIR/workflow_provenance/"
           cp "$C3A_RUNTIME_DIR"/no_secret_scan.log "$C3A_RESULT_DIR/workflow_provenance/"
           cp "$C3A_RUNTIME_DIR"/download_public_okx_4h.log "$C3A_RESULT_DIR/workflow_provenance/"
+          cp "$C3A_PUBLIC_CONFIG" "$C3A_RESULT_DIR/workflow_provenance/public_runtime_config.json"
 
           python scripts/c3a_source_inventory.py
           python - <<'PY'
@@ -276,7 +406,6 @@ jobs:
           python scripts/finalize_c3a_evidence.py
 
           python - <<'PY'
-          import hashlib
           import json
           import os
           from pathlib import Path
@@ -324,6 +453,7 @@ jobs:
               "result_exports": 63,
               "source_snapshots": inventory["file_count"],
               "finalizer_checks": final["checks_passed"],
+              "recovery_of_run_id": int(os.environ["C3A_RECOVERY_OF_RUN_ID"]),
               "confirmation_opened": False,
               "holdout_state": "HOLDOUT_CLOSED",
               "live": "FORBIDDEN",
@@ -359,6 +489,8 @@ jobs:
               "source_snapshot_index.json",
               "pre_manifest_verification.json",
               "workflow_provenance/exact_binding.json",
+              "workflow_provenance/recovery_incident.json",
+              "workflow_provenance/public_runtime_config.json",
           }
           assert required.issubset(indexed)
           for relative, item in indexed.items():
@@ -370,9 +502,10 @@ jobs:
           print("C3A_AUTHORITATIVE_RESULT=" + decision["economic_result"])
           print("C3A_SELECTED_POLICY=" + str(decision["selected_policy"]))
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
-              handle.write("# C3A Authoritative Screen\n\n")
+              handle.write("# C3A Authoritative Screen Recovery\n\n")
               handle.write(f"- Source SHA: `{os.environ['C3A_SOURCE_SHA']}`\n")
               handle.write(f"- Merge-ref SHA: `{os.environ['C3A_MERGE_REF_SHA']}`\n")
+              handle.write(f"- Recovery of pre-economic failure: `{os.environ['C3A_RECOVERY_OF_RUN_ID']}`\n")
               handle.write(f"- Economic result: **{decision['economic_result']}**\n")
               handle.write(f"- Selected policy: `{decision['selected_policy']}`\n")
               handle.write("- C3B: `CLOSED`\n- Holdout: `CLOSED`\n- Live: `FORBIDDEN`\n")
@@ -390,6 +523,7 @@ jobs:
             "status": "EVIDENCE_FAILURE",
             "run_id": "${GITHUB_RUN_ID}",
             "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "recovery_of_run_id": "${C3A_RECOVERY_OF_RUN_ID}",
             "source_head_sha": "${C3A_SOURCE_SHA}",
             "workflow_head_sha": "${C3A_WORKFLOW_HEAD_SHA}",
             "merge_ref_sha": "${C3A_MERGE_REF_SHA}",
