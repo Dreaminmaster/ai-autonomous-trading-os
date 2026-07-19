@@ -18,15 +18,15 @@ MERGE_SHA = "2" * 40
 
 
 def test_source_inventory_is_exact_and_contains_no_active_workflow() -> None:
-    assert len(inventory.SOURCE_PATHS) == 17
-    assert len(set(inventory.SOURCE_PATHS)) == 17
+    assert len(inventory.SOURCE_PATHS) == 18
+    assert len(set(inventory.SOURCE_PATHS)) == 18
     assert not any(path.startswith(".github/workflows/") for path in inventory.SOURCE_PATHS)
     assert "implementation/scripts/c3a_reference_recompute.py" in inventory.SOURCE_PATHS
     assert "implementation/scripts/c3a_contract_guard.py" in inventory.SOURCE_PATHS
     payload = inventory.build_inventory(EXACT_SHA)
     assert payload["status"] == "PASS"
     assert payload["source_head_sha"] == EXACT_SHA
-    assert payload["file_count"] == 17
+    assert payload["file_count"] == 18
     assert payload["confirmation_opened"] is False
     assert payload["holdout_state"] == "HOLDOUT_CLOSED"
     assert payload["live"] == "FORBIDDEN"
