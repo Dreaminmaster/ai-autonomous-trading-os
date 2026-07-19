@@ -31,6 +31,7 @@ SOURCE_PATHS = (
     "implementation/tests/test_c3a_residual_reversion.py",
     "implementation/tests/test_c3a_data_guard.py",
     "implementation/tests/test_c3a_evidence_contract.py",
+    "implementation/tests/test_c3a_reference_equivalence.py",
     "implementation/pyproject.toml",
 )
 
