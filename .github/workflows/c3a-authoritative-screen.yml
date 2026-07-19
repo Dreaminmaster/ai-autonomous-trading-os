@@ -1,0 +1,412 @@
+name: C3A Authoritative Screen
+
+on:
+  pull_request:
+    types: [ready_for_review]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: c3a-authoritative-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  C3A_SOURCE_SHA: 3cdf1e989d6084c7f66f33d6b1a8d297d3f76965
+  C3A_MERGE_REF_SHA: ${{ github.sha }}
+  C3A_WORKFLOW_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  C3A_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+  C3A_CI_RUN_ID: '29672938761'
+  C3A_VALIDATION_RUN_ID: '29672938732'
+  C3A_RESULT_DIR: ${{ github.workspace }}/implementation/freqtrade_data/backtest_results/c3a_residual_mean_reversion
+  C3A_RUNTIME_DIR: ${{ github.workspace }}/implementation/freqtrade_data/c3a_authoritative_runtime
+
+jobs:
+  authoritative-screen:
+    if: >-
+      github.event.pull_request.number == 46 &&
+      github.event.pull_request.head.ref == 'feat/c3a-residual-mean-reversion'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact PR merge ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Initialize always-uploaded evidence area
+        run: |
+          set -euo pipefail
+          mkdir -p "$C3A_RUNTIME_DIR" "$C3A_RESULT_DIR"
+          cat > "$C3A_RUNTIME_DIR/workflow_state.json" <<JSON
+          {
+            "schema_version": 1,
+            "stage": "C3A",
+            "status": "RUNNING",
+            "event": "${GITHUB_EVENT_NAME}",
+            "event_action": "${{ github.event.action }}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "source_head_sha": "${C3A_SOURCE_SHA}",
+            "workflow_head_sha": "${C3A_WORKFLOW_HEAD_SHA}",
+            "merge_ref_sha": "${C3A_MERGE_REF_SHA}",
+            "base_sha": "${C3A_BASE_SHA}",
+            "confirmation_opened": false,
+            "holdout_state": "HOLDOUT_CLOSED",
+            "live": "FORBIDDEN"
+          }
+          JSON
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: implementation/pyproject.toml
+
+      - name: Install frozen research dependencies
+        run: |
+          set -euo pipefail
+          cd implementation
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev,freqtrade]'
+          python - <<'PY'
+          import importlib.metadata as md
+          for name in ("numpy", "pandas", "scipy", "freqtrade"):
+              print(name, md.version(name))
+          PY
+
+      - name: Bind frozen source, workflow-only delta, merge ref, and prior validations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "pull_request"
+          test "${{ github.event.action }}" = "ready_for_review"
+          test "${{ github.event.pull_request.number }}" = "46"
+          test "$(git rev-parse HEAD)" = "$C3A_MERGE_REF_SHA"
+          git cat-file -e "${C3A_SOURCE_SHA}^{commit}"
+          git cat-file -e "${C3A_WORKFLOW_HEAD_SHA}^{commit}"
+          git merge-base --is-ancestor "$C3A_SOURCE_SHA" "$C3A_WORKFLOW_HEAD_SHA"
+
+          read -r merge_base_parent merge_head_parent extra_parent < <(git show -s --format='%P' "$C3A_MERGE_REF_SHA")
+          test -z "${extra_parent:-}"
+          test "$merge_base_parent" = "$C3A_BASE_SHA"
+          test "$merge_head_parent" = "$C3A_WORKFLOW_HEAD_SHA"
+
+          mapfile -t changed_paths < <(git diff --name-only "$C3A_SOURCE_SHA" "$C3A_WORKFLOW_HEAD_SHA")
+          printf '%s\n' "${changed_paths[@]}" | tee "$C3A_RUNTIME_DIR/workflow_only_delta.txt"
+          test "${#changed_paths[@]}" -eq 1
+          test "${changed_paths[0]}" = ".github/workflows/c3a-authoritative-screen.yml"
+          git diff --quiet "$C3A_SOURCE_SHA" "$C3A_WORKFLOW_HEAD_SHA" -- implementation docs/architecture/phase-c/c3a-residual-mean-reversion
+
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          runtime = Path(os.environ["C3A_RUNTIME_DIR"])
+          source = os.environ["C3A_SOURCE_SHA"]
+          api = os.environ["GITHUB_API_URL"].rstrip("/")
+          repository = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          expected = {
+              os.environ["C3A_CI_RUN_ID"]: "CI",
+              os.environ["C3A_VALIDATION_RUN_ID"]: "Freqtrade Validation",
+          }
+          runs = []
+          for run_id, workflow_name in expected.items():
+              request = urllib.request.Request(
+                  f"{api}/repos/{repository}/actions/runs/{run_id}",
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  payload = json.load(response)
+              assert payload["name"] == workflow_name, payload
+              assert payload["event"] == "pull_request", payload
+              assert payload["head_sha"] == source, payload
+              assert payload["status"] == "completed", payload
+              assert payload["conclusion"] == "success", payload
+              runs.append({
+                  "run_id": int(run_id),
+                  "workflow_name": payload["name"],
+                  "head_sha": payload["head_sha"],
+                  "status": payload["status"],
+                  "conclusion": payload["conclusion"],
+                  "html_url": payload["html_url"],
+              })
+
+          binding = {
+              "schema_version": 1,
+              "stage": "C3A",
+              "status": "PASS",
+              "source_head_sha": source,
+              "workflow_head_sha": os.environ["C3A_WORKFLOW_HEAD_SHA"],
+              "merge_ref_sha": os.environ["C3A_MERGE_REF_SHA"],
+              "base_sha": os.environ["C3A_BASE_SHA"],
+              "allowed_delta": [".github/workflows/c3a-authoritative-screen.yml"],
+              "prior_validation_runs": runs,
+              "confirmation_opened": False,
+              "holdout_state": "HOLDOUT_CLOSED",
+              "live": "FORBIDDEN",
+          }
+          (runtime / "exact_binding.json").write_text(
+              json.dumps(binding, indent=2, sort_keys=True), encoding="utf-8"
+          )
+          PY
+
+      - name: Prove frozen implementation and safety tests
+        run: |
+          set -euo pipefail
+          cd implementation
+          set -o pipefail
+          python -m pytest -v --tb=long \
+            tests/test_c3a_contract_guard.py \
+            tests/test_c3a_residual_reversion.py \
+            tests/test_c3a_data_guard.py \
+            tests/test_c3a_evidence_contract.py \
+            tests/test_c3a_reference_equivalence.py \
+            2>&1 | tee "$C3A_RUNTIME_DIR/c3a_authoritative_pytest.log"
+          bash scripts/validate_no_secrets.sh 2>&1 | tee "$C3A_RUNTIME_DIR/no_secret_scan.log"
+          python scripts/c3a_contract_guard.py config
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          config = json.loads(Path("config/c3a_residual_mean_reversion.json").read_text())
+          assert config["live"] == "FORBIDDEN"
+          assert config["holdout_state"] == "HOLDOUT_CLOSED"
+          assert config["confirmation_opened"] is False
+          public = json.loads(Path("freqtrade_data/config.dryrun.json").read_text())
+          exchange = public.get("exchange", {})
+          assert not exchange.get("key")
+          assert not exchange.get("secret")
+          assert not exchange.get("password")
+          assert public.get("dry_run") is True
+          print("Public-data-only configuration PASS")
+          PY
+
+      - name: Download only preregistered public OKX candles
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          cd implementation
+          rm -rf freqtrade_data/data/okx
+          mkdir -p freqtrade_data/data/okx
+          set -o pipefail
+          freqtrade download-data \
+            --config freqtrade_data/config.dryrun.json \
+            --datadir freqtrade_data/data/okx \
+            --exchange okx \
+            --pairs BTC/USDT ETH/USDT SOL/USDT \
+            --timeframes 4h \
+            --timerange 20230901-20241001 \
+            2>&1 | tee "$C3A_RUNTIME_DIR/download_public_okx_4h.log"
+
+      - name: Seal boundary and prove exact full-range coverage
+        run: |
+          set -euo pipefail
+          cd implementation
+          python scripts/c3a_contract_guard.py precheck
+          cp freqtrade_data/c3a_runtime/c3a_contract_guard.json "$C3A_RUNTIME_DIR/contract_guard_precheck.json"
+          python scripts/c3a_data_guard.py sanitize
+          python scripts/c3a_data_guard.py verify
+          python scripts/c3a_contract_guard.py postcheck
+          cp freqtrade_data/c3a_runtime/c3a_contract_guard.json "$C3A_RUNTIME_DIR/contract_guard_postcheck.json"
+
+      - name: Run the single authoritative C3A screen and independent finalizer
+        run: |
+          set -euo pipefail
+          cd implementation
+          python scripts/c3a_evidence.py
+
+          mkdir -p "$C3A_RESULT_DIR/workflow_provenance"
+          cp "$C3A_RUNTIME_DIR"/exact_binding.json "$C3A_RESULT_DIR/workflow_provenance/"
+          cp "$C3A_RUNTIME_DIR"/workflow_only_delta.txt "$C3A_RESULT_DIR/workflow_provenance/"
+          cp "$C3A_RUNTIME_DIR"/contract_guard_precheck.json "$C3A_RESULT_DIR/workflow_provenance/"
+          cp "$C3A_RUNTIME_DIR"/contract_guard_postcheck.json "$C3A_RESULT_DIR/workflow_provenance/"
+          cp "$C3A_RUNTIME_DIR"/c3a_authoritative_pytest.log "$C3A_RESULT_DIR/workflow_provenance/"
+          cp "$C3A_RUNTIME_DIR"/no_secret_scan.log "$C3A_RESULT_DIR/workflow_provenance/"
+          cp "$C3A_RUNTIME_DIR"/download_public_okx_4h.log "$C3A_RESULT_DIR/workflow_provenance/"
+
+          python scripts/c3a_source_inventory.py
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          root = Path.cwd().parent
+          results = Path(os.environ["C3A_RESULT_DIR"])
+          inventory = json.loads((results / "source_inventory.json").read_text())
+          snapshot_root = results / "source_snapshots"
+          copied = []
+          for item in inventory["files"]:
+              relative = Path(item["path"])
+              source = root / relative
+              destination = snapshot_root / relative
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(source, destination)
+              digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+              assert digest == item["sha256"]
+              assert destination.stat().st_size == item["size"]
+              copied.append(str(relative))
+          (results / "source_snapshot_index.json").write_text(
+              json.dumps({
+                  "schema_version": 1,
+                  "stage": "C3A",
+                  "status": "PASS",
+                  "source_head_sha": os.environ["C3A_SOURCE_SHA"],
+                  "file_count": len(copied),
+                  "files": copied,
+                  "confirmation_opened": False,
+                  "holdout_state": "HOLDOUT_CLOSED",
+                  "live": "FORBIDDEN",
+              }, indent=2, sort_keys=True),
+              encoding="utf-8",
+          )
+          PY
+
+          python scripts/finalize_c3a_evidence.py
+
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          results = Path(os.environ["C3A_RESULT_DIR"])
+          source = os.environ["C3A_SOURCE_SHA"]
+          merge_ref = os.environ["C3A_MERGE_REF_SHA"]
+          summary = json.loads((results / "run_summary.json").read_text())
+          decision = json.loads((results / "decision.json").read_text())
+          final = json.loads((results / "final_evidence.json").read_text())
+          inventory = json.loads((results / "source_inventory.json").read_text())
+          snapshot_index = json.loads((results / "source_snapshot_index.json").read_text())
+
+          assert summary["status"] == "PASS" and summary["errors"] == []
+          assert summary["source_head_sha"] == source
+          assert summary["merge_ref_sha"] == merge_ref
+          assert final["status"] == "PASS" and final["errors"] == []
+          assert final["source_head_sha"] == source
+          assert final["merge_ref_sha"] == merge_ref
+          assert decision["economic_result"] in {"SELECTED", "REJECTED"}
+          assert decision["confirmation_opened"] is False
+          assert decision["holdout_state"] == "HOLDOUT_CLOSED"
+          assert decision["live"] == "FORBIDDEN"
+          assert summary["policy_row_count"] == 27
+          assert summary["comparator_row_count"] == 36
+          assert summary["result_pointer_count"] == 63
+          assert summary["result_export_count"] == 63
+          pointers = list(results.rglob(".last_result.json"))
+          exports = list(results.rglob("result.json"))
+          assert len(pointers) == 63 and len(exports) == 63
+          assert snapshot_index["file_count"] == inventory["file_count"]
+          assert snapshot_index["files"] == [item["path"] for item in inventory["files"]]
+
+          payload = {
+              "schema_version": 1,
+              "stage": "C3A",
+              "status": "PASS",
+              "source_head_sha": source,
+              "merge_ref_sha": merge_ref,
+              "economic_result": decision["economic_result"],
+              "selected_policy": decision["selected_policy"],
+              "policy_rows": 27,
+              "comparator_rows": 36,
+              "hidden_pointers": 63,
+              "result_exports": 63,
+              "source_snapshots": inventory["file_count"],
+              "finalizer_checks": final["checks_passed"],
+              "confirmation_opened": False,
+              "holdout_state": "HOLDOUT_CLOSED",
+              "live": "FORBIDDEN",
+              "errors": [],
+          }
+          (results / "pre_manifest_verification.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+          )
+          PY
+
+          python scripts/complete_c3a_manifest.py
+
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          results = Path(os.environ["C3A_RESULT_DIR"])
+          manifest = json.loads((results / "manifest.json").read_text())
+          assert manifest["source_head_sha"] == os.environ["C3A_SOURCE_SHA"]
+          assert manifest["merge_ref_sha"] == os.environ["C3A_MERGE_REF_SHA"]
+          assert manifest["holdout_state"] == "HOLDOUT_CLOSED"
+          assert manifest["live"] == "FORBIDDEN"
+          files = manifest["files"]
+          assert manifest["file_count"] == len(files)
+          indexed = {item["path"]: item for item in files}
+          required = {
+              "run_summary.json",
+              "decision.json",
+              "final_evidence.json",
+              "source_inventory.json",
+              "source_snapshot_index.json",
+              "pre_manifest_verification.json",
+              "workflow_provenance/exact_binding.json",
+          }
+          assert required.issubset(indexed)
+          for relative, item in indexed.items():
+              path = results / relative
+              assert path.is_file(), relative
+              assert path.stat().st_size == item["size"], relative
+              assert hashlib.sha256(path.read_bytes()).hexdigest() == item["sha256"], relative
+          decision = json.loads((results / "decision.json").read_text())
+          print("C3A_AUTHORITATIVE_RESULT=" + decision["economic_result"])
+          print("C3A_SELECTED_POLICY=" + str(decision["selected_policy"]))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("# C3A Authoritative Screen\n\n")
+              handle.write(f"- Source SHA: `{os.environ['C3A_SOURCE_SHA']}`\n")
+              handle.write(f"- Merge-ref SHA: `{os.environ['C3A_MERGE_REF_SHA']}`\n")
+              handle.write(f"- Economic result: **{decision['economic_result']}**\n")
+              handle.write(f"- Selected policy: `{decision['selected_policy']}`\n")
+              handle.write("- C3B: `CLOSED`\n- Holdout: `CLOSED`\n- Live: `FORBIDDEN`\n")
+          PY
+
+      - name: Record failure state for retained artifact
+        if: failure()
+        run: |
+          set +e
+          mkdir -p "$C3A_RUNTIME_DIR" "$C3A_RESULT_DIR"
+          cat > "$C3A_RUNTIME_DIR/workflow_failure.json" <<JSON
+          {
+            "schema_version": 1,
+            "stage": "C3A",
+            "status": "EVIDENCE_FAILURE",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}",
+            "source_head_sha": "${C3A_SOURCE_SHA}",
+            "workflow_head_sha": "${C3A_WORKFLOW_HEAD_SHA}",
+            "merge_ref_sha": "${C3A_MERGE_REF_SHA}",
+            "confirmation_opened": false,
+            "holdout_state": "HOLDOUT_CLOSED",
+            "live": "FORBIDDEN"
+          }
+          JSON
+
+      - name: Upload final C3A evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c3a-authoritative-evidence-${{ github.run_id }}
+          path: |
+            implementation/freqtrade_data/backtest_results/c3a_residual_mean_reversion
+            implementation/freqtrade_data/c3a_authoritative_runtime
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
