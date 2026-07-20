@@ -37,6 +37,7 @@ SOURCE_PATHS = (
     "implementation/scripts/c4a_finalizer_extensions.py",
     "implementation/scripts/finalize_c4a_evidence.py",
     "implementation/scripts/complete_c4a_manifest.py",
+    "implementation/scripts/run_c4a_finalization.py",
     "implementation/tests/conftest.py",
     "implementation/tests/test_c4a_cross_sectional_momentum.py",
     "implementation/tests/test_c4a_guards.py",
