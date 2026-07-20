@@ -1,0 +1,464 @@
+name: C4A Authoritative Screen
+
+on:
+  pull_request:
+    types: [ready_for_review]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  authoritative-screen:
+    if: github.event.pull_request.number == 50
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      C4A_SOURCE_SHA: 7723aec183a07dd654a1c3740e75bdcc47133fbe
+      C4A_BASE_SHA: 96015f9f15c04a4a834878bb32215194ce05c7eb
+      C4A_CI_RUN_ID: "29715319273"
+      C4A_VALIDATION_RUN_ID: "29715319254"
+      C4A_MERGE_REF_SHA: ${{ github.sha }}
+      C4A_WORKFLOW_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      C4A_RESULTS: implementation/freqtrade_data/backtest_results/c4a_large_liquid_cross_sectional_momentum
+      C4A_PROVENANCE: implementation/freqtrade_data/c4a_workflow_provenance
+
+    steps:
+      - name: Checkout authoritative PR merge ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bind exact source, base, workflow head, and merge ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$C4A_PROVENANCE"
+          printf '%s\n' exact-binding > "$C4A_PROVENANCE/current_phase.txt"
+
+          test "${{ github.event.pull_request.number }}" = "50"
+          test "${{ github.event.pull_request.base.sha }}" = "$C4A_BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$C4A_MERGE_REF_SHA"
+          git cat-file -e "$C4A_SOURCE_SHA^{commit}"
+          git cat-file -e "$C4A_WORKFLOW_HEAD_SHA^{commit}"
+          git cat-file -e "$C4A_BASE_SHA^{commit}"
+          git merge-base --is-ancestor "$C4A_BASE_SHA" "$C4A_SOURCE_SHA"
+          git merge-base --is-ancestor "$C4A_SOURCE_SHA" "$C4A_WORKFLOW_HEAD_SHA"
+
+          test "$(git rev-list --count "$C4A_SOURCE_SHA..$C4A_WORKFLOW_HEAD_SHA")" = "1"
+          mapfile -t changed < <(git diff --name-only "$C4A_SOURCE_SHA" "$C4A_WORKFLOW_HEAD_SHA")
+          test "${#changed[@]}" = "1"
+          test "${changed[0]}" = ".github/workflows/c4a-authoritative-screen.yml"
+
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          def git(*args: str) -> str:
+              return subprocess.check_output(["git", *args], text=True).strip()
+          payload = {
+              "schema_version": 1,
+              "stage": "C4A",
+              "status": "PASS",
+              "pull_request": 50,
+              "event": os.environ.get("GITHUB_EVENT_NAME"),
+              "source_head_sha": os.environ["C4A_SOURCE_SHA"],
+              "workflow_head_sha": os.environ["C4A_WORKFLOW_HEAD_SHA"],
+              "base_sha": os.environ["C4A_BASE_SHA"],
+              "merge_ref_sha": os.environ["C4A_MERGE_REF_SHA"],
+              "checked_out_sha": git("rev-parse", "HEAD"),
+              "source_to_workflow_commit_count": int(git("rev-list", "--count", f"{os.environ['C4A_SOURCE_SHA']}..{os.environ['C4A_WORKFLOW_HEAD_SHA']}")),
+              "source_to_workflow_changed_files": git("diff", "--name-only", os.environ["C4A_SOURCE_SHA"], os.environ["C4A_WORKFLOW_HEAD_SHA"]).splitlines(),
+              "confirmation_opened": False,
+              "holdout_state": "HOLDOUT_CLOSED",
+              "live": "FORBIDDEN",
+          }
+          path = pathlib.Path(os.environ["C4A_PROVENANCE"]) / "exact_binding.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+          PY
+
+      - name: Verify frozen-source ordinary validation provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' prior-validation > "$C4A_PROVENANCE/current_phase.txt"
+          python - <<'PY'
+          import json, os, pathlib, urllib.request
+          repo = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          source = os.environ["C4A_SOURCE_SHA"]
+          expected = {
+              "CI": int(os.environ["C4A_CI_RUN_ID"]),
+              "Freqtrade Validation": int(os.environ["C4A_VALIDATION_RUN_ID"]),
+          }
+          retained = []
+          for name, run_id in expected.items():
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/actions/runs/{run_id}",
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  payload = json.load(response)
+              assert payload["name"] == name, (payload["name"], name)
+              assert payload["event"] == "pull_request", payload["event"]
+              assert payload["status"] == "completed", payload["status"]
+              assert payload["conclusion"] == "success", payload["conclusion"]
+              assert payload["head_sha"] == source, (payload["head_sha"], source)
+              retained.append({
+                  "name": name,
+                  "run_id": run_id,
+                  "run_number": payload["run_number"],
+                  "head_sha": payload["head_sha"],
+                  "status": payload["status"],
+                  "conclusion": payload["conclusion"],
+                  "html_url": payload["html_url"],
+              })
+          output = {
+              "schema_version": 1,
+              "stage": "C4A",
+              "status": "PASS",
+              "source_head_sha": source,
+              "runs": retained,
+              "confirmation_opened": False,
+              "holdout_state": "HOLDOUT_CLOSED",
+              "live": "FORBIDDEN",
+          }
+          path = pathlib.Path(os.environ["C4A_PROVENANCE"]) / "ordinary_validation.json"
+          path.write_text(json.dumps(output, indent=2, sort_keys=True), encoding="utf-8")
+          PY
+
+      - name: Checkout frozen economic source
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' checkout-source > "$C4A_PROVENANCE/current_phase.txt"
+          git checkout --detach "$C4A_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$C4A_SOURCE_SHA"
+          test ! -e .github/workflows/c4a-authoritative-screen.yml
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: implementation/pyproject.toml
+
+      - name: Install exact C4A test and Freqtrade dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' install > "$C4A_PROVENANCE/current_phase.txt"
+          python -m pip install --upgrade pip
+          python -m pip install -e 'implementation[dev,freqtrade]'
+          python - <<'PY'
+          import freqtrade, json, pathlib, platform
+          payload = {
+              "python": platform.python_version(),
+              "freqtrade": freqtrade.__version__,
+          }
+          pathlib.Path("implementation/freqtrade_data/c4a_workflow_provenance/runtime_versions.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+          )
+          PY
+
+      - name: Run full frozen-source test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' tests > "$C4A_PROVENANCE/current_phase.txt"
+          cd implementation
+          set -o pipefail
+          python -m pytest -v --tb=long 2>&1 | tee freqtrade_data/c4a_workflow_provenance/pytest.log
+
+      - name: Run no-secret guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' no-secret > "$C4A_PROVENANCE/current_phase.txt"
+          cd implementation
+          set -o pipefail
+          bash scripts/validate_no_secrets.sh 2>&1 | tee freqtrade_data/c4a_workflow_provenance/no_secret_scan.log
+
+      - name: Verify frozen C4A config before data access
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' config-guard > "$C4A_PROVENANCE/current_phase.txt"
+          cd implementation
+          set -o pipefail
+          python scripts/c4a_contract_guard.py config 2>&1 | tee freqtrade_data/c4a_workflow_provenance/config_guard.log
+
+      - name: Create public-only OKX spot runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' public-runtime > "$C4A_PROVENANCE/current_phase.txt"
+          mkdir -p implementation/freqtrade_data/user_data
+          mkdir -p implementation/freqtrade_data/data/okx
+          mkdir -p implementation/freqtrade_data/c4a_runtime
+          python - <<'PY'
+          import json, pathlib
+          pairs = [
+              "ADA/USDT", "AVAX/USDT", "BCH/USDT", "BTC/USDT",
+              "DOGE/USDT", "DOT/USDT", "ETH/USDT", "LINK/USDT",
+              "LTC/USDT", "SOL/USDT", "TRX/USDT", "XRP/USDT",
+          ]
+          payload = {
+              "max_open_trades": 8,
+              "stake_currency": "USDT",
+              "stake_amount": "unlimited",
+              "tradable_balance_ratio": 0.99,
+              "fiat_display_currency": "USD",
+              "dry_run": True,
+              "stoploss": -0.10,
+              "cancel_open_orders_on_exit": False,
+              "trading_mode": "spot",
+              "margin_mode": "",
+              "timeframe": "4h",
+              "unfilledtimeout": {
+                  "entry": 10,
+                  "exit": 10,
+                  "exit_timeout_count": 0,
+                  "unit": "minutes",
+              },
+              "entry_pricing": {
+                  "price_side": "other",
+                  "use_order_book": False,
+                  "order_book_top": 1,
+                  "price_last_balance": 0.0,
+                  "check_depth_of_market": {"enabled": False, "bids_to_ask_delta": 1},
+              },
+              "exit_pricing": {
+                  "price_side": "other",
+                  "use_order_book": False,
+                  "order_book_top": 1,
+              },
+              "exchange": {
+                  "name": "okx",
+                  "key": "",
+                  "secret": "",
+                  "password": "",
+                  "ccxt_config": {"enableRateLimit": True},
+                  "ccxt_async_config": {"enableRateLimit": True},
+                  "pair_whitelist": pairs,
+                  "pair_blacklist": [],
+              },
+              "pairlists": [{"method": "StaticPairList"}],
+              "api_server": {"enabled": False},
+              "bot_name": "c4a_authoritative_public_data_only",
+              "initial_state": "stopped",
+              "force_entry_enable": False,
+          }
+          assert payload["dry_run"] is True
+          assert payload["trading_mode"] == "spot"
+          assert payload["margin_mode"] == ""
+          assert payload["exchange"]["key"] == ""
+          assert payload["exchange"]["secret"] == ""
+          assert payload["exchange"]["password"] == ""
+          assert payload["entry_pricing"]["use_order_book"] is False
+          assert payload["exit_pricing"]["use_order_book"] is False
+          path = pathlib.Path("implementation/freqtrade_data/c4a_runtime/public_okx_config.json")
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+          PY
+
+      - name: Download only preregistered public OKX candles
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' public-download > "$C4A_PROVENANCE/current_phase.txt"
+          cd implementation
+          test -d freqtrade_data/user_data
+          set -o pipefail
+          freqtrade download-data \
+            --config freqtrade_data/c4a_runtime/public_okx_config.json \
+            --userdir freqtrade_data/user_data \
+            --datadir freqtrade_data/data/okx \
+            --exchange okx \
+            --pairs ADA/USDT AVAX/USDT BCH/USDT BTC/USDT DOGE/USDT DOT/USDT ETH/USDT LINK/USDT LTC/USDT SOL/USDT TRX/USDT XRP/USDT \
+            --timeframes 4h \
+            --timerange 20230901-20241001 \
+            --erase \
+            2>&1 | tee freqtrade_data/c4a_workflow_provenance/download_public_okx_4h.log
+
+      - name: Enforce C4A data boundary and exact coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' data-boundary > "$C4A_PROVENANCE/current_phase.txt"
+          cd implementation
+          set -o pipefail
+          python scripts/c4a_contract_guard.py precheck 2>&1 | tee freqtrade_data/c4a_workflow_provenance/contract_precheck.log
+          python scripts/c4a_data_guard.py sanitize 2>&1 | tee freqtrade_data/c4a_workflow_provenance/data_sanitize.log
+          python scripts/c4a_data_guard.py verify 2>&1 | tee freqtrade_data/c4a_workflow_provenance/data_verify.log
+          python scripts/c4a_contract_guard.py postcheck 2>&1 | tee freqtrade_data/c4a_workflow_provenance/contract_postcheck.log
+
+      - name: Run frozen C4A economic screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' economic-screen > "$C4A_PROVENANCE/current_phase.txt"
+          cd implementation
+          set -o pipefail
+          python scripts/c4a_evidence.py 2>&1 | tee freqtrade_data/c4a_workflow_provenance/c4a_evidence.log
+
+      - name: Retain workflow provenance inside economic evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' retain-provenance > "$C4A_PROVENANCE/current_phase.txt"
+          mkdir -p "$C4A_RESULTS/workflow_provenance"
+          cp -a "$C4A_PROVENANCE"/. "$C4A_RESULTS/workflow_provenance/"
+          cp implementation/freqtrade_data/c4a_runtime/public_okx_config.json "$C4A_RESULTS/workflow_provenance/"
+
+      - name: Run ordered independent finalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' independent-finalization > "$C4A_PROVENANCE/current_phase.txt"
+          cd implementation
+          set -o pipefail
+          python scripts/run_c4a_finalization.py 2>&1 | tee freqtrade_data/c4a_workflow_provenance/c4a_finalization.log
+
+      - name: Independently verify final artifact before upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' pre-upload-verification > "$C4A_PROVENANCE/current_phase.txt"
+          python - <<'PY'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path(os.environ["C4A_RESULTS"])
+          def load(name: str):
+              return json.loads((root / name).read_text(encoding="utf-8"))
+          summary = load("run_summary.json")
+          decision = load("decision.json")
+          final = load("final_evidence.json")
+          inventory = load("source_inventory.json")
+          snapshots = load("source_snapshot_index.json")
+          manifest = load("manifest.json")
+          preverify = load("pre_manifest_verification.json")
+          exact = load("workflow_provenance/exact_binding.json")
+          ordinary = load("workflow_provenance/ordinary_validation.json")
+
+          assert summary["status"] == "PASS" and summary["errors"] == []
+          assert final["status"] == "PASS" and final["errors"] == []
+          assert decision["economic_result"] in {"SELECTED", "REJECTED"}
+          if decision["economic_result"] == "SELECTED":
+              assert decision["selected_policy"] in {
+                  "C4AWeeklyReturnTopTwo",
+                  "C4AHighProximityTopTwo",
+                  "C4ACompositeMomentumTopTwo",
+              }
+          else:
+              assert decision["selected_policy"] is None
+          assert summary["economic_result"] == decision["economic_result"]
+          assert summary["selected_policy"] == decision["selected_policy"]
+          assert summary["policy_row_count"] == 27
+          assert summary["comparator_row_count"] == 36
+          assert summary["result_pointer_count"] == 63
+          assert summary["result_export_count"] == 63
+          assert summary["weekly_schedule_count"] == 120
+          assert summary["weekly_signal_row_count"] == 960
+          assert summary["dsr_observations_per_policy"] == 39
+          assert inventory["status"] == "PASS" and inventory["file_count"] == 28
+          assert snapshots["status"] == "PASS" and snapshots["snapshot_count"] == 28
+          assert len(load("candidate_universe.json")) == 12
+          assert len(load("selected_universe.json")) == 8
+          assert exact["source_head_sha"] == os.environ["C4A_SOURCE_SHA"]
+          assert exact["merge_ref_sha"] == os.environ["C4A_MERGE_REF_SHA"]
+          assert ordinary["status"] == "PASS" and len(ordinary["runs"]) == 2
+          assert preverify["status"] == "PASS"
+
+          pointers = sorted(root.rglob(".last_result.json"))
+          exports = sorted(root.rglob("result.json"))
+          assert len(pointers) == 63 and len(exports) == 63
+          referenced = set()
+          for pointer in pointers:
+              payload = json.loads(pointer.read_text(encoding="utf-8"))
+              result = pointer.parent / payload["latest"]
+              assert result.is_file()
+              assert hashlib.sha256(result.read_bytes()).hexdigest() == payload["sha256"]
+              referenced.add(result.resolve())
+          assert referenced == {path.resolve() for path in exports}
+
+          listed = {item["path"]: item for item in manifest["files"]}
+          actual = {
+              str(path.relative_to(root)): path
+              for path in root.rglob("*")
+              if path.is_file() and path.name != "manifest.json"
+          }
+          assert set(listed) == set(actual)
+          assert manifest["file_count"] == len(listed)
+          for relative, path in actual.items():
+              item = listed[relative]
+              assert item["size"] == path.stat().st_size
+              assert item["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+          for payload in (summary, decision, final, inventory, snapshots, manifest, preverify):
+              assert payload.get("holdout_state") == "HOLDOUT_CLOSED"
+              assert payload.get("live") == "FORBIDDEN"
+              assert payload.get("confirmation_opened", False) is False
+          print(
+              "C4A pre-upload verification PASS:",
+              decision["economic_result"],
+              decision["selected_policy"],
+              manifest["file_count"],
+          )
+          PY
+
+      - name: Record workflow failure without creating an economic decision
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$C4A_PROVENANCE"
+          phase="UNKNOWN"
+          if [ -f "$C4A_PROVENANCE/current_phase.txt" ]; then
+            phase="$(cat "$C4A_PROVENANCE/current_phase.txt")"
+          fi
+          PHASE="$phase" python - <<'PY'
+          import json, os, pathlib
+          payload = {
+              "schema_version": 1,
+              "stage": "C4A",
+              "status": "EVIDENCE_FAILURE",
+              "failed_phase": os.environ.get("PHASE", "UNKNOWN"),
+              "source_head_sha": os.environ["C4A_SOURCE_SHA"],
+              "workflow_head_sha": os.environ["C4A_WORKFLOW_HEAD_SHA"],
+              "base_sha": os.environ["C4A_BASE_SHA"],
+              "merge_ref_sha": os.environ["C4A_MERGE_REF_SHA"],
+              "economic_result": None,
+              "selected_policy": None,
+              "confirmation_opened": False,
+              "holdout_state": "HOLDOUT_CLOSED",
+              "live": "FORBIDDEN",
+          }
+          root = pathlib.Path(os.environ["C4A_PROVENANCE"])
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "workflow_failure.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+          )
+          results = pathlib.Path(os.environ["C4A_RESULTS"])
+          results.mkdir(parents=True, exist_ok=True)
+          target = results / "workflow_provenance"
+          target.mkdir(parents=True, exist_ok=True)
+          for source in root.iterdir():
+              if source.is_file():
+                  (target / source.name).write_bytes(source.read_bytes())
+          PY
+
+      - name: Upload C4A authoritative evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c4a-authoritative-evidence-${{ github.run_id }}
+          path: |
+            implementation/freqtrade_data/backtest_results/c4a_large_liquid_cross_sectional_momentum
+            implementation/freqtrade_data/c4a_workflow_provenance
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
