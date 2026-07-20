@@ -42,6 +42,7 @@ SOURCE_PATHS = (
     "implementation/tests/test_c4a_guards.py",
     "implementation/tests/test_c4a_reference_equivalence.py",
     "implementation/tests/test_c4a_evidence_contract.py",
+    "implementation/tests/test_c4a_postprocess_imports.py",
     "implementation/pyproject.toml",
 )
 
