@@ -1,10 +1,12 @@
 from atos.c4a_cross_sectional_runtime import solve_post_cost_equity
 from scripts import c4a_evidence_postprocess
 from scripts import c4a_finalizer_extensions
+from scripts import run_c4a_finalization
 
 
 def test_c4a_postprocess_modules_import() -> None:
     assert c4a_evidence_postprocess.RESULTS == c4a_finalizer_extensions.RESULTS
+    assert callable(run_c4a_finalization.main)
 
 
 def test_complete_rebalance_ledger_reconciles_entry_and_terminal_exit() -> None:
