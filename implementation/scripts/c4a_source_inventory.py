@@ -32,6 +32,7 @@ SOURCE_PATHS = (
     "implementation/scripts/c4a_reference_recompute.py",
     "implementation/scripts/c4a_reference_runtime.py",
     "implementation/scripts/c4a_source_inventory.py",
+    "implementation/scripts/c4a_finalizer_core.py",
     "implementation/scripts/finalize_c4a_evidence.py",
     "implementation/scripts/complete_c4a_manifest.py",
     "implementation/tests/conftest.py",
