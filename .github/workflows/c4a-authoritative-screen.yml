@@ -2,7 +2,7 @@ name: C4A Authoritative Screen
 
 on:
   pull_request:
-    types: [ready_for_review]
+    types: [ready_for_review, synchronize]
 
 permissions:
   contents: read
@@ -18,6 +18,11 @@ jobs:
       C4A_BASE_SHA: 96015f9f15c04a4a834878bb32215194ce05c7eb
       C4A_CI_RUN_ID: "29715319273"
       C4A_VALIDATION_RUN_ID: "29715319254"
+      C4A_PRIOR_FAILURE_RUN_ID: "29729755855"
+      C4A_PRIOR_FAILURE_ARTIFACT_ID: "8455785986"
+      C4A_PRIOR_FAILURE_ARTIFACT_DIGEST: sha256:65f5000c5f8199b58e50b28517c0e91497b19463cc5fb4d522f11ea9e556d3a2
+      C4A_PRIOR_WORKFLOW_HEAD_SHA: 621fa157adeca6746b8242ad92ef244a45c4ceef
+      C4A_PRIOR_MERGE_REF_SHA: 5b92fa5548cdaa6f5c56307bbd49a180ab8c3c6c
       C4A_MERGE_REF_SHA: ${{ github.sha }}
       C4A_WORKFLOW_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       C4A_RESULTS: implementation/freqtrade_data/backtest_results/c4a_large_liquid_cross_sectional_momentum
@@ -29,7 +34,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Bind exact source, base, workflow head, and merge ref
+      - name: Bind exact source, recovery chain, base, workflow head, and merge ref
         shell: bash
         run: |
           set -euo pipefail
@@ -40,12 +45,15 @@ jobs:
           test "${{ github.event.pull_request.base.sha }}" = "$C4A_BASE_SHA"
           test "$(git rev-parse HEAD)" = "$C4A_MERGE_REF_SHA"
           git cat-file -e "$C4A_SOURCE_SHA^{commit}"
+          git cat-file -e "$C4A_PRIOR_WORKFLOW_HEAD_SHA^{commit}"
           git cat-file -e "$C4A_WORKFLOW_HEAD_SHA^{commit}"
           git cat-file -e "$C4A_BASE_SHA^{commit}"
           git merge-base --is-ancestor "$C4A_BASE_SHA" "$C4A_SOURCE_SHA"
-          git merge-base --is-ancestor "$C4A_SOURCE_SHA" "$C4A_WORKFLOW_HEAD_SHA"
+          git merge-base --is-ancestor "$C4A_SOURCE_SHA" "$C4A_PRIOR_WORKFLOW_HEAD_SHA"
+          git merge-base --is-ancestor "$C4A_PRIOR_WORKFLOW_HEAD_SHA" "$C4A_WORKFLOW_HEAD_SHA"
 
-          test "$(git rev-list --count "$C4A_SOURCE_SHA..$C4A_WORKFLOW_HEAD_SHA")" = "1"
+          test "$(git rev-list --count "$C4A_SOURCE_SHA..$C4A_WORKFLOW_HEAD_SHA")" = "2"
+          test "$(git rev-list --count "$C4A_PRIOR_WORKFLOW_HEAD_SHA..$C4A_WORKFLOW_HEAD_SHA")" = "1"
           mapfile -t changed < <(git diff --name-only "$C4A_SOURCE_SHA" "$C4A_WORKFLOW_HEAD_SHA")
           test "${#changed[@]}" = "1"
           test "${changed[0]}" = ".github/workflows/c4a-authoritative-screen.yml"
@@ -61,12 +69,16 @@ jobs:
               "pull_request": 50,
               "event": os.environ.get("GITHUB_EVENT_NAME"),
               "source_head_sha": os.environ["C4A_SOURCE_SHA"],
+              "prior_workflow_head_sha": os.environ["C4A_PRIOR_WORKFLOW_HEAD_SHA"],
               "workflow_head_sha": os.environ["C4A_WORKFLOW_HEAD_SHA"],
               "base_sha": os.environ["C4A_BASE_SHA"],
+              "prior_merge_ref_sha": os.environ["C4A_PRIOR_MERGE_REF_SHA"],
               "merge_ref_sha": os.environ["C4A_MERGE_REF_SHA"],
               "checked_out_sha": git("rev-parse", "HEAD"),
               "source_to_workflow_commit_count": int(git("rev-list", "--count", f"{os.environ['C4A_SOURCE_SHA']}..{os.environ['C4A_WORKFLOW_HEAD_SHA']}")),
+              "prior_to_current_workflow_commit_count": int(git("rev-list", "--count", f"{os.environ['C4A_PRIOR_WORKFLOW_HEAD_SHA']}..{os.environ['C4A_WORKFLOW_HEAD_SHA']}")),
               "source_to_workflow_changed_files": git("diff", "--name-only", os.environ["C4A_SOURCE_SHA"], os.environ["C4A_WORKFLOW_HEAD_SHA"]).splitlines(),
+              "recovery_scope": "WORKFLOW_TEST_ENVIRONMENT_ONLY",
               "confirmation_opened": False,
               "holdout_state": "HOLDOUT_CLOSED",
               "live": "FORBIDDEN",
@@ -131,6 +143,92 @@ jobs:
           path.write_text(json.dumps(output, indent=2, sort_keys=True), encoding="utf-8")
           PY
 
+      - name: Verify and retain prior pre-economic evidence failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' prior-failure-verification > "$C4A_PROVENANCE/current_phase.txt"
+          python - <<'PY'
+          import io, json, os, pathlib, urllib.request, zipfile
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+          def read_json_url(url: str):
+              request = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return json.load(response)
+
+          run_id = int(os.environ["C4A_PRIOR_FAILURE_RUN_ID"])
+          artifact_id = int(os.environ["C4A_PRIOR_FAILURE_ARTIFACT_ID"])
+          run = read_json_url(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}")
+          assert run["name"] == "C4A Authoritative Screen"
+          assert run["event"] == "pull_request"
+          assert run["status"] == "completed"
+          assert run["conclusion"] == "failure"
+          assert run["head_sha"] == os.environ["C4A_PRIOR_WORKFLOW_HEAD_SHA"]
+
+          artifact = read_json_url(f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}")
+          assert artifact["name"] == f"c4a-authoritative-evidence-{run_id}"
+          assert artifact["expired"] is False
+          assert artifact["digest"] == os.environ["C4A_PRIOR_FAILURE_ARTIFACT_DIGEST"]
+          assert artifact["workflow_run"]["id"] == run_id
+
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}/zip",
+              headers=headers,
+          )
+          with urllib.request.urlopen(request, timeout=90) as response:
+              archive_bytes = response.read()
+          with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+              failure_names = [name for name in archive.namelist() if name.endswith("workflow_failure.json")]
+              pytest_names = [name for name in archive.namelist() if name.endswith("pytest.log")]
+              assert failure_names and pytest_names
+              failures = [json.loads(archive.read(name).decode("utf-8-sig")) for name in failure_names]
+              for failure in failures:
+                  assert failure["status"] == "EVIDENCE_FAILURE"
+                  assert failure["failed_phase"] == "tests"
+                  assert failure["economic_result"] is None
+                  assert failure["selected_policy"] is None
+                  assert failure["source_head_sha"] == os.environ["C4A_SOURCE_SHA"]
+                  assert failure["workflow_head_sha"] == os.environ["C4A_PRIOR_WORKFLOW_HEAD_SHA"]
+                  assert failure["base_sha"] == os.environ["C4A_BASE_SHA"]
+                  assert failure["merge_ref_sha"] == os.environ["C4A_PRIOR_MERGE_REF_SHA"]
+                  assert failure["holdout_state"] == "HOLDOUT_CLOSED"
+                  assert failure["live"] == "FORBIDDEN"
+              pytest_log = archive.read(pytest_names[0]).decode("utf-8-sig", errors="replace")
+              assert "IStrategy.__init__() missing 1 required positional argument: 'config'" in pytest_log
+              assert "3 failed, 998 passed" in pytest_log
+
+          output = {
+              "schema_version": 1,
+              "stage": "C4A",
+              "status": "PASS",
+              "classification": "PRE_ECONOMIC_EVIDENCE_FAILURE",
+              "failed_phase": "tests",
+              "cause": "legacy Freqtrade strategy tests became active after combined dev+freqtrade installation and constructed IStrategy without config",
+              "recovery": "run the exact ordinary dev-only full suite first, then install Freqtrade and run only the frozen C4A focused suite before data access",
+              "prior_run_id": run_id,
+              "prior_artifact_id": artifact_id,
+              "prior_artifact_digest": artifact["digest"],
+              "prior_workflow_head_sha": os.environ["C4A_PRIOR_WORKFLOW_HEAD_SHA"],
+              "source_head_sha": os.environ["C4A_SOURCE_SHA"],
+              "economic_result": None,
+              "selected_policy": None,
+              "confirmation_opened": False,
+              "holdout_state": "HOLDOUT_CLOSED",
+              "live": "FORBIDDEN",
+          }
+          path = pathlib.Path(os.environ["C4A_PROVENANCE"]) / "prior_failure_verification.json"
+          path.write_text(json.dumps(output, indent=2, sort_keys=True), encoding="utf-8")
+          PY
+
       - name: Checkout frozen economic source
         shell: bash
         run: |
@@ -147,32 +245,55 @@ jobs:
           cache: pip
           cache-dependency-path: implementation/pyproject.toml
 
-      - name: Install exact C4A test and Freqtrade dependencies
+      - name: Install exact ordinary-test dependencies
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' install > "$C4A_PROVENANCE/current_phase.txt"
+          printf '%s\n' install-dev > "$C4A_PROVENANCE/current_phase.txt"
           python -m pip install --upgrade pip
-          python -m pip install -e 'implementation[dev,freqtrade]'
+          python -m pip install -e 'implementation[dev]'
+
+      - name: Run exact ordinary frozen-source full test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' tests-dev > "$C4A_PROVENANCE/current_phase.txt"
+          cd implementation
+          set -o pipefail
+          python -m pytest -v --tb=long 2>&1 | tee freqtrade_data/c4a_workflow_provenance/pytest_dev.log
+
+      - name: Install Freqtrade only after ordinary tests pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' install-freqtrade > "$C4A_PROVENANCE/current_phase.txt"
+          python -m pip install -e 'implementation[freqtrade]'
           python - <<'PY'
           import freqtrade, json, pathlib, platform
           payload = {
               "python": platform.python_version(),
               "freqtrade": freqtrade.__version__,
+              "test_environment_split": True,
           }
           pathlib.Path("implementation/freqtrade_data/c4a_workflow_provenance/runtime_versions.json").write_text(
               json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
           )
           PY
 
-      - name: Run full frozen-source test suite
+      - name: Run frozen C4A focused tests in Freqtrade environment
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' tests > "$C4A_PROVENANCE/current_phase.txt"
+          printf '%s\n' tests-c4a-freqtrade > "$C4A_PROVENANCE/current_phase.txt"
           cd implementation
           set -o pipefail
-          python -m pytest -v --tb=long 2>&1 | tee freqtrade_data/c4a_workflow_provenance/pytest.log
+          python -m pytest -v --tb=long \
+            tests/test_c4a_cross_sectional_momentum.py \
+            tests/test_c4a_evidence_contract.py \
+            tests/test_c4a_guards.py \
+            tests/test_c4a_postprocess_imports.py \
+            tests/test_c4a_reference_equivalence.py \
+            2>&1 | tee freqtrade_data/c4a_workflow_provenance/pytest_c4a_freqtrade.log
 
       - name: Run no-secret guard
         shell: bash
@@ -343,6 +464,7 @@ jobs:
           preverify = load("pre_manifest_verification.json")
           exact = load("workflow_provenance/exact_binding.json")
           ordinary = load("workflow_provenance/ordinary_validation.json")
+          prior_failure = load("workflow_provenance/prior_failure_verification.json")
 
           assert summary["status"] == "PASS" and summary["errors"] == []
           assert final["status"] == "PASS" and final["errors"] == []
@@ -370,7 +492,10 @@ jobs:
           assert len(load("selected_universe.json")) == 8
           assert exact["source_head_sha"] == os.environ["C4A_SOURCE_SHA"]
           assert exact["merge_ref_sha"] == os.environ["C4A_MERGE_REF_SHA"]
+          assert exact["source_to_workflow_commit_count"] == 2
           assert ordinary["status"] == "PASS" and len(ordinary["runs"]) == 2
+          assert prior_failure["status"] == "PASS"
+          assert prior_failure["economic_result"] is None
           assert preverify["status"] == "PASS"
 
           pointers = sorted(root.rglob(".last_result.json"))
@@ -398,7 +523,7 @@ jobs:
               assert item["size"] == path.stat().st_size
               assert item["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
 
-          for payload in (summary, decision, final, inventory, snapshots, manifest, preverify):
+          for payload in (summary, decision, final, inventory, snapshots, manifest, preverify, prior_failure):
               assert payload.get("holdout_state") == "HOLDOUT_CLOSED"
               assert payload.get("live") == "FORBIDDEN"
               assert payload.get("confirmation_opened", False) is False
@@ -428,6 +553,7 @@ jobs:
               "status": "EVIDENCE_FAILURE",
               "failed_phase": os.environ.get("PHASE", "UNKNOWN"),
               "source_head_sha": os.environ["C4A_SOURCE_SHA"],
+              "prior_workflow_head_sha": os.environ["C4A_PRIOR_WORKFLOW_HEAD_SHA"],
               "workflow_head_sha": os.environ["C4A_WORKFLOW_HEAD_SHA"],
               "base_sha": os.environ["C4A_BASE_SHA"],
               "merge_ref_sha": os.environ["C4A_MERGE_REF_SHA"],
