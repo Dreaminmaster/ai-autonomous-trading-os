@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 from atos.c5a_derivatives_crowding import EXPECTED_CONFIG_CANONICAL_SHA256, canonical_sha256
@@ -35,12 +32,15 @@ def test_evidence_views_have_frozen_counts() -> None:
 
 def test_source_inventory_is_unique_and_complete() -> None:
     assert len(inventory.SOURCE_PATHS) == len(set(inventory.SOURCE_PATHS))
-    assert len(inventory.SOURCE_PATHS) == 30
+    assert len(inventory.SOURCE_PATHS) == 33
     assert "implementation/scripts/c5a_reference_recompute.py" in inventory.SOURCE_PATHS
     assert "implementation/scripts/c5a_program_guard.py" in inventory.SOURCE_PATHS
     assert "implementation/scripts/c5a_program_evidence_extension.py" in inventory.SOURCE_PATHS
     assert "implementation/scripts/c5a_program_finalizer_extension.py" in inventory.SOURCE_PATHS
+    assert "implementation/scripts/c5a_retention_evidence.py" in inventory.SOURCE_PATHS
+    assert "implementation/scripts/c5a_retention_finalizer.py" in inventory.SOURCE_PATHS
     assert "implementation/tests/test_c5a_program_guard.py" in inventory.SOURCE_PATHS
+    assert "implementation/tests/test_c5a_retention_contract.py" in inventory.SOURCE_PATHS
     assert "implementation/tests/test_c5a_evidence_contract.py" in inventory.SOURCE_PATHS
 
 
