@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "stage": "C5A",
+  "status": "IMPLEMENTATION_PENDING",
+  "required_design_main_sha": "77e1796bd70b3e646595972af772c91af6c8f8a9",
+  "contract_paths": [
+    "docs/architecture/phase-c/c5a-derivatives-crowding-regime/C5A_DERIVATIVES_CROWDING_REGIME_CONTRACT_V1.md",
+    "docs/architecture/phase-c/c5a-derivatives-crowding-regime/C5A_PSR_AND_AGGREGATION_CLARIFICATION_V1.md",
+    "docs/architecture/phase-c/c5a-derivatives-crowding-regime/C5A_SIZING_TURNOVER_AND_ACCOUNTING_CLARIFICATION_V1.md",
+    "docs/architecture/phase-c/c5a-derivatives-crowding-regime/C5A_PROGRAM_HOLDOUT_RECLASSIFICATION_V1.md"
+  ],
+  "candidate_id": "C5ADerivativesCrowdingFilteredRiskBalance",
+  "ablation_id": "C5APriceOnlyRiskBalanceAblation",
+  "spot_instruments": [
+    "BTC-USDT",
+    "ETH-USDT",
+    "SOL-USDT"
+  ],
+  "swap_instruments": [
+    "BTC-USDT-SWAP",
+    "ETH-USDT-SWAP",
+    "SOL-USDT-SWAP"
+  ],
+  "timeframe": "4H",
+  "download_start": "2024-09-02T00:00:00Z",
+  "calibration_start": "2024-10-07T00:00:00Z",
+  "calibration_end_inclusive": "2025-06-30T00:00:00Z",
+  "screen_windows": [
+    {
+      "id": "D1",
+      "start": "2025-07-07T00:00:00Z",
+      "end": "2025-10-06T00:00:00Z"
+    },
+    {
+      "id": "D2",
+      "start": "2025-10-06T00:00:00Z",
+      "end": "2026-01-05T00:00:00Z"
+    }
+  ],
+  "economic_boundary_exclusive": "2026-01-05T00:00:00Z",
+  "reserved_confirmation": {
+    "id": "C5B",
+    "start": "2026-01-05T00:00:00Z",
+    "end": "2026-07-06T00:00:00Z"
+  },
+  "trend_intervals": 168,
+  "volatility_return_count": 168,
+  "crowding_bars": 42,
+  "calibration_observations": 39,
+  "crowding_percentile_threshold": 0.8,
+  "starting_equity": 1000.0,
+  "total_invested_weight": 0.8,
+  "per_asset_weight_cap": 0.4,
+  "cash_target_weight": 0.2,
+  "no_trade_one_way_distance": 0.1,
+  "cost_rates": {
+    "1.0x": 0.0015,
+    "1.5x": 0.00225,
+    "2.0x": 0.003
+  },
+  "comparators": [
+    "cash",
+    "btc_buy_hold",
+    "btc_eth_sol_equal_weight_buy_hold"
+  ],
+  "gate": {
+    "minimum_half_return_exclusive": 0.0,
+    "minimum_aggregate_expected_return_exclusive": 0.0,
+    "minimum_aggregate_1_5x_return": 0.0,
+    "minimum_aggregate_sharpe": 0.75,
+    "minimum_weekly_psr": 0.9,
+    "maximum_half_drawdown": 0.15,
+    "maximum_annualized_one_way_turnover": 8.0,
+    "maximum_exposure_ratio": 0.8,
+    "minimum_active_rebalances": 4,
+    "minimum_active_rebalances_per_half": 2,
+    "minimum_positive_assets": 2,
+    "maximum_positive_half_pnl_share": 0.7,
+    "maximum_positive_asset_pnl_share": 0.6,
+    "maximum_positive_week_pnl_share": 0.25,
+    "maximum_top_three_positive_week_pnl_share": 0.55
+  },
+  "confirmation_opened": false,
+  "holdout_state": "HOLDOUT_CLOSED",
+  "paper_state": "PAPER_CLOSED",
+  "shadow_state": "SHADOW_CLOSED",
+  "live": "FORBIDDEN"
+}
