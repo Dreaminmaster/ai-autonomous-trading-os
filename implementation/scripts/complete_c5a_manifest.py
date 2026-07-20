@@ -17,6 +17,7 @@ PREVERIFY = RESULTS / "pre_manifest_verification.json"
 REQUIRED = (
     "source_inventory.json",
     "source_snapshot_index.json",
+    "contract_retention.json",
     "final_evidence.json",
 )
 
@@ -67,6 +68,11 @@ def main() -> int:
         raise C5AManifestError("final evidence not PASS")
     if final.get("source_head_sha") != source_sha or final.get("merge_ref_sha") != merge_sha:
         raise C5AManifestError("final evidence exact-SHA mismatch")
+    retention = _read(RESULTS / "contract_retention.json")
+    if not isinstance(retention, Mapping) or retention.get("status") != "PASS":
+        raise C5AManifestError("contract retention evidence not PASS")
+    if retention.get("source_head_sha") != source_sha or retention.get("merge_ref_sha") != merge_sha:
+        raise C5AManifestError("contract retention exact-SHA mismatch")
 
     files = []
     for path in sorted(RESULTS.rglob("*")):
