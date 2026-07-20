@@ -31,6 +31,8 @@ SOURCE_PATHS = (
     "implementation/scripts/c5a_program_guard.py",
     "implementation/scripts/c5a_program_evidence_extension.py",
     "implementation/scripts/c5a_program_finalizer_extension.py",
+    "implementation/scripts/c5a_retention_evidence.py",
+    "implementation/scripts/c5a_retention_finalizer.py",
     "implementation/scripts/c5a_evidence.py",
     "implementation/scripts/c5a_reference_contract.py",
     "implementation/scripts/c5a_reference_policy.py",
@@ -45,6 +47,7 @@ SOURCE_PATHS = (
     "implementation/tests/test_c5a_program_guard.py",
     "implementation/tests/test_c5a_reference_equivalence.py",
     "implementation/tests/test_c5a_evidence_contract.py",
+    "implementation/tests/test_c5a_retention_contract.py",
     "implementation/pyproject.toml",
 )
 
