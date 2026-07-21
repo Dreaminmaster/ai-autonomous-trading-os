@@ -8,18 +8,28 @@ It supersedes any less-specific wording in the C6A main contract or accounting a
 
 ## 2. Final-window terminal liquidation
 
-Each independent 26-week window ends at its exclusive Monday `00:00:00Z` boundary.
+Each independent 26-week window ends at its exclusive Monday `00:00:00Z` boundary. The implementation may not retain or read a candle, funding record, metadata transition, or other economic timestamp at or after that boundary.
 
-For the final boundary only, processing order is:
+The terminal transaction timestamp is therefore fixed to:
 
-1. mark carried spot and perpetual positions from the preceding completed marks to the boundary spot and perpetual trade opens;
-2. do **not** apply a funding settlement stamped exactly at the exclusive boundary, because that settlement belongs outside the window;
+```text
+terminal_time = exclusive_window_end - 1 hour
+```
+
+This is the final retained Sunday `23:00:00Z` one-hour candle open.
+
+Processing order at `terminal_time` is:
+
+1. mark carried spot and perpetual positions from the preceding completed closes to the Sunday `23:00:00Z` spot and perpetual trade opens;
+2. apply any actual funding settlement stamped exactly at `terminal_time` to the position carried into that timestamp, using the preceding completed mark close;
 3. record pre-terminal equity;
-4. close both spot and perpetual legs at their boundary trade opens;
+4. close both spot and perpetual legs at their Sunday `23:00:00Z` trade opens;
 5. charge both leg transaction costs;
 6. record post-terminal equity with zero remaining position.
 
-The final weekly bucket's `end_reference_equity`, the window's `final_equity`, and every window/aggregate return use the post-terminal value. Terminal price movement and terminal fees therefore belong to the final scored week.
+The Sunday `23:00:00Z` candle close is not used. No value stamped at the exclusive Monday boundary is read.
+
+The final weekly bucket's terminal transaction, terminal fees, and post-terminal cash state belong to the final scored week. Its `end_reference_equity` at the exclusive boundary equals that unchanged post-terminal cash balance. The window's `final_equity` and every window/aggregate return use this value.
 
 For ordinary non-terminal Monday boundaries, the accounting addendum's existing rule remains unchanged: the prior week's end reference is immediately before the new boundary's funding and ordinary rebalance events.
 
