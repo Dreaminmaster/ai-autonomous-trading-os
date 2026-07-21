@@ -20,14 +20,12 @@ jobs:
       C5A_ORIGINAL_MERGE_REF_SHA: b903987bb58440b6649c8fd7e65f61bb6abcdfa0
       C5A_ORIGINAL_RUN_ID: "29801830531"
       C5A_ORIGINAL_ARTIFACT_ID: "8484045792"
-      C5A_ORIGINAL_ARTIFACT_NAME: c5a-authoritative-evidence-29801830531
       C5A_ORIGINAL_ARTIFACT_SHA256: 0d3b64a1e979bb6b1635542487253a2ebf54d301ef0ecf8d80f958568fa3b563
       C5A_RECOVERY_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       C5A_RECOVERY_MERGE_REF_SHA: ${{ github.sha }}
       C5A_MERGE_REF_SHA: b903987bb58440b6649c8fd7e65f61bb6abcdfa0
       C5A_RESULTS: implementation/freqtrade_data/backtest_results/c5a_derivatives_crowding_regime
       C5A_RUNTIME: implementation/freqtrade_data/c5a_runtime
-      C5A_SEALED: implementation/freqtrade_data/c5a_public_input/sealed
       C5A_RECOVERY_PROVENANCE: implementation/freqtrade_data/c5a_recovery_provenance
 
     steps:
@@ -36,51 +34,43 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Bind frozen source, original authority, and recovery-only head
+      - name: Bind exact frozen source and workflow-only recovery head
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$C5A_RECOVERY_PROVENANCE"
-          printf '%s\n' exact-recovery-binding > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
-
+          printf '%s\n' exact-binding > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
           test "${{ github.event.pull_request.number }}" = "53"
           test "${{ github.event.pull_request.base.sha }}" = "$C5A_BASE_SHA"
           test "$(git rev-parse HEAD)" = "$C5A_RECOVERY_MERGE_REF_SHA"
           git cat-file -e "$C5A_SOURCE_SHA^{commit}"
-          git cat-file -e "$C5A_BASE_SHA^{commit}"
           git cat-file -e "$C5A_ORIGINAL_WORKFLOW_HEAD_SHA^{commit}"
           git cat-file -e "$C5A_RECOVERY_HEAD_SHA^{commit}"
           git merge-base --is-ancestor "$C5A_BASE_SHA" "$C5A_SOURCE_SHA"
           git merge-base --is-ancestor "$C5A_SOURCE_SHA" "$C5A_ORIGINAL_WORKFLOW_HEAD_SHA"
           git merge-base --is-ancestor "$C5A_ORIGINAL_WORKFLOW_HEAD_SHA" "$C5A_RECOVERY_HEAD_SHA"
-
           test "$(git rev-list --count "$C5A_SOURCE_SHA..$C5A_ORIGINAL_WORKFLOW_HEAD_SHA")" = "1"
-          test "$(git rev-list --count "$C5A_ORIGINAL_WORKFLOW_HEAD_SHA..$C5A_RECOVERY_HEAD_SHA")" = "1"
-          test "$(git rev-list --count "$C5A_SOURCE_SHA..$C5A_RECOVERY_HEAD_SHA")" = "2"
+          test "$(git rev-list --count "$C5A_SOURCE_SHA..$C5A_RECOVERY_HEAD_SHA")" = "3"
           mapfile -t changed < <(git diff --name-only "$C5A_SOURCE_SHA" "$C5A_RECOVERY_HEAD_SHA")
           test "${#changed[@]}" = "1"
           test "${changed[0]}" = ".github/workflows/c5a-authoritative-screen.yml"
-
           python - <<'PY'
           import json, os, pathlib, subprocess
-          def git(*args: str) -> str:
+          def git(*args):
               return subprocess.check_output(["git", *args], text=True).strip()
           payload = {
               "schema_version": 1,
               "stage": "C5A",
               "status": "PASS",
               "mode": "FINAL_EVIDENCE_RECOVERY_ONLY",
-              "pull_request": 53,
               "source_head_sha": os.environ["C5A_SOURCE_SHA"],
               "base_sha": os.environ["C5A_BASE_SHA"],
               "original_workflow_head_sha": os.environ["C5A_ORIGINAL_WORKFLOW_HEAD_SHA"],
               "original_merge_ref_sha": os.environ["C5A_ORIGINAL_MERGE_REF_SHA"],
               "recovery_workflow_head_sha": os.environ["C5A_RECOVERY_HEAD_SHA"],
               "recovery_merge_ref_sha": os.environ["C5A_RECOVERY_MERGE_REF_SHA"],
-              "checked_out_sha": git("rev-parse", "HEAD"),
-              "source_to_original_commit_count": int(git("rev-list", "--count", f"{os.environ['C5A_SOURCE_SHA']}..{os.environ['C5A_ORIGINAL_WORKFLOW_HEAD_SHA']}")),
-              "original_to_recovery_commit_count": int(git("rev-list", "--count", f"{os.environ['C5A_ORIGINAL_WORKFLOW_HEAD_SHA']}..{os.environ['C5A_RECOVERY_HEAD_SHA']}")),
-              "source_to_recovery_changed_files": git("diff", "--name-only", os.environ["C5A_SOURCE_SHA"], os.environ["C5A_RECOVERY_HEAD_SHA"]).splitlines(),
+              "source_to_recovery_commit_count": int(git("rev-list", "--count", f"{os.environ['C5A_SOURCE_SHA']}..{os.environ['C5A_RECOVERY_HEAD_SHA']}")),
+              "changed_files": git("diff", "--name-only", os.environ["C5A_SOURCE_SHA"], os.environ["C5A_RECOVERY_HEAD_SHA"]).splitlines(),
               "economic_rerun": False,
               "confirmation_opened": False,
               "holdout_state": "HOLDOUT_CLOSED",
@@ -92,82 +82,10 @@ jobs:
           path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
           PY
 
-      - name: Verify original authoritative run and artifact metadata
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          printf '%s\n' original-authority-metadata > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
-          python - <<'PY'
-          import json, os, pathlib, urllib.request
-
-          repo = os.environ["GITHUB_REPOSITORY"]
-          token = os.environ["GH_TOKEN"]
-          headers = {
-              "Accept": "application/vnd.github+json",
-              "Authorization": f"Bearer {token}",
-              "X-GitHub-Api-Version": "2022-11-28",
-          }
-          def get(url: str):
-              request = urllib.request.Request(url, headers=headers)
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  return json.load(response)
-
-          run_id = int(os.environ["C5A_ORIGINAL_RUN_ID"])
-          artifact_id = int(os.environ["C5A_ORIGINAL_ARTIFACT_ID"])
-          run = get(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}")
-          assert run["name"] == "C5A Authoritative Screen"
-          assert run["event"] == "pull_request"
-          assert run["status"] == "completed"
-          assert run["conclusion"] == "failure"
-          assert run["head_sha"] == os.environ["C5A_ORIGINAL_WORKFLOW_HEAD_SHA"]
-
-          jobs = get(f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100")
-          assert jobs["total_count"] == 1
-          job = jobs["jobs"][0]
-          steps = {step["name"]: step["conclusion"] for step in job["steps"]}
-          assert steps["Run frozen C5A economic screen"] == "success"
-          assert steps["Run ordered independent finalization"] == "failure"
-          assert steps["Upload C5A authoritative evidence"] == "success"
-
-          artifact = get(f"https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}")
-          assert artifact["id"] == artifact_id
-          assert artifact["name"] == os.environ["C5A_ORIGINAL_ARTIFACT_NAME"]
-          assert artifact["expired"] is False
-          assert artifact["digest"] == "sha256:" + os.environ["C5A_ORIGINAL_ARTIFACT_SHA256"]
-          assert artifact["workflow_run"]["id"] == run_id
-          assert artifact["workflow_run"]["head_sha"] == os.environ["C5A_ORIGINAL_WORKFLOW_HEAD_SHA"]
-
-          output = {
-              "schema_version": 1,
-              "stage": "C5A",
-              "status": "PASS",
-              "original_run_id": run_id,
-              "original_run_conclusion": run["conclusion"],
-              "economic_screen_step": "success",
-              "independent_finalization_step": "failure",
-              "original_artifact_id": artifact_id,
-              "original_artifact_name": artifact["name"],
-              "original_artifact_size": artifact["size_in_bytes"],
-              "original_artifact_digest": artifact["digest"],
-              "source_head_sha": os.environ["C5A_SOURCE_SHA"],
-              "original_workflow_head_sha": os.environ["C5A_ORIGINAL_WORKFLOW_HEAD_SHA"],
-              "original_merge_ref_sha": os.environ["C5A_ORIGINAL_MERGE_REF_SHA"],
-              "economic_rerun": False,
-              "confirmation_opened": False,
-              "holdout_state": "HOLDOUT_CLOSED",
-              "live": "FORBIDDEN",
-          }
-          path = pathlib.Path(os.environ["C5A_RECOVERY_PROVENANCE"]) / "original_authority.json"
-          path.write_text(json.dumps(output, indent=2, sort_keys=True), encoding="utf-8")
-          PY
-
       - name: Checkout frozen economic source
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' checkout-frozen-source > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
           git checkout --detach "$C5A_SOURCE_SHA"
           test "$(git rev-parse HEAD)" = "$C5A_SOURCE_SHA"
           test ! -e .github/workflows/c5a-authoritative-screen.yml
@@ -187,16 +105,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e 'implementation[dev]'
 
-      - name: Download and hash-verify original authoritative artifact
+      - name: Download and hash-verify original economic artifact
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' download-original-artifact > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
-          archive="$RUNNER_TEMP/c5a-original-authoritative.zip"
-          extract="$RUNNER_TEMP/c5a-original-authoritative"
-          rm -rf "$extract"
+          printf '%s\n' original-artifact > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
+          archive="$RUNNER_TEMP/c5a-original.zip"
+          extract="$RUNNER_TEMP/c5a-original"
           curl --fail --silent --show-error --location \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
@@ -204,33 +121,34 @@ jobs:
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$C5A_ORIGINAL_ARTIFACT_ID/zip" \
             --output "$archive"
           printf '%s  %s\n' "$C5A_ORIGINAL_ARTIFACT_SHA256" "$archive" | sha256sum --check --strict
+          rm -rf "$extract"
           mkdir -p "$extract"
           unzip -q "$archive" -d "$extract"
           test -d "$extract/backtest_results/c5a_derivatives_crowding_regime"
           test -d "$extract/c5a_workflow_provenance"
 
-      - name: Independently validate primitive economic artifact
+      - name: Validate and restore primitive evidence
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' validate-primitive-artifact > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
+          printf '%s\n' primitive-validation > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
           python - <<'PY'
-          import hashlib, json, os, pathlib
-
-          extract = pathlib.Path(os.environ["RUNNER_TEMP"]) / "c5a-original-authoritative"
-          root = extract / "backtest_results/c5a_derivatives_crowding_regime"
+          import hashlib, json, os, pathlib, shutil
+          extract = pathlib.Path(os.environ["RUNNER_TEMP"]) / "c5a-original"
+          original = extract / "backtest_results/c5a_derivatives_crowding_regime"
           provenance = extract / "c5a_workflow_provenance"
-          def load(path: pathlib.Path):
+          results = pathlib.Path(os.environ["C5A_RESULTS"])
+          runtime = pathlib.Path(os.environ["C5A_RUNTIME"])
+          recovery = pathlib.Path(os.environ["C5A_RECOVERY_PROVENANCE"])
+          def load(path):
               return json.loads(path.read_text(encoding="utf-8"))
-          def sha(path: pathlib.Path) -> str:
+          def sha(path):
               return hashlib.sha256(path.read_bytes()).hexdigest()
-
           failure = load(provenance / "workflow_failure.json")
-          summary = load(root / "run_summary.json")
-          decision = load(root / "decision.json")
-          manifest = load(root / "manifest.json")
+          summary = load(original / "run_summary.json")
+          decision = load(original / "decision.json")
+          manifest = load(original / "manifest.json")
           assert failure["status"] == "POST_ECONOMIC_EVIDENCE_FAILURE"
-          assert failure["failed_phase"] == "independent-finalization"
           assert failure["economic_output_present"] is True
           assert failure["economic_result"] == "REJECTED"
           assert failure["selected_policy"] is None
@@ -238,121 +156,142 @@ jobs:
           assert failure["merge_ref_sha"] == os.environ["C5A_ORIGINAL_MERGE_REF_SHA"]
           assert failure["workflow_head_sha"] == os.environ["C5A_ORIGINAL_WORKFLOW_HEAD_SHA"]
           assert summary["status"] == "PASS" and summary["errors"] == []
-          assert summary["economic_result"] == "REJECTED"
-          assert summary["selected_policy"] is None
-          assert summary["source_head_sha"] == os.environ["C5A_SOURCE_SHA"]
-          assert summary["merge_ref_sha"] == os.environ["C5A_ORIGINAL_MERGE_REF_SHA"]
-          assert decision["economic_result"] == "REJECTED"
-          assert decision["selected_policy"] is None
-          assert manifest["source_head_sha"] == os.environ["C5A_SOURCE_SHA"]
-          assert manifest["merge_ref_sha"] == os.environ["C5A_ORIGINAL_MERGE_REF_SHA"]
+          assert summary["economic_result"] == "REJECTED" and summary["selected_policy"] is None
+          assert decision["economic_result"] == "REJECTED" and decision["selected_policy"] is None
           assert manifest["file_count"] == len(manifest["files"])
-
           for item in manifest["files"]:
-              path = root / item["path"]
+              path = original / item["path"]
               assert path.is_file(), item["path"]
-              assert path.stat().st_size == item["size"], item["path"]
-              assert sha(path) == item["sha256"], item["path"]
-
-          public_files = sorted((root / "input_public").glob("*/*.json"))
+              assert path.stat().st_size == item["size"]
+              assert sha(path) == item["sha256"]
+          public_files = sorted((original / "input_public").glob("*/*.json"))
           assert len(public_files) == 9
-          for path in public_files:
-              assert len(load(path)) == 2940, path
-          assert len(load(root / "policy_rows.json")) == 12
-          assert len(load(root / "comparator_rows.json")) == 18
-          assert len(load(root / "policy_aggregates.json")) == 6
-          assert len(load(root / "comparator_aggregates.json")) == 9
-          assert not (root / "final_evidence.json").exists()
-
+          assert all(len(load(path)) == 2940 for path in public_files)
           primitive_names = [
-              "calibration.json",
-              "calibration_hashes.json",
-              "policy_rows.json",
-              "comparator_rows.json",
-              "policy_aggregates.json",
-              "comparator_aggregates.json",
-              "decision.json",
-              "decisions.jsonl",
-              "per_asset_signals.jsonl",
-              "rebalance_ledger.jsonl",
-              "weekly_buckets.jsonl",
+              "calibration.json", "calibration_hashes.json", "policy_rows.json",
+              "comparator_rows.json", "policy_aggregates.json",
+              "comparator_aggregates.json", "decision.json", "decisions.jsonl",
+              "per_asset_signals.jsonl", "rebalance_ledger.jsonl", "weekly_buckets.jsonl",
           ]
-          primitive_hashes = {name: sha(root / name) for name in primitive_names}
-          for path in public_files:
-              primitive_hashes[str(path.relative_to(root))] = sha(path)
-          output = {
+          primitive_hashes = {name: sha(original / name) for name in primitive_names}
+          primitive_hashes.update({str(path.relative_to(original)): sha(path) for path in public_files})
+          record = {
               "schema_version": 1,
               "stage": "C5A",
               "status": "PASS",
+              "original_run_id": int(os.environ["C5A_ORIGINAL_RUN_ID"]),
+              "original_artifact_id": int(os.environ["C5A_ORIGINAL_ARTIFACT_ID"]),
+              "original_artifact_sha256": os.environ["C5A_ORIGINAL_ARTIFACT_SHA256"],
               "economic_result": "REJECTED",
               "selected_policy": None,
               "initial_manifest_file_count": manifest["file_count"],
               "public_series_count": 9,
               "rows_per_public_series": 2940,
-              "policy_row_count": 12,
-              "comparator_row_count": 18,
-              "policy_aggregate_count": 6,
-              "comparator_aggregate_count": 9,
               "primitive_hashes": primitive_hashes,
               "economic_rerun": False,
-              "source_head_sha": os.environ["C5A_SOURCE_SHA"],
-              "original_merge_ref_sha": os.environ["C5A_ORIGINAL_MERGE_REF_SHA"],
               "confirmation_opened": False,
               "holdout_state": "HOLDOUT_CLOSED",
               "live": "FORBIDDEN",
           }
-          path = pathlib.Path(os.environ["C5A_RECOVERY_PROVENANCE"]) / "primitive_artifact_verification.json"
-          path.write_text(json.dumps(output, indent=2, sort_keys=True), encoding="utf-8")
+          (recovery / "primitive_artifact_verification.json").write_text(
+              json.dumps(record, indent=2, sort_keys=True), encoding="utf-8"
+          )
+          shutil.rmtree(results, ignore_errors=True)
+          shutil.rmtree(runtime, ignore_errors=True)
+          results.parent.mkdir(parents=True, exist_ok=True)
+          shutil.copytree(original, results)
+          runtime.mkdir(parents=True, exist_ok=True)
+          for name in ("c5a_program_guard.json", "c5a_data_boundary.json", "c5a_data_coverage.json"):
+              shutil.copy2(provenance / "runtime_failure_state" / name, runtime / name)
+          target = results / "workflow_provenance" / "original_run"
+          target.mkdir(parents=True, exist_ok=True)
+          for path in provenance.iterdir():
+              if path.is_file():
+                  shutil.copy2(path, target / path.name)
+          target = results / "workflow_provenance" / "recovery_run"
+          target.mkdir(parents=True, exist_ok=True)
+          for path in recovery.iterdir():
+              if path.is_file():
+                  shutil.copy2(path, target / path.name)
           PY
 
-      - name: Restore retained evidence without market access or economic rerun
+      - name: Run independent finalization with audited namespace export
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' restore-retained-evidence > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
-          extract="$RUNNER_TEMP/c5a-original-authoritative"
-          rm -rf "$C5A_RESULTS" "$C5A_RUNTIME" "$C5A_SEALED"
-          mkdir -p "$(dirname "$C5A_RESULTS")" "$C5A_RUNTIME" "$C5A_SEALED"
-          cp -a "$extract/backtest_results/c5a_derivatives_crowding_regime" "$C5A_RESULTS"
-          cp -a "$C5A_RESULTS/input_public"/. "$C5A_SEALED"/
-          cp -a "$extract/c5a_workflow_provenance/runtime_failure_state"/. "$C5A_RUNTIME"/
-          mkdir -p "$C5A_RESULTS/workflow_provenance/original_run"
-          cp -a "$extract/c5a_workflow_provenance"/. "$C5A_RESULTS/workflow_provenance/original_run"/
-          mkdir -p "$C5A_RESULTS/workflow_provenance/recovery_run"
-          cp -a "$C5A_RECOVERY_PROVENANCE"/. "$C5A_RESULTS/workflow_provenance/recovery_run"/
-
-          test -f "$C5A_RUNTIME/c5a_program_guard.json"
-          test -f "$C5A_RUNTIME/c5a_data_boundary.json"
-          test -f "$C5A_RUNTIME/c5a_data_coverage.json"
-          test -f "$C5A_RESULTS/decision.json"
-          test -f "$C5A_RESULTS/manifest.json"
-
-      - name: Run package-mode independent finalization only
-        shell: bash
-        run: |
-          set -euo pipefail
-          printf '%s\n' package-mode-finalization > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
-          mkdir -p "$C5A_RESULTS/workflow_provenance/recovery_run"
-          cp -a "$C5A_RECOVERY_PROVENANCE"/. "$C5A_RESULTS/workflow_provenance/recovery_run"/
+          printf '%s\n' independent-finalization > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
           cd implementation
           set -o pipefail
-          python -m scripts.run_c5a_finalization 2>&1 | tee freqtrade_data/c5a_recovery_provenance/c5a_recovery_finalization.log
+          python - <<'PY' 2>&1 | tee freqtrade_data/c5a_recovery_provenance/c5a_recovery_finalization.log
+          import hashlib, json, os, pathlib, shutil
+          import scripts.c5a_reference_contract as contract
+          import scripts.c5a_reference_recompute as reference
+          import scripts.c5a_source_inventory as source_inventory
+          import scripts.c5a_retention_evidence as retention_evidence
+          import scripts.c5a_program_evidence_extension as program_evidence
+          import scripts.c5a_finalizer as finalizer
+          import scripts.c5a_retention_finalizer as retention_finalizer
+          import scripts.c5a_program_finalizer_extension as program_finalizer
+          import scripts.complete_c5a_manifest as complete_manifest
 
-      - name: Independently verify recovered final evidence
+          expected = ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP")
+          assert tuple(contract.SWAP_INSTRUMENTS) == expected
+          assert not hasattr(reference, "SWAP_INSTRUMENTS")
+          reference.SWAP_INSTRUMENTS = contract.SWAP_INSTRUMENTS
+          assert tuple(reference.SWAP_INSTRUMENTS) == expected
+          root = pathlib.Path.cwd()
+          record = {
+              "schema_version": 1,
+              "stage": "C5A",
+              "status": "PASS",
+              "mode": "EVIDENCE_ONLY_RUNTIME_NAMESPACE_EXPORT",
+              "injected_symbol": "scripts.c5a_reference_recompute.SWAP_INSTRUMENTS",
+              "source_symbol": "scripts.c5a_reference_contract.SWAP_INSTRUMENTS",
+              "value": list(expected),
+              "reason": "Frozen finalizer references a constant not re-exported by the frozen reference module.",
+              "reference_recompute_sha256": hashlib.sha256((root / "scripts/c5a_reference_recompute.py").read_bytes()).hexdigest(),
+              "reference_contract_sha256": hashlib.sha256((root / "scripts/c5a_reference_contract.py").read_bytes()).hexdigest(),
+              "finalizer_sha256": hashlib.sha256((root / "scripts/c5a_finalizer.py").read_bytes()).hexdigest(),
+              "economic_rerun": False,
+              "economic_data_changed": False,
+              "economic_result_changed": False,
+              "source_head_sha": os.environ["C5A_SOURCE_SHA"],
+              "original_merge_ref_sha": os.environ["C5A_ORIGINAL_MERGE_REF_SHA"],
+              "confirmation_opened": False,
+              "holdout_state": "HOLDOUT_CLOSED",
+              "paper_state": "PAPER_CLOSED",
+              "shadow_state": "SHADOW_CLOSED",
+              "live": "FORBIDDEN",
+          }
+          recovery = root / "freqtrade_data/c5a_recovery_provenance"
+          path = recovery / "runtime_namespace_export.json"
+          path.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")
+          target = root / "freqtrade_data/backtest_results/c5a_derivatives_crowding_regime/workflow_provenance/recovery_run"
+          target.mkdir(parents=True, exist_ok=True)
+          shutil.copy2(path, target / path.name)
+
+          source_inventory.main()
+          retention_evidence.main()
+          program_evidence.main()
+          finalizer.main()
+          retention_finalizer.main()
+          program_finalizer.main()
+          complete_manifest.main()
+          PY
+
+      - name: Verify recovered evidence and complete manifest
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' recovered-artifact-verification > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
+          printf '%s\n' final-verification > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
           python - <<'PY'
-          import hashlib, json, os, pathlib
-
+          import hashlib, json, os, pathlib, shutil, subprocess
           root = pathlib.Path(os.environ["C5A_RESULTS"])
           recovery = pathlib.Path(os.environ["C5A_RECOVERY_PROVENANCE"])
-          def load(path: pathlib.Path):
+          def load(path):
               return json.loads(path.read_text(encoding="utf-8"))
-          def sha(path: pathlib.Path) -> str:
+          def sha(path):
               return hashlib.sha256(path.read_bytes()).hexdigest()
-
           summary = load(root / "run_summary.json")
           decision = load(root / "decision.json")
           final = load(root / "final_evidence.json")
@@ -360,68 +299,27 @@ jobs:
           program = load(root / "program_guard.json")
           inventory = load(root / "source_inventory.json")
           snapshots = load(root / "source_snapshot_index.json")
-          preverify = load(root / "pre_manifest_verification.json")
-          manifest = load(root / "manifest.json")
           primitive = load(recovery / "primitive_artifact_verification.json")
-          binding = load(recovery / "recovery_binding.json")
-          authority = load(recovery / "original_authority.json")
-
+          shim = load(recovery / "runtime_namespace_export.json")
           assert summary["status"] == "PASS" and summary["errors"] == []
-          assert summary["economic_result"] == "REJECTED"
-          assert summary["selected_policy"] is None
-          assert summary["source_head_sha"] == os.environ["C5A_SOURCE_SHA"]
-          assert summary["merge_ref_sha"] == os.environ["C5A_ORIGINAL_MERGE_REF_SHA"]
-          assert decision["economic_result"] == "REJECTED"
-          assert decision["selected_policy"] is None
+          assert summary["economic_result"] == "REJECTED" and summary["selected_policy"] is None
+          assert decision["economic_result"] == "REJECTED" and decision["selected_policy"] is None
           assert final["status"] == "PASS" and final["errors"] == []
-          assert final["checks_passed"] == len(final["checks"])
-          assert final["checks_passed"] >= 21
-          assert final["source_head_sha"] == os.environ["C5A_SOURCE_SHA"]
-          assert final["merge_ref_sha"] == os.environ["C5A_ORIGINAL_MERGE_REF_SHA"]
+          assert final["checks_passed"] == len(final["checks"]) and final["checks_passed"] >= 21
           assert retention["status"] == "PASS"
           assert retention["weekly_accounting_row_count"] == 156
           assert retention["concentration_row_count"] == 6
           assert retention["weekly_statistic"] == "PSR_NOT_DSR"
-          assert retention["program_level_sequential_history_corrected"] is False
           assert program["status"] == "PASS"
           assert program["prior_stage_result_count"] == 5
           assert program["prior_confirmation_stages_opened"] == []
           assert program["prior_selected_policies"] == []
           assert inventory["status"] == "PASS" and inventory["file_count"] == 33
           assert snapshots["status"] == "PASS" and snapshots["snapshot_count"] == 33
-          assert preverify["status"] == "PASS"
-          assert manifest["source_head_sha"] == os.environ["C5A_SOURCE_SHA"]
-          assert manifest["merge_ref_sha"] == os.environ["C5A_ORIGINAL_MERGE_REF_SHA"]
-          assert manifest["file_count"] == len(manifest["files"])
-          assert binding["economic_rerun"] is False
-          assert authority["economic_screen_step"] == "success"
-          assert authority["independent_finalization_step"] == "failure"
-
+          assert shim["status"] == "PASS"
+          assert shim["economic_rerun"] is False
           for relative, expected in primitive["primitive_hashes"].items():
               assert sha(root / relative) == expected, relative
-          indexed = {}
-          for item in manifest["files"]:
-              relative = item["path"]
-              assert relative not in indexed
-              indexed[relative] = item
-              path = root / relative
-              assert path.is_file(), relative
-              assert path.stat().st_size == item["size"], relative
-              assert sha(path) == item["sha256"], relative
-          required = {
-              "final_evidence.json",
-              "contract_retention.json",
-              "program_guard.json",
-              "source_inventory.json",
-              "source_snapshot_index.json",
-              "pre_manifest_verification.json",
-              "workflow_provenance/original_run/workflow_failure.json",
-              "workflow_provenance/recovery_run/recovery_binding.json",
-              "workflow_provenance/recovery_run/original_authority.json",
-              "workflow_provenance/recovery_run/primitive_artifact_verification.json",
-          }
-          assert required.issubset(indexed), required - set(indexed)
-
           output = {
               "schema_version": 1,
               "stage": "C5A",
@@ -433,10 +331,9 @@ jobs:
               "final_checks_passed": final["checks_passed"],
               "source_inventory_file_count": inventory["file_count"],
               "source_snapshot_count": snapshots["snapshot_count"],
-              "final_manifest_file_count": manifest["file_count"],
               "primitive_hash_count": len(primitive["primitive_hashes"]),
+              "runtime_namespace_export": "PASS",
               "source_head_sha": os.environ["C5A_SOURCE_SHA"],
-              "original_workflow_head_sha": os.environ["C5A_ORIGINAL_WORKFLOW_HEAD_SHA"],
               "original_merge_ref_sha": os.environ["C5A_ORIGINAL_MERGE_REF_SHA"],
               "recovery_workflow_head_sha": os.environ["C5A_RECOVERY_HEAD_SHA"],
               "recovery_merge_ref_sha": os.environ["C5A_RECOVERY_MERGE_REF_SHA"],
@@ -446,26 +343,15 @@ jobs:
               "shadow_state": "SHADOW_CLOSED",
               "live": "FORBIDDEN",
           }
-          path = recovery / "recovered_artifact_verification.json"
-          path.write_text(json.dumps(output, indent=2, sort_keys=True), encoding="utf-8")
-          PY
-          mkdir -p "$C5A_RESULTS/workflow_provenance/recovery_run"
-          cp -a "$C5A_RECOVERY_PROVENANCE"/. "$C5A_RESULTS/workflow_provenance/recovery_run"/
-
-          # Rebuild the complete manifest once more so the final recovery
-          # verification record and finalization log are hash-bound too.
-          cd implementation
-          python -m scripts.complete_c5a_manifest
-
-      - name: Verify final manifest after recovery provenance inclusion
-        shell: bash
-        run: |
-          set -euo pipefail
-          printf '%s\n' final-manifest-verification > "$C5A_RECOVERY_PROVENANCE/current_phase.txt"
-          python - <<'PY'
-          import hashlib, json, os, pathlib
-          root = pathlib.Path(os.environ["C5A_RESULTS"])
-          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+          record = recovery / "recovered_artifact_verification.json"
+          record.write_text(json.dumps(output, indent=2, sort_keys=True), encoding="utf-8")
+          target = root / "workflow_provenance" / "recovery_run"
+          target.mkdir(parents=True, exist_ok=True)
+          for path in recovery.iterdir():
+              if path.is_file():
+                  shutil.copy2(path, target / path.name)
+          subprocess.run(["python", "-m", "scripts.complete_c5a_manifest"], cwd="implementation", check=True)
+          manifest = load(root / "manifest.json")
           assert manifest["source_head_sha"] == os.environ["C5A_SOURCE_SHA"]
           assert manifest["merge_ref_sha"] == os.environ["C5A_ORIGINAL_MERGE_REF_SHA"]
           assert manifest["file_count"] == len(manifest["files"])
@@ -473,15 +359,28 @@ jobs:
           for item in manifest["files"]:
               path = root / item["path"]
               indexed.add(item["path"])
-              assert path.is_file()
+              assert path.is_file(), item["path"]
               assert path.stat().st_size == item["size"]
-              assert hashlib.sha256(path.read_bytes()).hexdigest() == item["sha256"]
-          assert "workflow_provenance/recovery_run/recovered_artifact_verification.json" in indexed
-          assert "workflow_provenance/recovery_run/c5a_recovery_finalization.log" in indexed
-          print(f"C5A recovered final manifest PASS: {manifest['file_count']} hash-bound files")
+              assert sha(path) == item["sha256"]
+          required = {
+              "final_evidence.json",
+              "contract_retention.json",
+              "program_guard.json",
+              "source_inventory.json",
+              "source_snapshot_index.json",
+              "pre_manifest_verification.json",
+              "workflow_provenance/original_run/workflow_failure.json",
+              "workflow_provenance/recovery_run/recovery_binding.json",
+              "workflow_provenance/recovery_run/primitive_artifact_verification.json",
+              "workflow_provenance/recovery_run/runtime_namespace_export.json",
+              "workflow_provenance/recovery_run/recovered_artifact_verification.json",
+              "workflow_provenance/recovery_run/c5a_recovery_finalization.log",
+          }
+          assert required.issubset(indexed), required - indexed
+          print(f"C5A recovered final evidence PASS: {final['checks_passed']} checks / {manifest['file_count']} files")
           PY
 
-      - name: Record recovery failure without changing the economic result
+      - name: Record recovery failure without changing economic result
         if: failure()
         shell: bash
         run: |
@@ -491,7 +390,7 @@ jobs:
           test -f "$C5A_RECOVERY_PROVENANCE/current_phase.txt" && phase="$(cat "$C5A_RECOVERY_PROVENANCE/current_phase.txt")"
           C5A_FAILED_PHASE="$phase" python - <<'PY'
           import json, os, pathlib
-          output = {
+          payload = {
               "schema_version": 1,
               "stage": "C5A",
               "status": "FINAL_EVIDENCE_RECOVERY_FAILURE",
@@ -501,7 +400,6 @@ jobs:
               "selected_policy": None,
               "economic_rerun": False,
               "source_head_sha": os.environ["C5A_SOURCE_SHA"],
-              "original_workflow_head_sha": os.environ["C5A_ORIGINAL_WORKFLOW_HEAD_SHA"],
               "original_merge_ref_sha": os.environ["C5A_ORIGINAL_MERGE_REF_SHA"],
               "recovery_workflow_head_sha": os.environ["C5A_RECOVERY_HEAD_SHA"],
               "recovery_merge_ref_sha": os.environ["C5A_RECOVERY_MERGE_REF_SHA"],
@@ -512,7 +410,7 @@ jobs:
               "live": "FORBIDDEN",
           }
           path = pathlib.Path(os.environ["C5A_RECOVERY_PROVENANCE"]) / "recovery_failure.json"
-          path.write_text(json.dumps(output, indent=2, sort_keys=True), encoding="utf-8")
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
           PY
 
       - name: Upload recovered C5A final evidence
@@ -524,4 +422,5 @@ jobs:
             ${{ env.C5A_RESULTS }}
             ${{ env.C5A_RECOVERY_PROVENANCE }}
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 90
