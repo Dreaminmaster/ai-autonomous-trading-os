@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Query official public historical-data directory only
+      - name: Resolve official funding archive query shape
         run: |
           python - <<'PY'
           from __future__ import annotations
@@ -51,23 +51,52 @@ jobs:
           out.mkdir(exist_ok=True)
           endpoint = "https://www.okx.com/api/v5/public/market-data-history"
           begin = "1704067200000"  # 2024-01-01T00:00:00Z
-          end = "1704844800000"    # 2024-01-10T00:00:00Z
+          end = "1706745599000"    # 2024-01-31T23:59:59Z
           requests = []
-          for module in range(1, 7):
-              for family in ("BTC-USDT", "ETH-USDT"):
-                  requests.append(
+          for asset in ("BTC", "ETH"):
+              requests.extend(
+                  [
                       {
-                          "module": str(module),
+                          "variant": "family-monthly",
+                          "module": "3",
                           "instType": "SWAP",
-                          "instFamilyList": family,
-                          "dateAggrType": "daily",
+                          "instFamilyList": f"{asset}-USDT",
+                          "dateAggrType": "monthly",
                           "begin": begin,
                           "end": end,
-                      }
-                  )
+                      },
+                      {
+                          "variant": "instrument-monthly",
+                          "module": "3",
+                          "instType": "SWAP",
+                          "instIdList": f"{asset}-USDT-SWAP",
+                          "dateAggrType": "monthly",
+                          "begin": begin,
+                          "end": end,
+                      },
+                      {
+                          "variant": "instrument-monthly-no-type",
+                          "module": "3",
+                          "instIdList": f"{asset}-USDT-SWAP",
+                          "dateAggrType": "monthly",
+                          "begin": begin,
+                          "end": end,
+                      },
+                      {
+                          "variant": "family-daily-control",
+                          "module": "3",
+                          "instType": "SWAP",
+                          "instFamilyList": f"{asset}-USDT",
+                          "dateAggrType": "daily",
+                          "begin": begin,
+                          "end": "1705276800000",
+                      },
+                  ]
+              )
 
           rows = []
-          for index, params in enumerate(requests, start=1):
+          for index, source in enumerate(requests, start=1):
+              params = {key: value for key, value in source.items() if key != "variant"}
               url = f"{endpoint}?{urllib.parse.urlencode(params)}"
               request = urllib.request.Request(
                   url,
@@ -78,6 +107,7 @@ jobs:
               )
               record = {
                   "index": index,
+                  "variant": source["variant"],
                   "request_url": url,
                   "params": params,
                   "authenticated": False,
@@ -110,47 +140,42 @@ jobs:
               except Exception as exc:
                   record["transport_error"] = repr(exc)
               rows.append(record)
-              with (out / "responses.jsonl").open("a", encoding="utf-8") as handle:
-                  handle.write(json.dumps(record, sort_keys=True))
-                  handle.write("\n")
-              time.sleep(0.35)
+              time.sleep(0.4)
 
           parsed = []
           for row in rows:
               text = row.get("response_text")
-              if not isinstance(text, str):
-                  continue
-              try:
-                  payload = json.loads(text)
-              except json.JSONDecodeError:
-                  continue
+              payload = None
+              if isinstance(text, str):
+                  try:
+                      payload = json.loads(text)
+                  except json.JSONDecodeError:
+                      payload = None
               parsed.append(
                   {
-                      "module": row["params"]["module"],
-                      "family": row["params"]["instFamilyList"],
-                      "dateAggrType": row["params"]["dateAggrType"],
+                      "variant": row["variant"],
+                      "params": row["params"],
                       "http_status": row.get("http_status"),
                       "code": payload.get("code") if isinstance(payload, dict) else None,
                       "msg": payload.get("msg") if isinstance(payload, dict) else None,
                       "data": payload.get("data") if isinstance(payload, dict) else None,
                       "response_sha256": row.get("response_sha256"),
+                      "transport_error": row.get("transport_error"),
                   }
               )
 
           summary = {
-              "schema_version": 2,
+              "schema_version": 3,
               "stage": "C6A_SOURCE_AUTHORITY_RESEARCH",
               "status": "PASS",
               "endpoint": endpoint,
-              "window": {"begin": begin, "end": end},
               "request_count": len(rows),
-              "parsed_response_count": len(parsed),
               "requests": parsed,
               "authenticated": False,
               "market_file_downloaded": False,
               "economic_result_run": False,
               "c6b_state": "C6B_CLOSED",
-              "c5b_state": "C5B_CLOSED_AND_UNTOUCHED",
+              "c5b_state": "C5B_CLOSED_AND_UNTOUED",
               "holdout_state": "HOLDOUT_CLOSED",
               "paper_state": "PAPER_CLOSED",
               "shadow_state": "SHADOW_CLOSED",
@@ -159,10 +184,7 @@ jobs:
           (out / "summary.json").write_text(
               json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
           )
-          print(
-              f"queried {len(rows)} valid official module/family combinations; "
-              f"parsed {len(parsed)} JSON responses"
-          )
+          print(f"queried {len(rows)} funding-directory variants")
           PY
 
       - name: Upload exact response evidence
@@ -181,5 +203,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add research/c6a-okx-source-authority/summary.json
-          git commit -m "research(c6a): retain resolved source-directory summary"
+          git commit -m "research(c6a): retain funding-directory resolution"
           git push origin HEAD:research/c6a-okx-source-authority
