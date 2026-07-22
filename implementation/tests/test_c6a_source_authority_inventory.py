@@ -50,6 +50,7 @@ def test_generic_metadata_notice_without_instrument_in_title_is_selected() -> No
     assert "minimum order quantities" in result["metadata_term_matches"]
     assert "adjust" in result["adjustment_term_matches"]
     assert result["selected_for_article_capture"] is True
+    assert type(result["selected_for_article_capture"]) is bool
 
 
 def test_unrelated_article_and_post_boundary_article_are_not_selected() -> None:
@@ -66,6 +67,7 @@ def test_unrelated_article_and_post_boundary_article_are_not_selected() -> None:
         known_urls=known_urls,
     )
     assert unrelated["selected_for_article_capture"] is False
+    assert type(unrelated["selected_for_article_capture"]) is bool
 
     future = classify_catalog_article(
         {
