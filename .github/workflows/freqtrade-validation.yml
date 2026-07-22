@@ -4,7 +4,11 @@ on:
   push:
     paths: ['implementation/**', '.github/workflows/freqtrade-validation.yml']
   pull_request:
-    paths: ['implementation/**']
+    paths:
+      - 'implementation/**'
+      - '!implementation/config/c6a_source_authority_query_inventory_v1.json'
+      - '!implementation/src/atos/c6a_source_authority*.py'
+      - '!implementation/tests/test_c6a_source_authority*.py'
   workflow_dispatch:
 
 jobs:
