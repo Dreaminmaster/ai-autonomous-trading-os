@@ -13,13 +13,13 @@ from atos.c6a_source_authority_capture import (
     build_recursive_manifest,
     catalog_requests,
     classify_article,
-    decode_okx_instruments_response,
     inventory_sha256,
     load_frozen_inventory,
     memento_request,
     parse_announcement_catalog,
     parse_wayback_cdx,
 )
+from atos.c6a_source_authority_metadata import decode_okx_instruments_response
 from atos.c6a_source_authority_review import verify_manifest
 
 
@@ -141,7 +141,7 @@ def test_wayback_index_rejects_wrong_original_and_out_of_range_capture() -> None
         parse_wayback_cdx(json.dumps(future).encode(), canonical_official_url=canonical)
 
 
-def test_archived_okx_decoder_rejects_wrapper_and_preserves_exact_strings() -> None:
+def test_archived_okx_swap_decoder_uses_underlying_and_preserves_exact_strings() -> None:
     response = {
         "code": "0",
         "msg": "",
@@ -149,8 +149,9 @@ def test_archived_okx_decoder_rejects_wrapper_and_preserves_exact_strings() -> N
             {
                 "instId": "ETH-USDT-SWAP",
                 "instType": "SWAP",
-                "baseCcy": "ETH",
-                "quoteCcy": "USDT",
+                "uly": "ETH-USDT",
+                "baseCcy": "",
+                "quoteCcy": "",
                 "settleCcy": "USDT",
                 "ctVal": "0.1",
                 "ctValCcy": "ETH",
@@ -166,13 +167,42 @@ def test_archived_okx_decoder_rejects_wrapper_and_preserves_exact_strings() -> N
         json.dumps(response).encode(), expected_instrument="ETH-USDT-SWAP"
     )
     row = decoded["data"][0]
+    assert row["baseCcy"] == "ETH"
+    assert row["quoteCcy"] == "USDT"
+    assert row["uly"] == "ETH-USDT"
+    assert row["identity_derivation"] == "EXACT_OFFICIAL_UNDERLYING"
     assert row["ctVal"] == "0.1"
     assert row["lotSz"] == "0.01"
     assert "ignored" not in row
 
+
+def test_archived_okx_decoder_rejects_wrapper_and_swap_identity_drift() -> None:
     wrapper = b'<html><body>Wayback Machine</body></html>'
     with pytest.raises(SourceAuthorityError, match="valid JSON"):
         decode_okx_instruments_response(wrapper, expected_instrument="ETH-USDT-SWAP")
+
+    wrong_underlying = {
+        "code": "0",
+        "msg": "",
+        "data": [
+            {
+                "instId": "ETH-USDT-SWAP",
+                "instType": "SWAP",
+                "uly": "BTC-USDT",
+                "settleCcy": "USDT",
+                "ctVal": "0.1",
+                "ctValCcy": "ETH",
+                "lotSz": "0.01",
+                "minSz": "0.01",
+                "tickSz": "0.01",
+                "state": "live",
+            }
+        ],
+    }
+    with pytest.raises(SourceAuthorityError, match="underlying identity mismatch"):
+        decode_okx_instruments_response(
+            json.dumps(wrong_underlying).encode(), expected_instrument="ETH-USDT-SWAP"
+        )
 
 
 def test_recursive_manifest_is_canonical_and_independently_verifiable(tmp_path: Path) -> None:
