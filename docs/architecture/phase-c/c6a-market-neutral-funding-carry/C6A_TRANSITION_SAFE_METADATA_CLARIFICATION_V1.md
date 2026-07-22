@@ -8,6 +8,18 @@ It adds no candidate, parameter, market-data interval, signal, gate, comparator,
 
 For the narrow subject defined here, this document supersedes less-specific wording in the C6A contract and prior metadata clarification. All other C6A rules remain unchanged.
 
+### 1.1 Relation to the merged data-authority closeout
+
+Main commit `692c3544971801c1de51759ffe5a0cc228cffdc1` correctly records that implementation PR #57 could not proceed under the previously frozen requirement for an exact timestamp-effective state at every historical transaction. That closeout remains the authoritative historical record for PR #57 and does not become an economic rejection.
+
+This document is a separate prospective design-only reopening proposal based on a stricter conservative construction that was not present in PR #57: inside a proven official adjustment window, every admitted modeled quantity must be valid under both proven states. If this document is merged, it supersedes only the closeout's forward prohibition on revisiting C6A under the earlier metadata semantics. It does not erase the closeout, retroactively validate PR #57, or authorize implementation or market-data access.
+
+After merge, the only permitted status is:
+
+`C6A_DESIGN_REOPENED_PRE_ECONOMIC`
+
+Before any implementation work or C6A economic data access, a separate source-authority gate must prove complete public metadata coverage for all four fixed instruments and the entire frozen interval under the rules below. Failure leaves C6A closed before economic evaluation.
+
 ## 2. Problem statement
 
 The existing metadata authority requires exactly one unambiguous quantity rule at every modeled transaction timestamp and forbids projecting current values backward or inventing an effective timestamp.
@@ -130,11 +142,15 @@ No other transition window may be added after C6A economic data is read. A newly
 
 ## 8. Source and completeness boundary
 
-The implementation must retain the exact official historical instrument snapshots that establish the baseline states, the exact official announcements that establish the changes and windows, and the exhaustive pre-economic announcement-catalog evidence used to check for additional relevant changes.
+The pre-economic source-authority gate must retain the exact official historical instrument snapshots that establish the baseline states, the exact official announcements that establish the changes and windows, and the exhaustive pre-economic announcement-catalog evidence used to check for additional relevant changes.
+
+Coverage must include all four fixed instruments — `BTC-USDT`, `ETH-USDT`, `BTC-USDT-SWAP`, and `ETH-USDT-SWAP` — from `2023-06-05T00:00:00Z` through the exclusive economic boundary `2025-12-29T00:00:00Z`. Proving only the four perpetual transition windows is insufficient. Spot quantity and tick rules, unchanged swap contract-value and currency fields, and every interval between retained states must also be proven.
 
 Archived bytes are eligible only when they are exact archived responses of a permitted official OKX public endpoint, with the original OKX URL, archive timestamp, raw-byte SHA-256, decoded-byte SHA-256, and decoding method retained. The archive service itself does not become a new economic-data authority; it only preserves an official OKX response.
 
 Absence of an archive capture does not prove a value. Completeness must come from the combination of directly retained official snapshots, official change announcements, overlap checks, and the frozen exhaustive pre-economic catalog scan.
+
+The source-authority gate must run before economic data capture and must produce a machine-verifiable manifest with zero uncovered interval, zero ambiguous state, zero unsupported backward projection, and zero source-hash mismatch. Only a separately reviewed PASS may authorize a later implementation/economic stage.
 
 ## 9. Failure conditions
 
@@ -147,6 +163,7 @@ C6A fails before economic evaluation if any of the following occurs:
 - the transition minimum cannot be represented exactly;
 - a modeled quantity passes only one of the two states;
 - source provenance or any required SHA-256 is absent;
+- any spot or perpetual interval in the frozen coverage range remains unproven;
 - an additional relevant transition is discovered after the frozen source inventory;
 - the implementation claims an exact internal switch timestamp not published by an official source.
 
@@ -156,7 +173,9 @@ Such a failure is an evidence failure, not a zero-trade observation and not an e
 
 This clarification does not authorize implementation merge, C6A market-data capture, an economic run, C6B, C5B access, account access, paper execution, shadow execution, or live execution.
 
-`C6A_DESIGN_ONLY`
+The merged data-authority closeout remains the historical record of the abandoned PR #57 attempt. No C6A economic result exists. A future source-authority PASS and implementation require separate exact-SHA review and authorization.
+
+`C6A_DESIGN_REOPENED_PRE_ECONOMIC`
 
 `C6A_ECONOMIC_RESULT_NOT_RUN`
 
