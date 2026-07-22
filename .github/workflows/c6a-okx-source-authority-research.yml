@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Exhaustively scan full OKX announcement catalog
+      - name: Exhaustively scan official announcement article bodies
         run: |
           python - <<'PY'
           from __future__ import annotations
@@ -79,7 +79,7 @@ jobs:
                   re.I,
               ),
               "minSz": re.compile(
-                  r"minimum\s+(?:order|trade)\s+quantit|minSz", re.I
+                  r"minimum\s+(?:order|trade)\s+(?:quantity|amount)|minSz", re.I
               ),
               "ctVal": re.compile(
                   r"face\s*value|contract\s+(?:unit|size)|ctVal", re.I
@@ -112,9 +112,28 @@ jobs:
                       "sha256": hashlib.sha256(body).hexdigest(),
                   }
 
+          def clean_text(body: bytes) -> str:
+              decoded = html.unescape(body.decode("utf-8", "replace"))
+              return re.sub(r"\s+", " ", TAG_RE.sub(" ", decoded)).strip()
+
+          def article_body(plain: str, title: str) -> str:
+              starts = [
+                  plain.find(" Support center Announcements "),
+                  plain.find(" Article "),
+                  plain.find(title),
+              ]
+              start = max(value for value in starts if value >= 0) if any(
+                  value >= 0 for value in starts
+              ) else 0
+              ends = [
+                  value for marker in (" ©2017", " More about OKX ", " Trade on the go with OKX ")
+                  for value in [plain.find(marker, start)] if value > start
+              ]
+              end = min(ends) if ends else len(plain)
+              return plain[start:end].strip()
+
           first, first_meta = fetch(CATALOG.format(page=1))
-          first_text = first.decode("utf-8", "replace")
-          pages = [int(value) for value in PAGE_RE.findall(first_text)]
+          pages = [int(value) for value in PAGE_RE.findall(first.decode("utf-8", "replace"))]
           last_page = max(pages or [1])
           if not 100 <= last_page <= 250:
               raise RuntimeError(f"incomplete announcement archive: {last_page} pages")
@@ -140,7 +159,7 @@ jobs:
                   articles.setdefault(ORIGIN + href, title)
               if page % 20 == 0:
                   print(f"catalog progress: {page}/{last_page}")
-              time.sleep(0.08)
+              time.sleep(0.06)
 
           candidates = {
               url: title for url, title in articles.items()
@@ -154,16 +173,17 @@ jobs:
               except Exception as exc:
                   errors.append({"url": url, "title": title, "error": repr(exc)})
                   continue
-              text = html.unescape(body.decode("utf-8", "replace"))
-              plain = re.sub(r"\s+", " ", TAG_RE.sub(" ", text)).strip()
-              symbols = [name for name, pattern in SYMBOL_PATTERNS.items() if pattern.search(plain)]
-              fields = [name for name, pattern in FIELD_PATTERNS.items() if pattern.search(plain)]
+              plain = clean_text(body)
+              core = article_body(plain, title)
+              symbols = [name for name, pattern in SYMBOL_PATTERNS.items() if pattern.search(core)]
+              fields = [name for name, pattern in FIELD_PATTERNS.items() if pattern.search(core)]
               if symbols and fields:
                   contexts = []
                   for symbol in symbols:
-                      match = SYMBOL_PATTERNS[symbol].search(plain)
-                      if match:
-                          contexts.append(plain[max(0, match.start() - 700):match.end() + 1800])
+                      for match in SYMBOL_PATTERNS[symbol].finditer(core):
+                          contexts.append(core[max(0, match.start() - 500):match.end() + 1800])
+                          if len(contexts) >= 6:
+                              break
                   slug = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
                   retained = raw_dir / f"{slug}.html"
                   retained.write_bytes(body)
@@ -173,28 +193,39 @@ jobs:
                       "symbols": symbols,
                       "fields": fields,
                       "contexts": contexts,
+                      "article_body_sha256": hashlib.sha256(core.encode("utf-8")).hexdigest(),
                       "response": meta,
                       "retained_path": str(retained),
                   })
               if index % 25 == 0:
                   print(f"candidate progress: {index}/{len(candidates)}")
-              time.sleep(0.10)
+              time.sleep(0.08)
 
+          catalog_evidence = {
+              "schema_version": 1,
+              "catalog_url_template": CATALOG,
+              "page_count": last_page,
+              "pages": catalog_records,
+          }
+          (out / "catalog_evidence.json").write_text(
+              json.dumps(catalog_evidence, indent=2, sort_keys=True), encoding="utf-8"
+          )
+          catalog_digest = hashlib.sha256(
+              json.dumps(catalog_records, sort_keys=True, separators=(",", ":")).encode()
+          ).hexdigest()
           summary = {
-              "schema_version": 5,
+              "schema_version": 6,
               "stage": "C6A_SOURCE_AUTHORITY_RESEARCH",
               "status": "PASS",
               "catalog_url_template": CATALOG,
               "catalog_page_count": last_page,
-              "catalog_page_records": catalog_records,
-              "catalog_records_sha256": hashlib.sha256(
-                  json.dumps(catalog_records, sort_keys=True, separators=(",", ":")).encode()
-              ).hexdigest(),
+              "catalog_records_sha256": catalog_digest,
               "unique_article_count": len(articles),
               "metadata_change_candidate_count": len(candidates),
               "relevant_article_count": len(relevant),
               "relevant_articles": relevant,
               "article_errors": errors,
+              "article_body_only": True,
               "search_contract": {
                   "title_keywords": list(TITLE_KEYWORDS),
                   "symbols": list(SYMBOL_PATTERNS),
@@ -215,7 +246,7 @@ jobs:
           )
           print(
               f"scan complete: {last_page} pages / {len(articles)} articles / "
-              f"{len(candidates)} candidates / {len(relevant)} relevant"
+              f"{len(candidates)} candidates / {len(relevant)} body-relevant"
           )
           PY
 
@@ -235,5 +266,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add research/c6a-okx-source-authority/summary.json
-          git commit -m "research(c6a): retain full metadata announcement scan"
+          git commit -m "research(c6a): retain article-body metadata scan"
           git push origin HEAD:research/c6a-okx-source-authority
