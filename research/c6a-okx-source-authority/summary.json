@@ -1,242 +1,131 @@
 {
+  "article_errors": [],
   "authenticated": false,
-  "c5b_state": "C5B_CLOSED_AND_UNTOUED",
+  "c5b_state": "C5B_CLOSED_AND_UNTOUCHED",
   "c6b_state": "C6B_CLOSED",
+  "catalog_page_count": 9,
+  "catalog_page_records": [
+    {
+      "content_type": "text/html; charset=utf-8",
+      "final_url": "https://www.okx.com/en-us/help/section/announcements-latest-announcements",
+      "http_status": 200,
+      "page": 1,
+      "requested_url": "https://www.okx.com/help/section/announcements-latest-announcements/page/1",
+      "sha256": "aeed18b8404b78dc594ebfc54b927d91beac2993baff51dc073d59004735f849",
+      "size": 83662
+    },
+    {
+      "content_type": "text/html; charset=utf-8",
+      "final_url": "https://www.okx.com/en-us/help/section/announcements-latest-announcements/page/2",
+      "http_status": 200,
+      "page": 2,
+      "requested_url": "https://www.okx.com/help/section/announcements-latest-announcements/page/2",
+      "sha256": "3b194a3938588feeaf872f9b0a2b3cfa8ab4633c7bc6fec62d79e0da980fba36",
+      "size": 75788
+    },
+    {
+      "content_type": "text/html; charset=utf-8",
+      "final_url": "https://www.okx.com/en-us/help/section/announcements-latest-announcements/page/3",
+      "http_status": 200,
+      "page": 3,
+      "requested_url": "https://www.okx.com/help/section/announcements-latest-announcements/page/3",
+      "sha256": "6b02ea12c565102761b5f466cbe721e428df90f9a2b46e481e3090e5505aa638",
+      "size": 75157
+    },
+    {
+      "content_type": "text/html; charset=utf-8",
+      "final_url": "https://www.okx.com/en-us/help/section/announcements-latest-announcements/page/4",
+      "http_status": 200,
+      "page": 4,
+      "requested_url": "https://www.okx.com/help/section/announcements-latest-announcements/page/4",
+      "sha256": "fe15c153f222c30f5247044dd89b29e47a01b80dc3c2441427651f9d5738a0df",
+      "size": 75769
+    },
+    {
+      "content_type": "text/html; charset=utf-8",
+      "final_url": "https://www.okx.com/en-us/help/section/announcements-latest-announcements/page/5",
+      "http_status": 200,
+      "page": 5,
+      "requested_url": "https://www.okx.com/help/section/announcements-latest-announcements/page/5",
+      "sha256": "47f3b5eb06fe7d785d8c77703f1ac189b4dc41d8ce3e3ad9dc30a642aed8ce10",
+      "size": 75779
+    },
+    {
+      "content_type": "text/html; charset=utf-8",
+      "final_url": "https://www.okx.com/en-us/help/section/announcements-latest-announcements/page/6",
+      "http_status": 200,
+      "page": 6,
+      "requested_url": "https://www.okx.com/help/section/announcements-latest-announcements/page/6",
+      "sha256": "131f59bc9d1a1dc3d503e9221037baaead4c46a0443cd5d88d2bae1342af7bdd",
+      "size": 75839
+    },
+    {
+      "content_type": "text/html; charset=utf-8",
+      "final_url": "https://www.okx.com/en-us/help/section/announcements-latest-announcements/page/7",
+      "http_status": 200,
+      "page": 7,
+      "requested_url": "https://www.okx.com/help/section/announcements-latest-announcements/page/7",
+      "sha256": "c244ffb8dca1b24068ff21bfdb741755d4088b4882bdf3dad347c1918ad8d360",
+      "size": 75688
+    },
+    {
+      "content_type": "text/html; charset=utf-8",
+      "final_url": "https://www.okx.com/en-us/help/section/announcements-latest-announcements/page/8",
+      "http_status": 200,
+      "page": 8,
+      "requested_url": "https://www.okx.com/help/section/announcements-latest-announcements/page/8",
+      "sha256": "4fb481db01355b2a3496ed9eb77e03803c9ebd5d8de6c1be2394d52095d9bfe8",
+      "size": 76109
+    },
+    {
+      "content_type": "text/html; charset=utf-8",
+      "final_url": "https://www.okx.com/en-us/help/section/announcements-latest-announcements/page/9",
+      "http_status": 200,
+      "page": 9,
+      "requested_url": "https://www.okx.com/help/section/announcements-latest-announcements/page/9",
+      "sha256": "454a9899b64f993591c0365ae0e1a02c1288fda4f5b1a0499a3a287cf5ad5ecf",
+      "size": 65320
+    }
+  ],
+  "catalog_records_sha256": "a80d8f55941ce44881d7aa187573369975b8ab6569878d858f79945d7f584430",
+  "catalog_url_template": "https://www.okx.com/help/section/announcements-latest-announcements/page/{page}",
   "economic_result_run": false,
-  "endpoint": "https://www.okx.com/api/v5/public/market-data-history",
   "holdout_state": "HOLDOUT_CLOSED",
   "live": "FORBIDDEN",
   "market_file_downloaded": false,
+  "metadata_change_candidate_count": 0,
   "paper_state": "PAPER_CLOSED",
-  "request_count": 8,
-  "requests": [
-    {
-      "code": "0",
-      "data": [
-        {
-          "dateAggrType": "monthly",
-          "details": [
-            {
-              "ccy": "",
-              "dateRangeEnd": "1706716800000",
-              "dateRangeStart": "1704038400000",
-              "groupDetails": [
-                {
-                  "dateTs": "1706716800000",
-                  "filename": "BTC-USDT-SWAP-fundingrates-2024-02.zip",
-                  "sizeMB": "0",
-                  "url": "https://static.okx.com/cdn/okex/traderecords/swaprates/monthly/202402/BTC-USDT-SWAP-fundingrates-2024-02.zip?v=999"
-                },
-                {
-                  "dateTs": "1704038400000",
-                  "filename": "BTC-USDT-SWAP-fundingrates-2024-01.zip",
-                  "sizeMB": "0",
-                  "url": "https://static.okx.com/cdn/okex/traderecords/swaprates/monthly/202401/BTC-USDT-SWAP-fundingrates-2024-01.zip?v=999"
-                }
-              ],
-              "groupSizeMB": "0",
-              "instFamily": "BTC-USDT",
-              "instId": "",
-              "instType": "SWAP"
-            }
-          ],
-          "totalSizeMB": "0",
-          "ts": "1784730723242"
-        }
-      ],
-      "http_status": 200,
-      "msg": "",
-      "params": {
-        "begin": "1704067200000",
-        "dateAggrType": "monthly",
-        "end": "1706745599000",
-        "instFamilyList": "BTC-USDT",
-        "instType": "SWAP",
-        "module": "3"
-      },
-      "response_sha256": "7157e44a95449ca401b18b29ff5a7199b00fd677c92a9cdf81d23a6c6d3127b9",
-      "transport_error": null,
-      "variant": "family-monthly"
-    },
-    {
-      "code": "0",
-      "data": [
-        {
-          "dateAggrType": "monthly",
-          "details": [],
-          "totalSizeMB": "0",
-          "ts": "1784730723846"
-        }
-      ],
-      "http_status": 200,
-      "msg": "",
-      "params": {
-        "begin": "1704067200000",
-        "dateAggrType": "monthly",
-        "end": "1706745599000",
-        "instIdList": "BTC-USDT-SWAP",
-        "instType": "SWAP",
-        "module": "3"
-      },
-      "response_sha256": "41f1101a87c86c6c2e85a4f05764ed28266b99993f9679224618fedd25a591fd",
-      "transport_error": null,
-      "variant": "instrument-monthly"
-    },
-    {
-      "code": "50016",
-      "data": [],
-      "http_status": 400,
-      "msg": "Parameter instType doesn't match parameter module",
-      "params": {
-        "begin": "1704067200000",
-        "dateAggrType": "monthly",
-        "end": "1706745599000",
-        "instIdList": "BTC-USDT-SWAP",
-        "module": "3"
-      },
-      "response_sha256": "0fbf291b40c2cdfca65cfcda393b3f4881686cd93441bb6fed434b4f6cdff882",
-      "transport_error": null,
-      "variant": "instrument-monthly-no-type"
-    },
-    {
-      "code": "0",
-      "data": [
-        {
-          "dateAggrType": "daily",
-          "details": [],
-          "totalSizeMB": "0",
-          "ts": "1784730725085"
-        }
-      ],
-      "http_status": 200,
-      "msg": "",
-      "params": {
-        "begin": "1704067200000",
-        "dateAggrType": "daily",
-        "end": "1705276800000",
-        "instFamilyList": "BTC-USDT",
-        "instType": "SWAP",
-        "module": "3"
-      },
-      "response_sha256": "597d9963040c6ce24bc6e7befeb0b085fedd96bb99acb6cc3bd074e47b5aa03b",
-      "transport_error": null,
-      "variant": "family-daily-control"
-    },
-    {
-      "code": "0",
-      "data": [
-        {
-          "dateAggrType": "monthly",
-          "details": [
-            {
-              "ccy": "",
-              "dateRangeEnd": "1706716800000",
-              "dateRangeStart": "1704038400000",
-              "groupDetails": [
-                {
-                  "dateTs": "1706716800000",
-                  "filename": "ETH-USDT-SWAP-fundingrates-2024-02.zip",
-                  "sizeMB": "0",
-                  "url": "https://static.okx.com/cdn/okex/traderecords/swaprates/monthly/202402/ETH-USDT-SWAP-fundingrates-2024-02.zip?v=999"
-                },
-                {
-                  "dateTs": "1704038400000",
-                  "filename": "ETH-USDT-SWAP-fundingrates-2024-01.zip",
-                  "sizeMB": "0",
-                  "url": "https://static.okx.com/cdn/okex/traderecords/swaprates/monthly/202401/ETH-USDT-SWAP-fundingrates-2024-01.zip?v=999"
-                }
-              ],
-              "groupSizeMB": "0",
-              "instFamily": "ETH-USDT",
-              "instId": "",
-              "instType": "SWAP"
-            }
-          ],
-          "totalSizeMB": "0",
-          "ts": "1784730725689"
-        }
-      ],
-      "http_status": 200,
-      "msg": "",
-      "params": {
-        "begin": "1704067200000",
-        "dateAggrType": "monthly",
-        "end": "1706745599000",
-        "instFamilyList": "ETH-USDT",
-        "instType": "SWAP",
-        "module": "3"
-      },
-      "response_sha256": "11189127deebacad2eda0a070a4316f128976523bbf2ade6112e6ff1851db285",
-      "transport_error": null,
-      "variant": "family-monthly"
-    },
-    {
-      "code": "0",
-      "data": [
-        {
-          "dateAggrType": "monthly",
-          "details": [],
-          "totalSizeMB": "0",
-          "ts": "1784730726287"
-        }
-      ],
-      "http_status": 200,
-      "msg": "",
-      "params": {
-        "begin": "1704067200000",
-        "dateAggrType": "monthly",
-        "end": "1706745599000",
-        "instIdList": "ETH-USDT-SWAP",
-        "instType": "SWAP",
-        "module": "3"
-      },
-      "response_sha256": "1eb0708780cd8623a7a7e83144c825b756f013844d77fde339934d6d4fbb2d64",
-      "transport_error": null,
-      "variant": "instrument-monthly"
-    },
-    {
-      "code": "50016",
-      "data": [],
-      "http_status": 400,
-      "msg": "Parameter instType doesn't match parameter module",
-      "params": {
-        "begin": "1704067200000",
-        "dateAggrType": "monthly",
-        "end": "1706745599000",
-        "instIdList": "ETH-USDT-SWAP",
-        "module": "3"
-      },
-      "response_sha256": "0fbf291b40c2cdfca65cfcda393b3f4881686cd93441bb6fed434b4f6cdff882",
-      "transport_error": null,
-      "variant": "instrument-monthly-no-type"
-    },
-    {
-      "code": "0",
-      "data": [
-        {
-          "dateAggrType": "daily",
-          "details": [],
-          "totalSizeMB": "0",
-          "ts": "1784730727500"
-        }
-      ],
-      "http_status": 200,
-      "msg": "",
-      "params": {
-        "begin": "1704067200000",
-        "dateAggrType": "daily",
-        "end": "1705276800000",
-        "instFamilyList": "ETH-USDT",
-        "instType": "SWAP",
-        "module": "3"
-      },
-      "response_sha256": "035df2c2d8c32a2548e24030369627e6615430da2c0988c6599d42cec2b26d03",
-      "transport_error": null,
-      "variant": "family-daily-control"
-    }
-  ],
-  "schema_version": 3,
+  "relevant_article_count": 0,
+  "relevant_articles": [],
+  "schema_version": 4,
+  "search_contract": {
+    "field_patterns": [
+      "tickSz",
+      "lotSz",
+      "minSz",
+      "ctVal"
+    ],
+    "symbol_patterns": [
+      "BTC-USDT",
+      "ETH-USDT"
+    ],
+    "title_keywords": [
+      "adjust",
+      "adjustment",
+      "tick size",
+      "minimum order",
+      "minimum trade",
+      "trading amount precision",
+      "order quantity precision",
+      "step size",
+      "lot size",
+      "face value",
+      "contract unit",
+      "contract size"
+    ]
+  },
   "shadow_state": "SHADOW_CLOSED",
   "stage": "C6A_SOURCE_AUTHORITY_RESEARCH",
-  "status": "PASS"
+  "status": "PASS",
+  "unique_article_count": 0
 }
