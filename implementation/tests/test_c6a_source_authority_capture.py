@@ -43,6 +43,7 @@ def test_committed_query_inventory_is_exact_and_non_placeholder() -> None:
     archives = archive_lookup_requests(payload)
     assert len(archives) == 4
     assert all(request.url.startswith("https://web.archive.org/cdx/") for request in archives)
+    assert all("collapse=" not in request.url for request in archives)
     assert len(inventory_sha256(payload)) == 64
 
 
