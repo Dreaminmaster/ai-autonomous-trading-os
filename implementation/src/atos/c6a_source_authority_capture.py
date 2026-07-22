@@ -413,7 +413,9 @@ def classify_article(
         and ("perpetual" in normalized or "swap" in normalized or "contract" in normalized)
     )
     inside_date_range = AUTHORITY_START <= published_at < AUTHORITY_END
-    selected = inside_date_range and ((alias_matches and term_matches) or frozen_transition_hint)
+    selected = inside_date_range and (
+        (bool(alias_matches) and bool(term_matches)) or frozen_transition_hint
+    )
     return {
         **dict(article),
         "inside_authority_date_range": inside_date_range,
