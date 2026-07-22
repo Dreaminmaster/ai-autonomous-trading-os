@@ -14,11 +14,7 @@ from atos.c6a_source_authority_inventory import (
 )
 
 
-CONFIG = (
-    Path(__file__).resolve().parents[1]
-    / "config"
-    / "c6a_source_authority_query_inventory_v1.json"
-)
+CONFIG = Path(__file__).resolve().parents[1] / "config" / "c6a_source_authority_query_inventory_v1.json"
 
 
 def _payload() -> dict:
@@ -92,8 +88,12 @@ def test_terminal_page_proof_must_land_inside_frozen_range() -> None:
         },
         frozen_max_page=250,
     )
-    assert proof["status"] == "PASS"
-    assert proof["unused_frozen_page_capacity"] == 47
+    assert proof == {
+        "status": "PASS",
+        "terminal_page": 203,
+        "frozen_max_page": 250,
+        "unused_frozen_page_capacity": 47,
+    }
 
     with pytest.raises(SourceAuthorityError, match="did not stop"):
         prove_catalog_terminal_page(
