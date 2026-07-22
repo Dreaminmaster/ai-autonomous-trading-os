@@ -115,14 +115,24 @@ def verify_same_run_ci_equivalence(
     atos_tests = _named_step_run(validation, "atos-tests", "Run pytest")
 
     expected_install = "cd implementation\npython -m pip install -e '.[dev]'"
-    expected_ci_tests = "cd implementation\npython -m pytest"
+    allowed_ci_tests = {
+        "cd implementation\npython -m pytest",
+        (
+            "set +e\n"
+            "cd implementation\n"
+            "python -m pytest 2>&1 | tee pytest.log\n"
+            "status=${PIPESTATUS[0]}\n"
+            'echo "exit_code=${status}" >> "$GITHUB_OUTPUT"\n'
+            'exit "$status"'
+        ),
+    }
     expected_atos_tests = (
         "cd implementation\n"
         "set -o pipefail; python -m pytest -v --tb=long 2>&1 | tee pytest.log"
     )
     if ci_install != expected_install:
         raise SimpleCIEquivalenceError("simple CI install contract drift")
-    if ci_tests != expected_ci_tests:
+    if ci_tests not in allowed_ci_tests:
         raise SimpleCIEquivalenceError("simple CI test contract drift")
     if atos_tests != expected_atos_tests:
         raise SimpleCIEquivalenceError("same-run ATOS pytest contract drift")
