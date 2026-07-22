@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Exhaustively scan official OKX announcement catalog
+      - name: Exhaustively scan full OKX announcement catalog
         run: |
           python - <<'PY'
           from __future__ import annotations
@@ -35,14 +35,12 @@ jobs:
           import os
           import re
           import time
-          import urllib.error
           import urllib.parse
           import urllib.request
           from pathlib import Path
 
           forbidden = [
-              name
-              for name in os.environ
+              name for name in os.environ
               if name.upper().startswith("OKX_")
               or name.upper().startswith("OK_ACCESS_")
           ]
@@ -54,28 +52,21 @@ jobs:
           raw_dir = out / "relevant-articles"
           raw_dir.mkdir(exist_ok=True)
 
-          BASE = "https://www.okx.com"
-          CATALOG = BASE + "/help/section/announcements-latest-announcements/page/{page}"
+          ORIGIN = "https://www.okx.com"
+          LOCALE = "/en-gb"
+          CATALOG = ORIGIN + LOCALE + "/help/section/announcements-latest-announcements/page/{page}"
           USER_AGENT = "ai-autonomous-trading-os-c6a-source-authority/1.0"
           LINK_RE = re.compile(
-              r'<a[^>]+href=["\'](?P<href>/help/[^"\'#?]+)["\'][^>]*>(?P<body>.*?)</a>',
+              r'<a[^>]+href=["\'](?P<href>(?:/en-gb)?/help/[^"\'#?]+)["\'][^>]*>(?P<body>.*?)</a>',
               re.I | re.S,
           )
           TAG_RE = re.compile(r"<[^>]+>")
           PAGE_RE = re.compile(r"/page/(\d+)")
           TITLE_KEYWORDS = (
-              "adjust",
-              "adjustment",
-              "tick size",
-              "minimum order",
-              "minimum trade",
-              "trading amount precision",
-              "order quantity precision",
-              "step size",
-              "lot size",
-              "face value",
-              "contract unit",
-              "contract size",
+              "adjust", "adjustment", "tick size", "minimum order",
+              "minimum trade", "trading amount precision",
+              "order quantity precision", "step size", "lot size",
+              "face value", "contract unit", "contract size",
           )
           SYMBOL_PATTERNS = {
               "BTC-USDT": re.compile(r"BTC\s*[-/]?\s*USDT", re.I),
@@ -97,20 +88,24 @@ jobs:
 
           def fetch(url: str) -> tuple[bytes, dict]:
               parsed = urllib.parse.urlparse(url)
-              if parsed.scheme != "https" or parsed.hostname not in {"www.okx.com", "okx.com"}:
+              if parsed.scheme != "https" or parsed.hostname != "www.okx.com":
                   raise RuntimeError(f"non-OKX URL refused: {url}")
               request = urllib.request.Request(
                   url,
                   headers={
                       "User-Agent": USER_AGENT,
                       "Accept": "text/html,application/xhtml+xml",
+                      "Accept-Language": "en-GB,en;q=0.9",
                   },
               )
               with urllib.request.urlopen(request, timeout=45) as response:
                   body = response.read()
+                  final_url = response.geturl()
+                  if "/en-us/" in final_url:
+                      raise RuntimeError(f"unexpected US redirect: {final_url}")
                   return body, {
                       "requested_url": url,
-                      "final_url": response.geturl(),
+                      "final_url": final_url,
                       "http_status": response.status,
                       "content_type": response.headers.get("Content-Type"),
                       "size": len(body),
@@ -119,10 +114,10 @@ jobs:
 
           first, first_meta = fetch(CATALOG.format(page=1))
           first_text = first.decode("utf-8", "replace")
-          observed_pages = [int(value) for value in PAGE_RE.findall(first_text)]
-          last_page = max(observed_pages or [1])
-          if not 1 <= last_page <= 250:
-              raise RuntimeError(f"unexpected announcement page count: {last_page}")
+          pages = [int(value) for value in PAGE_RE.findall(first_text)]
+          last_page = max(pages or [1])
+          if not 100 <= last_page <= 250:
+              raise RuntimeError(f"incomplete announcement archive: {last_page} pages")
 
           catalog_records = []
           articles: dict[str, str] = {}
@@ -136,29 +131,28 @@ jobs:
               catalog_records.append(meta)
               for match in LINK_RE.finditer(text):
                   href = match.group("href")
-                  title = html.unescape(
-                      TAG_RE.sub(" ", match.group("body"))
-                  )
+                  title = html.unescape(TAG_RE.sub(" ", match.group("body")))
                   title = re.sub(r"\s+", " ", title).strip()
-                  if not title or "/page/" in href or "/section/" in href or "/category/" in href:
+                  if not title or any(token in href for token in ("/page/", "/section/", "/category/")):
                       continue
-                  articles.setdefault(BASE + href, title)
+                  if href.startswith("/help/"):
+                      href = LOCALE + href
+                  articles.setdefault(ORIGIN + href, title)
               if page % 20 == 0:
                   print(f"catalog progress: {page}/{last_page}")
               time.sleep(0.08)
 
           candidates = {
-              url: title
-              for url, title in articles.items()
+              url: title for url, title in articles.items()
               if any(keyword in title.lower() for keyword in TITLE_KEYWORDS)
           }
           relevant = []
-          article_errors = []
+          errors = []
           for index, (url, title) in enumerate(sorted(candidates.items()), start=1):
               try:
                   body, meta = fetch(url)
               except Exception as exc:
-                  article_errors.append({"url": url, "title": title, "error": repr(exc)})
+                  errors.append({"url": url, "title": title, "error": repr(exc)})
                   continue
               text = html.unescape(body.decode("utf-8", "replace"))
               plain = re.sub(r"\s+", " ", TAG_RE.sub(" ", text)).strip()
@@ -169,47 +163,42 @@ jobs:
                   for symbol in symbols:
                       match = SYMBOL_PATTERNS[symbol].search(plain)
                       if match:
-                          contexts.append(plain[max(0, match.start() - 500): match.end() + 1200])
+                          contexts.append(plain[max(0, match.start() - 700):match.end() + 1800])
                   slug = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
-                  raw_path = raw_dir / f"{slug}.html"
-                  raw_path.write_bytes(body)
-                  relevant.append(
-                      {
-                          "url": url,
-                          "title": title,
-                          "symbols": symbols,
-                          "fields": fields,
-                          "contexts": contexts,
-                          "response": meta,
-                          "retained_path": str(raw_path),
-                      }
-                  )
+                  retained = raw_dir / f"{slug}.html"
+                  retained.write_bytes(body)
+                  relevant.append({
+                      "url": url,
+                      "title": title,
+                      "symbols": symbols,
+                      "fields": fields,
+                      "contexts": contexts,
+                      "response": meta,
+                      "retained_path": str(retained),
+                  })
               if index % 25 == 0:
                   print(f"candidate progress: {index}/{len(candidates)}")
               time.sleep(0.10)
 
-          catalog_digest = hashlib.sha256(
-              json.dumps(
-                  catalog_records, sort_keys=True, separators=(",", ":")
-              ).encode("utf-8")
-          ).hexdigest()
           summary = {
-              "schema_version": 4,
+              "schema_version": 5,
               "stage": "C6A_SOURCE_AUTHORITY_RESEARCH",
               "status": "PASS",
               "catalog_url_template": CATALOG,
               "catalog_page_count": last_page,
               "catalog_page_records": catalog_records,
-              "catalog_records_sha256": catalog_digest,
+              "catalog_records_sha256": hashlib.sha256(
+                  json.dumps(catalog_records, sort_keys=True, separators=(",", ":")).encode()
+              ).hexdigest(),
               "unique_article_count": len(articles),
               "metadata_change_candidate_count": len(candidates),
               "relevant_article_count": len(relevant),
               "relevant_articles": relevant,
-              "article_errors": article_errors,
+              "article_errors": errors,
               "search_contract": {
                   "title_keywords": list(TITLE_KEYWORDS),
-                  "symbol_patterns": list(SYMBOL_PATTERNS),
-                  "field_patterns": list(FIELD_PATTERNS),
+                  "symbols": list(SYMBOL_PATTERNS),
+                  "fields": list(FIELD_PATTERNS),
               },
               "authenticated": False,
               "market_file_downloaded": False,
@@ -246,5 +235,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add research/c6a-okx-source-authority/summary.json
-          git commit -m "research(c6a): retain exhaustive metadata announcement scan"
+          git commit -m "research(c6a): retain full metadata announcement scan"
           git push origin HEAD:research/c6a-okx-source-authority
