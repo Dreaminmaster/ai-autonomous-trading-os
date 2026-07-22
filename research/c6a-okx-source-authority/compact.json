@@ -1,0 +1,259 @@
+{
+  "article_body_only": true,
+  "article_errors": [],
+  "articles": [
+    {
+      "article_body_sha256": "892c13e04ed7db692cb93fef0ee34f3e686486e887a28de5f0be56ffe2bb8f86",
+      "fields": [
+        "ctVal"
+      ],
+      "response_sha256": "a37503e15287e0abbfacd26f14b0fd0870ae331799ba45c43423716d387fca7b",
+      "symbols": [
+        "BTC-USDT",
+        "ETH-USDT"
+      ],
+      "title": "Adjustment of Face Value for USDT-margined Perpetual Swap & Futures Trading Published on 4 Mar 2020",
+      "url": "https://www.okx.com/en-gb/help/adjustment-of-face-value-for-usdt-margined-perpetual-swap-futures-trading"
+    },
+    {
+      "article_body_sha256": "035f322d9b0010ae0a7ca4e19045bd10493c7277367a06aefaec0fe99bab455e",
+      "fields": [
+        "lotSz"
+      ],
+      "response_sha256": "5badaf0fb5ce836eceb1382ce53c134d881f22a209a981c6c772700c38da1e67",
+      "symbols": [
+        "BTC-USDT"
+      ],
+      "title": "Adjustment of Perpetual Swap Tiered Maintenance Margin Ratio Schedule Published on 16 Jul 2020",
+      "url": "https://www.okx.com/en-gb/help/adjustment-of-perpetual-swap-tiered-maintenance-margin-ratio-schedule-7-16-2020"
+    },
+    {
+      "article_body_sha256": "ec83fb204637b6465a70675406dbcc2632336c21bd51c18a0b0223fda2ed6f7b",
+      "fields": [
+        "lotSz"
+      ],
+      "response_sha256": "82ee46354b8317b026c5e35aa9b3aa324ead8c67d1624c9fc3f5d876eae3f2b5",
+      "symbols": [
+        "BTC-USDT"
+      ],
+      "title": "Adjustment of USDT-margined Futures & Perpetual Swap Tiered Maintenance Margin Ratio Schedule Published on 16 Jan 2020",
+      "url": "https://www.okx.com/en-gb/help/adjustment-of-usdt-margined-futures-perpetual-swap-tiered-maintenance-margin-ratio-schedule"
+    },
+    {
+      "article_body_sha256": "632d5076cb0ef2fea1ee38ee837c8c228fe2dd013cf5b826818ded5cb3e1ce78",
+      "fields": [
+        "lotSz"
+      ],
+      "response_sha256": "b64ba3dfaedc340039bb99a4a0f2b25bd1c409da802b88a37e9e8cbab238bd59",
+      "symbols": [
+        "BTC-USDT"
+      ],
+      "title": "Adjustment of USDT-margined Futures & Perpetual Swap Tiered Maintenance Margin Ratio Schedule Published on 8 Apr 2020",
+      "url": "https://www.okx.com/en-gb/help/adjustment-of-usdt-margined-futures-perpetual-swap-tiered-maintenance-margin-ratio-schedule-4-8-2020"
+    },
+    {
+      "article_body_sha256": "d89fcde6f2e785b508b648e51059de2f6f83583361b1d313f00e3ae166e204b3",
+      "fields": [
+        "tickSz",
+        "lotSz",
+        "ctVal"
+      ],
+      "response_sha256": "c565b1d1d9bc18b7a92e323b64d6c16e1a0ae3b338863e28c23dd8fe0a0fba31",
+      "symbols": [
+        "BTC-USDT"
+      ],
+      "title": "Announcement on the Launch of LINK Futures and Adjustment of LINK Perpetual Swap Rates and Tiered MMR Rules Published on 18 Aug 2020",
+      "url": "https://www.okx.com/en-gb/help/announcement-on-the-launch-of-link-futures-and-adjustment-of-link-perpetual-swap-rates-and-tiered-mmr-rules"
+    },
+    {
+      "article_body_sha256": "4b23254fe06d46de4f1a783730a0b3e4d69f22aed5f2994251c9e65390837b48",
+      "fields": [
+        "lotSz",
+        "minSz"
+      ],
+      "response_sha256": "10d8383526af6c9bc814d6c3c016f1fcb6c9a522c765aa4a649785d1010db357",
+      "symbols": [
+        "ETH-USDT"
+      ],
+      "title": "OKX to adjust the minimum order quantities for ETHUSDT perpetual and expiry futures Published on 11 Dec 2024",
+      "url": "https://www.okx.com/en-gb/help/okx-to-adjust-the-minimum-order-quantities-for-ethusdt-perpetual-and-expiry"
+    },
+    {
+      "article_body_sha256": "3e9c16a4bf714691e667f0150fb87a1f8864e6c140309d0063594f3f341f9800",
+      "fields": [
+        "lotSz",
+        "minSz",
+        "ctVal"
+      ],
+      "response_sha256": "8e7aa974d912b5a92debf0117a2b0666d7f6622bb718a694cb6963edd458ca60",
+      "symbols": [
+        "ETH-USDT"
+      ],
+      "title": "OKX to adjust the minimum order quantities for several futures Published on 12 Jan 2024",
+      "url": "https://www.okx.com/en-gb/help/okx-to-adjust-the-minimum-order-quantities-for-several-futures"
+    },
+    {
+      "article_body_sha256": "2fe384fdc73326f7c1499681490dd051595b571ae697cb21cbb51cb745fdd37b",
+      "fields": [
+        "lotSz",
+        "minSz",
+        "ctVal"
+      ],
+      "response_sha256": "63051f67c0ef5c9385d2b324df4649c479df0d5ed9bfc1af06972201224f34e2",
+      "symbols": [
+        "ETH-USDT"
+      ],
+      "title": "OKX to adjust the minimum order quantities for several futures Published on 21 Mar 2024",
+      "url": "https://www.okx.com/en-gb/help/okx-to-adjust-the-minimum-order-quantities-for-several-futures-2024-03-21"
+    },
+    {
+      "article_body_sha256": "8c5086936e88c926a611f4e3d065d6fb4cdabe53e55a68768c6a7834c9841882",
+      "fields": [
+        "lotSz",
+        "minSz",
+        "ctVal"
+      ],
+      "response_sha256": "5a89bed5f55727037c2cdf0e7176ae05f5bff3018ba072ae508ead12825bea95",
+      "symbols": [
+        "BTC-USDT",
+        "ETH-USDT"
+      ],
+      "title": "OKX to adjust the minimum order quantities for several futures Published on 19 Apr 2024",
+      "url": "https://www.okx.com/en-gb/help/okx-to-adjust-the-minimum-order-quantities-for-several-futures-24-04-19"
+    },
+    {
+      "article_body_sha256": "f7f772523893561d0e97afda39fe482f6daa8e7ef5b1cff9fe526f881a80c4a3",
+      "fields": [
+        "lotSz",
+        "minSz",
+        "ctVal"
+      ],
+      "response_sha256": "517b3a30b7691c44189876cfe92037ed19eb301ff8a7060e622caf2e2f019f55",
+      "symbols": [
+        "ETH-USDT"
+      ],
+      "title": "OKX to adjust the minimum order quantities for several futures Published on 12 Apr 2024",
+      "url": "https://www.okx.com/en-gb/help/okx-to-adjust-the-minimum-order-quantities-for-several-futures-240412"
+    },
+    {
+      "article_body_sha256": "097b2e76edaf1b04c89605abb70c9a44fe4d02c9c868bab6a5c2c08271d4076f",
+      "fields": [
+        "lotSz",
+        "minSz",
+        "ctVal"
+      ],
+      "response_sha256": "79124bc9e26015ce626ba2149d2ece189c457847dc2104300c7661bc79c34bb5",
+      "symbols": [
+        "ETH-USDT"
+      ],
+      "title": "OKX to adjust the minimum order quantities for several futures Published on 31 May 2024",
+      "url": "https://www.okx.com/en-gb/help/okx-to-adjust-the-minimum-order-quantities-for-several-futures-240531"
+    },
+    {
+      "article_body_sha256": "569665820f6f98cd071231f2cba17f8fccdda5aa49355382946a82a9e4e45749",
+      "fields": [
+        "lotSz",
+        "minSz",
+        "ctVal"
+      ],
+      "response_sha256": "c64dd4c2fe1ecf39903e35b94d0ac7053ed2dbeca21dc24b10ba8098c35f3f2f",
+      "symbols": [
+        "ETH-USDT"
+      ],
+      "title": "OKX to adjust the minimum order quantities for several futures Published on 16 Oct 2024",
+      "url": "https://www.okx.com/en-gb/help/okx-to-adjust-the-minimum-order-quantities-for-several-futures-241016"
+    },
+    {
+      "article_body_sha256": "0b91a04e6ec1487de68fb6d21a216826d68f5caac00b9d54201861f8cc3f428b",
+      "fields": [
+        "lotSz",
+        "minSz"
+      ],
+      "response_sha256": "61dca2ccebf85b1b0584a06a51276dd8c4ca474eba68994526edecabf4b4a493",
+      "symbols": [
+        "BTC-USDT"
+      ],
+      "title": "OKX to adjust the minimum order quantities of spots and futures Published on 17 Jan 2025",
+      "url": "https://www.okx.com/en-gb/help/okx-to-adjust-the-minimum-order-quantities-of-spots-and-futures"
+    },
+    {
+      "article_body_sha256": "e6b5efaf1180bebd9c174c7c946c2bd78742782d15a1a6ffc4d88ede0677a0c9",
+      "fields": [
+        "minSz"
+      ],
+      "response_sha256": "0b07398243bcde4ef1187ef5aa0fddba8d7489875bf6076486fe6d625af97840",
+      "symbols": [
+        "BTC-USDT"
+      ],
+      "title": "OKX to adjust the minimum trade amount of spots Published on 29 Nov 2023",
+      "url": "https://www.okx.com/en-gb/help/okx-to-adjust-the-minimum-trade-amount-of-spots-2023-11-29"
+    },
+    {
+      "article_body_sha256": "33798d1ecbdbf1789ac22cdf1326d5a06e56d02205cafe0e5768782718a5bdc3",
+      "fields": [
+        "tickSz"
+      ],
+      "response_sha256": "73b7666fd8b67ddcceba7f9d7956a174adc8e408955c1aa61e84410737366b70",
+      "symbols": [
+        "BTC-USDT"
+      ],
+      "title": "OKX to adjust tick size for some spot trading pairs Published on 16 May 2024",
+      "url": "https://www.okx.com/en-gb/help/okx-to-adjust-tick-size-for-some-spot-trading-pairs-240516"
+    },
+    {
+      "article_body_sha256": "f4bb6bad941663e2e75ed4f765b9ccb3c41cb1c699425d68550c5590b34f4257",
+      "fields": [
+        "tickSz"
+      ],
+      "response_sha256": "fa9b398fc2b635244bf75f0d583180f60a07ad11cc9090a579c98a1377ba511c",
+      "symbols": [
+        "BTC-USDT",
+        "ETH-USDT"
+      ],
+      "title": "OKX to adjust tick size of spots/margins and perpetual swaps Published on 12 Apr 2024",
+      "url": "https://www.okx.com/en-gb/help/okx-to-adjust-tick-size-of-spots-margins-and-perpetual-swaps-240412"
+    },
+    {
+      "article_body_sha256": "f2da7dba0da15e1d665176397eec6a93ea47a3746914fd82d1e93a06a5bf1916",
+      "fields": [
+        "lotSz",
+        "minSz"
+      ],
+      "response_sha256": "d6341ee4c55865391a5f5ba2c9e4cb4045096ed5e1278c4e22206d17e6c38e63",
+      "symbols": [
+        "ETH-USDT"
+      ],
+      "title": "OKX to postpone adjusting minimum order quantities for ETHUSDT perpetual and expiry futures Published on 16 Dec 2024",
+      "url": "https://www.okx.com/en-gb/help/okx-to-postpone-adjusting-minimum-order-quantities-for-ethusdt-perpetual-and"
+    },
+    {
+      "article_body_sha256": "6c7c1c647f1a7d690551a6102476fd3d6171b8a35f7ead4dae906bbe5df38580",
+      "fields": [
+        "ctVal"
+      ],
+      "response_sha256": "6ff2e0024f7482514d6dba7dd68cb5a3f09c34ea60612da8ace4752ab880d161",
+      "symbols": [
+        "BTC-USDT",
+        "ETH-USDT"
+      ],
+      "title": "Postponement of face value adjustment Published on 8 May 2021",
+      "url": "https://www.okx.com/en-gb/help/postponement-of-face-value-adjustment"
+    }
+  ],
+  "authenticated": false,
+  "c5b_state": "C5B_CLOSED_AND_UNTOUCHED",
+  "c6b_state": "C6B_CLOSED",
+  "catalog_page_count": 146,
+  "catalog_records_sha256": "8998f772f4e8de8a106d36e0284b6f466911b0b0d689bc64ca425e350e279667",
+  "economic_result_run": false,
+  "holdout_state": "HOLDOUT_CLOSED",
+  "live": "FORBIDDEN",
+  "market_file_downloaded": false,
+  "metadata_change_candidate_count": 358,
+  "paper_state": "PAPER_CLOSED",
+  "relevant_article_count": 18,
+  "schema_version": 1,
+  "shadow_state": "SHADOW_CLOSED",
+  "stage": "C6A_METADATA_AUTHORITY_INDEX",
+  "status": "PASS"
+}
