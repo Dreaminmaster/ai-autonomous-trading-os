@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "stage": "C6A_SOURCE_AUTHORITY_GATE",
+  "design_authority_sha": "26a7604c34c610562643d7a732d35b39df84c94f",
+  "authenticated": false,
+  "economic_endpoints_forbidden": true,
+  "authority_start": "2023-06-05T00:00:00Z",
+  "authority_end_exclusive": "2025-12-29T00:00:00Z",
+  "instruments": [
+    "BTC-USDT",
+    "ETH-USDT",
+    "BTC-USDT-SWAP",
+    "ETH-USDT-SWAP"
+  ],
+  "instrument_aliases": {
+    "BTC-USDT": ["BTC-USDT", "BTC/USDT"],
+    "ETH-USDT": ["ETH-USDT", "ETH/USDT"],
+    "BTC-USDT-SWAP": ["BTC-USDT-SWAP", "BTCUSDT perpetual", "BTC/USDT perpetual"],
+    "ETH-USDT-SWAP": ["ETH-USDT-SWAP", "ETHUSDT perpetual", "ETH/USDT perpetual"]
+  },
+  "metadata_terms": [
+    "lot size",
+    "minimum order size",
+    "minimum order quantity",
+    "order size",
+    "tick size",
+    "contract value",
+    "contract size",
+    "trading parameter",
+    "lotsz",
+    "minsz",
+    "ticksz",
+    "ctval"
+  ],
+  "requests": [
+    {
+      "request_id": "okx-announcement-catalog-global",
+      "request_kind": "announcement_catalog",
+      "method": "GET",
+      "url": "https://www.okx.com/help/section/announcements-latest-announcements/page/{page}",
+      "expected_content_type": "text/html",
+      "page_range": {
+        "start": 1,
+        "end": 250,
+        "page_size": 15,
+        "stop_rule": "DECLARED_TERMINAL_PAGE_AND_NO_NEXT_PAGE"
+      },
+      "article_expansion": {
+        "request_kind": "announcement_article",
+        "date_start": "2023-06-05T00:00:00Z",
+        "date_end_exclusive": "2025-12-29T00:00:00Z",
+        "selection_rule": "INSTRUMENT_ALIAS_AND_METADATA_TERM_OR_EXACT_FROZEN_TRANSITION_MATCH"
+      }
+    },
+    {
+      "request_id": "archive-btc-usdt-spot-instruments",
+      "request_kind": "archive_lookup",
+      "method": "GET",
+      "url": "https://web.archive.org/cdx/search/cdx?url=https%3A%2F%2Fwww.okx.com%2Fapi%2Fv5%2Fpublic%2Finstruments%3FinstType%3DSPOT%26instId%3DBTC-USDT&from=20230605&to=20251228&output=json&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype%2Cdigest%2Clength&filter=statuscode%3A200&collapse=digest",
+      "canonical_official_url": "https://www.okx.com/api/v5/public/instruments?instType=SPOT&instId=BTC-USDT",
+      "expected_content_type": "application/json",
+      "archive_expansion": {
+        "memento_url_template": "https://web.archive.org/web/{timestamp}id_/{original}",
+        "accepted_status": "200",
+        "accepted_mime_types": ["application/json", "text/json"]
+      }
+    },
+    {
+      "request_id": "archive-eth-usdt-spot-instruments",
+      "request_kind": "archive_lookup",
+      "method": "GET",
+      "url": "https://web.archive.org/cdx/search/cdx?url=https%3A%2F%2Fwww.okx.com%2Fapi%2Fv5%2Fpublic%2Finstruments%3FinstType%3DSPOT%26instId%3DETH-USDT&from=20230605&to=20251228&output=json&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype%2Cdigest%2Clength&filter=statuscode%3A200&collapse=digest",
+      "canonical_official_url": "https://www.okx.com/api/v5/public/instruments?instType=SPOT&instId=ETH-USDT",
+      "expected_content_type": "application/json",
+      "archive_expansion": {
+        "memento_url_template": "https://web.archive.org/web/{timestamp}id_/{original}",
+        "accepted_status": "200",
+        "accepted_mime_types": ["application/json", "text/json"]
+      }
+    },
+    {
+      "request_id": "archive-btc-usdt-swap-instruments",
+      "request_kind": "archive_lookup",
+      "method": "GET",
+      "url": "https://web.archive.org/cdx/search/cdx?url=https%3A%2F%2Fwww.okx.com%2Fapi%2Fv5%2Fpublic%2Finstruments%3FinstType%3DSWAP%26instId%3DBTC-USDT-SWAP&from=20230605&to=20251228&output=json&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype%2Cdigest%2Clength&filter=statuscode%3A200&collapse=digest",
+      "canonical_official_url": "https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=BTC-USDT-SWAP",
+      "expected_content_type": "application/json",
+      "archive_expansion": {
+        "memento_url_template": "https://web.archive.org/web/{timestamp}id_/{original}",
+        "accepted_status": "200",
+        "accepted_mime_types": ["application/json", "text/json"]
+      }
+    },
+    {
+      "request_id": "archive-eth-usdt-swap-instruments",
+      "request_kind": "archive_lookup",
+      "method": "GET",
+      "url": "https://web.archive.org/cdx/search/cdx?url=https%3A%2F%2Fwww.okx.com%2Fapi%2Fv5%2Fpublic%2Finstruments%3FinstType%3DSWAP%26instId%3DETH-USDT-SWAP&from=20230605&to=20251228&output=json&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype%2Cdigest%2Clength&filter=statuscode%3A200&collapse=digest",
+      "canonical_official_url": "https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=ETH-USDT-SWAP",
+      "expected_content_type": "application/json",
+      "archive_expansion": {
+        "memento_url_template": "https://web.archive.org/web/{timestamp}id_/{original}",
+        "accepted_status": "200",
+        "accepted_mime_types": ["application/json", "text/json"]
+      }
+    }
+  ],
+  "retry_policy": {
+    "max_attempts": 3,
+    "timeout_seconds": 45,
+    "initial_backoff_seconds": 2,
+    "maximum_backoff_seconds": 15,
+    "respect_retry_after": true
+  },
+  "parser_versions": {
+    "announcement_catalog": "c6a-announcement-catalog-v1",
+    "announcement_article": "c6a-announcement-article-v1",
+    "archive_index": "c6a-wayback-cdx-v1",
+    "archived_official_response": "c6a-okx-instruments-v1"
+  },
+  "generated_request_rules": [
+    {
+      "rule_id": "ANNOUNCEMENT_ARTICLE_FROM_CATALOG_V1",
+      "source_request_id": "okx-announcement-catalog-global",
+      "request_kind": "announcement_article",
+      "host_must_be": "www.okx.com",
+      "path_prefix": "/help/",
+      "date_start": "2023-06-05T00:00:00Z",
+      "date_end_exclusive": "2025-12-29T00:00:00Z"
+    },
+    {
+      "rule_id": "WAYBACK_MEMENTO_FROM_CDX_V1",
+      "source_request_id_prefix": "archive-",
+      "request_kind": "archive_lookup",
+      "memento_host_must_be": "web.archive.org",
+      "canonical_host_must_be": "www.okx.com",
+      "canonical_path_must_be": "/api/v5/public/instruments",
+      "capture_start": "2023-06-05T00:00:00Z",
+      "capture_end_exclusive": "2025-12-29T00:00:00Z"
+    }
+  ]
+}
