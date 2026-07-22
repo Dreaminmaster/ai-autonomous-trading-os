@@ -1,0 +1,175 @@
+name: C6A OKX Source Authority Research
+
+on:
+  push:
+    branches:
+      - research/c6a-okx-source-authority
+    paths:
+      - .github/workflows/c6a-okx-source-authority-research.yml
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  inspect-official-directory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Query official public historical-data directory only
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          forbidden = [
+              name
+              for name in os.environ
+              if name.upper().startswith("OKX_")
+              or name.upper().startswith("OK_ACCESS_")
+          ]
+          if forbidden:
+              raise SystemExit(f"credential-like environment variables present: {forbidden}")
+
+          out = Path("c6a-okx-source-authority-research")
+          out.mkdir()
+          endpoint = "https://www.okx.com/api/v5/public/market-data-history"
+          begin = "1685923200000"  # 2023-06-05T00:00:00Z
+          end = "1766966400000"    # 2025-12-29T00:00:00Z
+          requests = []
+          for module in range(1, 12):
+              for family in ("BTC-USDT", "ETH-USDT"):
+                  for aggregation in ("daily", "monthly"):
+                      requests.append(
+                          {
+                              "module": str(module),
+                              "instType": "SWAP",
+                              "instFamilyList": family,
+                              "dateAggrType": aggregation,
+                              "begin": begin,
+                              "end": end,
+                          }
+                      )
+
+          rows = []
+          for index, params in enumerate(requests, start=1):
+              query = urllib.parse.urlencode(params)
+              url = f"{endpoint}?{query}"
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      "User-Agent": "ai-autonomous-trading-os-c6a-source-authority/1.0",
+                      "Accept": "application/json",
+                  },
+              )
+              record = {
+                  "index": index,
+                  "request_url": url,
+                  "params": params,
+                  "authenticated": False,
+              }
+              try:
+                  with urllib.request.urlopen(request, timeout=45) as response:
+                      body = response.read()
+                      record.update(
+                          {
+                              "http_status": response.status,
+                              "final_url": response.geturl(),
+                              "content_type": response.headers.get("Content-Type"),
+                              "response_size": len(body),
+                              "response_sha256": hashlib.sha256(body).hexdigest(),
+                              "response_text": body.decode("utf-8", "replace"),
+                          }
+                      )
+              except urllib.error.HTTPError as exc:
+                  body = exc.read()
+                  record.update(
+                      {
+                          "http_status": exc.code,
+                          "final_url": exc.geturl(),
+                          "content_type": exc.headers.get("Content-Type"),
+                          "response_size": len(body),
+                          "response_sha256": hashlib.sha256(body).hexdigest(),
+                          "response_text": body.decode("utf-8", "replace"),
+                      }
+                  )
+              except Exception as exc:
+                  record["transport_error"] = repr(exc)
+              rows.append(record)
+              with (out / "responses.jsonl").open("a", encoding="utf-8") as handle:
+                  handle.write(json.dumps(record, sort_keys=True))
+                  handle.write("\n")
+              time.sleep(0.35)
+
+          parsed = []
+          for row in rows:
+              text = row.get("response_text")
+              if not isinstance(text, str):
+                  continue
+              try:
+                  payload = json.loads(text)
+              except json.JSONDecodeError:
+                  continue
+              parsed.append(
+                  {
+                      "module": row["params"]["module"],
+                      "family": row["params"]["instFamilyList"],
+                      "dateAggrType": row["params"]["dateAggrType"],
+                      "http_status": row.get("http_status"),
+                      "code": payload.get("code") if isinstance(payload, dict) else None,
+                      "msg": payload.get("msg") if isinstance(payload, dict) else None,
+                      "data": payload.get("data") if isinstance(payload, dict) else None,
+                      "response_sha256": row.get("response_sha256"),
+                  }
+              )
+
+          summary = {
+              "schema_version": 1,
+              "stage": "C6A_SOURCE_AUTHORITY_RESEARCH",
+              "status": "PASS",
+              "endpoint": endpoint,
+              "request_count": len(rows),
+              "parsed_response_count": len(parsed),
+              "requests": parsed,
+              "authenticated": False,
+              "market_file_downloaded": False,
+              "economic_result_run": False,
+              "c6b_state": "C6B_CLOSED",
+              "c5b_state": "C5B_CLOSED_AND_UNTOUCHED",
+              "holdout_state": "HOLDOUT_CLOSED",
+              "paper_state": "PAPER_CLOSED",
+              "shadow_state": "SHADOW_CLOSED",
+              "live": "FORBIDDEN",
+          }
+          (out / "summary.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
+          )
+          print(
+              f"queried {len(rows)} official directory combinations; "
+              f"parsed {len(parsed)} JSON responses"
+          )
+          PY
+
+      - name: Upload exact response evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c6a-okx-source-authority-${{ github.run_id }}
+          path: c6a-okx-source-authority-research
+          retention-days: 7
+          if-no-files-found: error
