@@ -11,9 +11,9 @@ permissions:
   contents: write
 
 jobs:
-  compact-findings:
+  archived-official-snapshots:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -21,44 +21,215 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build compact article authority index
+      - name: Query Internet Archive for exact archived OKX public responses
         run: |
           python - <<'PY'
           from __future__ import annotations
 
+          import hashlib
           import json
+          import os
+          import time
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime, timezone
           from pathlib import Path
 
-          source = Path("research/c6a-okx-source-authority/summary.json")
-          payload = json.loads(source.read_text(encoding="utf-8"))
-          if payload.get("schema_version") != 6:
-              raise SystemExit("article-body summary V6 is required")
-          articles = payload.get("relevant_articles")
-          if not isinstance(articles, list) or len(articles) != 18:
-              raise SystemExit("expected exactly 18 article-body matches")
-          compact = {
-              "schema_version": 1,
-              "stage": "C6A_METADATA_AUTHORITY_INDEX",
-              "status": "PASS",
-              "catalog_page_count": payload["catalog_page_count"],
-              "catalog_records_sha256": payload["catalog_records_sha256"],
-              "metadata_change_candidate_count": payload[
-                  "metadata_change_candidate_count"
-              ],
-              "article_body_only": True,
-              "relevant_article_count": len(articles),
-              "articles": [
-                  {
-                      "title": row["title"],
-                      "url": row["url"],
-                      "symbols": row["symbols"],
-                      "fields": row["fields"],
-                      "response_sha256": row["response"]["sha256"],
-                      "article_body_sha256": row["article_body_sha256"],
+          forbidden = [
+              name for name in os.environ
+              if name.upper().startswith("OKX_")
+              or name.upper().startswith("OK_ACCESS_")
+          ]
+          if forbidden:
+              raise SystemExit(f"credential-like environment variables present: {forbidden}")
+
+          out = Path("c6a-okx-source-authority-research")
+          out.mkdir(exist_ok=True)
+          raw = out / "archived-official-responses"
+          raw.mkdir(exist_ok=True)
+
+          CDX = "https://web.archive.org/cdx/search/cdx"
+          hosts = ("www.okx.com", "app.okx.com", "aws.okx.com", "openapi.okx.com")
+          target_dates = (
+              "20230605",
+              "20240418",
+              "20240425",
+              "20250109",
+              "20250122",
+              "20251229",
+          )
+          target_instruments = {
+              "BTC-USDT": "SPOT",
+              "ETH-USDT": "SPOT",
+              "BTC-USDT-SWAP": "SWAP",
+              "ETH-USDT-SWAP": "SWAP",
+          }
+
+          def request_bytes(url: str) -> tuple[bytes, dict]:
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      "User-Agent": "ai-autonomous-trading-os-c6a-source-authority/1.0",
+                      "Accept": "application/json,*/*",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  body = response.read()
+                  return body, {
+                      "requested_url": url,
+                      "final_url": response.geturl(),
+                      "http_status": response.status,
+                      "content_type": response.headers.get("Content-Type"),
+                      "size": len(body),
+                      "sha256": hashlib.sha256(body).hexdigest(),
                   }
-                  for row in articles
-              ],
-              "article_errors": payload["article_errors"],
+
+          cdx_records = []
+          cdx_errors = []
+          for host in hosts:
+              params = {
+                  "url": f"{host}/api/v5/public/instruments",
+                  "matchType": "prefix",
+                  "from": "2023",
+                  "to": "2025",
+                  "output": "json",
+                  "filter": ["statuscode:200", "mimetype:application/json"],
+                  "fl": "timestamp,original,digest,statuscode,mimetype,length",
+                  "collapse": "digest",
+                  "limit": "5000",
+              }
+              query = []
+              for key, value in params.items():
+                  if isinstance(value, list):
+                      query.extend((key, item) for item in value)
+                  else:
+                      query.append((key, value))
+              url = CDX + "?" + urllib.parse.urlencode(query)
+              try:
+                  body, meta = request_bytes(url)
+                  payload = json.loads(body.decode("utf-8"))
+              except Exception as exc:
+                  cdx_errors.append({"host": host, "url": url, "error": repr(exc)})
+                  continue
+              if not isinstance(payload, list) or not payload:
+                  cdx_errors.append({"host": host, "url": url, "error": "empty CDX response"})
+                  continue
+              header = payload[0]
+              for values in payload[1:]:
+                  if not isinstance(values, list) or len(values) != len(header):
+                      continue
+                  row = dict(zip(header, values))
+                  row["cdx_query"] = meta
+                  cdx_records.append(row)
+              time.sleep(0.5)
+
+          def stamp_distance(stamp: str, target: str) -> float:
+              captured = datetime.strptime(stamp[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+              desired = datetime.strptime(target, "%Y%m%d").replace(tzinfo=timezone.utc)
+              return abs((captured - desired).total_seconds())
+
+          selected = []
+          seen = set()
+          for target in target_dates:
+              ordered = sorted(
+                  cdx_records,
+                  key=lambda row: stamp_distance(str(row.get("timestamp", "")), target),
+              )
+              for row in ordered[:12]:
+                  key = (row.get("timestamp"), row.get("original"))
+                  if key not in seen:
+                      seen.add(key)
+                      selected.append({**row, "nearest_target": target})
+
+          snapshots = []
+          snapshot_errors = []
+          for index, row in enumerate(selected, start=1):
+              timestamp = str(row["timestamp"])
+              original = str(row["original"])
+              replay = f"https://web.archive.org/web/{timestamp}id_/{original}"
+              try:
+                  body, meta = request_bytes(replay)
+                  payload = json.loads(body.decode("utf-8"))
+              except Exception as exc:
+                  snapshot_errors.append(
+                      {
+                          "timestamp": timestamp,
+                          "original": original,
+                          "replay_url": replay,
+                          "error": repr(exc),
+                      }
+                  )
+                  continue
+              data = payload.get("data") if isinstance(payload, dict) else None
+              if not isinstance(data, list):
+                  snapshot_errors.append(
+                      {
+                          "timestamp": timestamp,
+                          "original": original,
+                          "replay_url": replay,
+                          "error": "archived response lacks data list",
+                      }
+                  )
+                  continue
+              matches = {
+                  str(item.get("instId")): item
+                  for item in data
+                  if isinstance(item, dict)
+                  and str(item.get("instId")) in target_instruments
+              }
+              retained = raw / f"snapshot-{index:03d}-{timestamp}.json"
+              retained.write_bytes(body)
+              snapshots.append(
+                  {
+                      "timestamp": timestamp,
+                      "original": original,
+                      "replay_url": replay,
+                      "nearest_target": row["nearest_target"],
+                      "response": meta,
+                      "retained_path": str(retained),
+                      "target_instruments": {
+                          inst_id: {
+                              key: value
+                              for key, value in item.items()
+                              if key in {
+                                  "instId",
+                                  "instType",
+                                  "baseCcy",
+                                  "quoteCcy",
+                                  "settleCcy",
+                                  "ctType",
+                                  "ctVal",
+                                  "ctValCcy",
+                                  "lotSz",
+                                  "minSz",
+                                  "tickSz",
+                                  "listTime",
+                                  "state",
+                              }
+                          }
+                          for inst_id, item in matches.items()
+                      },
+                  }
+              )
+              time.sleep(0.5)
+
+          summary = {
+              "schema_version": 1,
+              "stage": "C6A_ARCHIVED_OFFICIAL_METADATA_RESEARCH",
+              "status": "PASS",
+              "cdx_record_count": len(cdx_records),
+              "selected_snapshot_count": len(selected),
+              "successful_snapshot_count": len(snapshots),
+              "target_dates": list(target_dates),
+              "target_instruments": target_instruments,
+              "cdx_records": cdx_records,
+              "snapshots": snapshots,
+              "cdx_errors": cdx_errors,
+              "snapshot_errors": snapshot_errors,
+              "interpretation_boundary": (
+                  "Only exact archived bytes returned from an official OKX API URL are "
+                  "eligible; absence of a capture does not prove historical values."
+              ),
               "authenticated": False,
               "market_file_downloaded": False,
               "economic_result_run": False,
@@ -69,17 +240,31 @@ jobs:
               "shadow_state": "SHADOW_CLOSED",
               "live": "FORBIDDEN",
           }
-          output = Path("research/c6a-okx-source-authority/compact.json")
-          output.write_text(
-              json.dumps(compact, indent=2, sort_keys=True), encoding="utf-8"
+          summary_path = out / "wayback-summary.json"
+          summary_path.write_text(
+              json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
           )
-          print(f"compacted {len(articles)} article-body matches")
+          print(
+              f"CDX records={len(cdx_records)} selected={len(selected)} "
+              f"successful snapshots={len(snapshots)}"
+          )
           PY
 
-      - name: Publish compact authority index
+      - name: Upload exact archived-response evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: c6a-okx-archived-official-metadata-${{ github.run_id }}
+          path: c6a-okx-source-authority-research
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Publish compact archived-response summary
         run: |
+          mkdir -p research/c6a-okx-source-authority
+          cp c6a-okx-source-authority-research/wayback-summary.json \
+            research/c6a-okx-source-authority/wayback-summary.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add research/c6a-okx-source-authority/compact.json
-          git commit -m "research(c6a): retain compact metadata authority index"
+          git add research/c6a-okx-source-authority/wayback-summary.json
+          git commit -m "research(c6a): retain archived official metadata findings"
           git push origin HEAD:research/c6a-okx-source-authority
