@@ -50,27 +50,25 @@ jobs:
           out = Path("c6a-okx-source-authority-research")
           out.mkdir(exist_ok=True)
           endpoint = "https://www.okx.com/api/v5/public/market-data-history"
-          begin = "1685923200000"  # 2023-06-05T00:00:00Z
-          end = "1766966400000"    # 2025-12-29T00:00:00Z
+          begin = "1704067200000"  # 2024-01-01T00:00:00Z
+          end = "1704844800000"    # 2024-01-10T00:00:00Z
           requests = []
-          for module in range(1, 12):
+          for module in range(1, 7):
               for family in ("BTC-USDT", "ETH-USDT"):
-                  for aggregation in ("daily", "monthly"):
-                      requests.append(
-                          {
-                              "module": str(module),
-                              "instType": "SWAP",
-                              "instFamilyList": family,
-                              "dateAggrType": aggregation,
-                              "begin": begin,
-                              "end": end,
-                          }
-                      )
+                  requests.append(
+                      {
+                          "module": str(module),
+                          "instType": "SWAP",
+                          "instFamilyList": family,
+                          "dateAggrType": "daily",
+                          "begin": begin,
+                          "end": end,
+                      }
+                  )
 
           rows = []
           for index, params in enumerate(requests, start=1):
-              query = urllib.parse.urlencode(params)
-              url = f"{endpoint}?{query}"
+              url = f"{endpoint}?{urllib.parse.urlencode(params)}"
               request = urllib.request.Request(
                   url,
                   headers={
@@ -140,10 +138,11 @@ jobs:
               )
 
           summary = {
-              "schema_version": 1,
+              "schema_version": 2,
               "stage": "C6A_SOURCE_AUTHORITY_RESEARCH",
               "status": "PASS",
               "endpoint": endpoint,
+              "window": {"begin": begin, "end": end},
               "request_count": len(rows),
               "parsed_response_count": len(parsed),
               "requests": parsed,
@@ -161,7 +160,7 @@ jobs:
               json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
           )
           print(
-              f"queried {len(rows)} official directory combinations; "
+              f"queried {len(rows)} valid official module/family combinations; "
               f"parsed {len(parsed)} JSON responses"
           )
           PY
@@ -182,5 +181,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add research/c6a-okx-source-authority/summary.json
-          git commit -m "research(c6a): retain official source-directory summary"
+          git commit -m "research(c6a): retain resolved source-directory summary"
           git push origin HEAD:research/c6a-okx-source-authority
