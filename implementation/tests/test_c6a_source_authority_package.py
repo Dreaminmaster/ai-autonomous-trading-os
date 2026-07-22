@@ -6,16 +6,24 @@ from pathlib import Path
 import pytest
 
 from atos.c6a_source_authority import SourceAuthorityError
+from atos.c6a_source_authority_capture import canonical_json_bytes, sha256_bytes
 from atos.c6a_source_authority_package import CANONICAL_OUTPUTS, package_gate_artifact
-from atos.c6a_source_authority_review import verify_manifest
+from atos.c6a_source_authority_review import verify_manifest_complete
 
 
 def _state(instrument: str) -> dict:
     swap = instrument.endswith("-SWAP")
+    base = instrument.split("-")[0]
     return {
         "state_id": f"{instrument}-state",
         "instrument": instrument,
         "authority_mode": "EXACT_EFFECTIVE_STATE",
+        "inst_type": "SWAP" if swap else "SPOT",
+        "base_ccy": base,
+        "quote_ccy": "USDT",
+        "settle_ccy": "USDT" if swap else None,
+        "ct_val_ccy": base if swap else None,
+        "listing_state": "live",
         "effective_from": "2023-06-05T00:00:00Z",
         "effective_to": "2025-12-29T00:00:00Z",
         "open_ended": False,
@@ -23,52 +31,161 @@ def _state(instrument: str) -> dict:
         "min_sz": "0.1" if swap else "0.00001",
         "tick_sz": "0.1",
         "ct_val": "0.01" if swap else None,
-        "settle_ccy": "USDT" if swap else None,
-        "ct_val_ccy": instrument.split("-")[0] if swap else None,
         "contradiction": False,
+        "source_ids": ["source-1"],
     }
 
 
-def test_failed_gate_package_is_complete_deterministic_and_non_authorizing(tmp_path: Path) -> None:
+def _coverage(states: list[dict]) -> list[dict]:
+    return [
+        {
+            "instrument": state["instrument"],
+            "state_id": state["state_id"],
+            "authority_mode": state["authority_mode"],
+            "interval_start": "2023-06-05T00:00:00+00:00",
+            "interval_end_exclusive": "2025-12-29T00:00:00+00:00",
+            "source_coverage_status": "PASS",
+            "overlap_count": 0,
+            "contradiction_count": 0,
+            "uncovered_duration_seconds": 0,
+        }
+        for state in states
+    ]
+
+
+def _query_inventory() -> dict:
+    return {
+        "schema_version": 1,
+        "stage": "C6A_SOURCE_AUTHORITY_GATE",
+        "authenticated": False,
+        "economic_endpoints_forbidden": True,
+        "authority_start": "2023-06-05T00:00:00Z",
+        "authority_end_exclusive": "2025-12-29T00:00:00Z",
+        "instruments": [
+            "BTC-USDT",
+            "ETH-USDT",
+            "BTC-USDT-SWAP",
+            "ETH-USDT-SWAP",
+        ],
+        "requests": [
+            {
+                "request_id": "catalog-1",
+                "request_kind": "announcement_catalog",
+                "method": "GET",
+                "url": "https://www.okx.com/help/section/announcements/page/1",
+                "expected_content_type": "text/html",
+            }
+        ],
+    }
+
+
+def _catalog() -> dict:
+    return {
+        "pages": [
+            {
+                "page_number": 1,
+                "declared_terminal_page": 1,
+                "is_terminal_page": True,
+            }
+        ],
+        "items": [
+            {
+                "page_number": 1,
+                "canonical_url": "https://www.okx.com/help/example-metadata-notice",
+                "title": "Example metadata notice",
+            }
+        ],
+        "terminal_page_proof": {"status": "PASS", "terminal_page": 1},
+    }
+
+
+def _prepare_retained_source(output: Path) -> dict:
+    raw = b'{"official":"raw"}\n'
+    decoded = b'{"official":"decoded"}\n'
+    (output / "raw").mkdir(parents=True)
+    (output / "decoded").mkdir(parents=True)
+    (output / "raw/source-1.bin").write_bytes(raw)
+    (output / "decoded/source-1.json").write_bytes(decoded)
+    return {
+        "sources": [
+            {
+                "source_id": "source-1",
+                "authority_class": "EXACT_ARCHIVED_OFFICIAL_OKX_RESPONSE",
+                "canonical_official_url": "https://www.okx.com/api/v5/public/instruments?instType=SPOT&instId=BTC-USDT",
+                "retrieval_url": "https://web.archive.org/web/20240101000000id_/https://www.okx.com/api/v5/public/instruments?instType=SPOT&instId=BTC-USDT",
+                "raw_path": "raw/source-1.bin",
+                "raw_size": len(raw),
+                "raw_sha256": sha256_bytes(raw),
+                "decoded_path": "decoded/source-1.json",
+                "decoded_size": len(decoded),
+                "decoded_sha256": sha256_bytes(decoded),
+                "eligible": True,
+                "rejection_reason": None,
+            }
+        ]
+    }
+
+
+def test_failed_gate_package_retains_source_bytes_and_is_non_authorizing(tmp_path: Path) -> None:
     output = tmp_path / "artifact"
-    states = [_state(instrument) for instrument in ("BTC-USDT", "ETH-USDT", "BTC-USDT-SWAP", "ETH-USDT-SWAP")]
+    sources = _prepare_retained_source(output)
+    states = [
+        _state(instrument)
+        for instrument in ("BTC-USDT", "ETH-USDT", "BTC-USDT-SWAP", "ETH-USDT-SWAP")
+    ]
+    query = _query_inventory()
     decision = {
         "schema_version": 1,
         "stage": "C6A_SOURCE_AUTHORITY_GATE",
+        "source_commit_sha": "a" * 40,
+        "query_inventory_sha256": sha256_bytes(canonical_json_bytes(query)),
         "status": "FAIL",
         "result": "FAIL_TRANSITION_WINDOW_UNPROVEN",
+        "authoritative": False,
+        "integrity_state": "PENDING_PACKAGE_AND_INDEPENDENT_REVIEW",
         "implementation_authorized": False,
         "economic_data_access_authorized": False,
         "live_state": "LIVE_FORBIDDEN",
     }
     summary = package_gate_artifact(
         output,
-        query_inventory={"schema_version": 1, "stage": "C6A_SOURCE_AUTHORITY_GATE"},
-        source_inventory={"sources": []},
-        announcement_catalog={"pages": [], "items": []},
+        query_inventory=query,
+        source_inventory=sources,
+        announcement_catalog=_catalog(),
         metadata_states=states,
         transition_proofs=[],
-        coverage_matrix=[],
+        coverage_matrix=_coverage(states),
         gate_result=decision,
         failures=["FAIL_TRANSITION_WINDOW_UNPROVEN"],
     )
     assert summary["gate_status"] == "FAIL"
+    assert summary["gate_result"] == "FAIL_TRANSITION_WINDOW_UNPROVEN"
     assert summary["manifest_status"] == "PASS"
+    assert summary["retained_noncanonical_file_count"] == 2
     assert summary["implementation_authorized"] is False
     assert summary["economic_data_access_authorized"] is False
-    assert {path.name for path in output.iterdir()} == set(CANONICAL_OUTPUTS)
+    assert (output / "raw/source-1.bin").is_file()
+    assert (output / "decoded/source-1.json").is_file()
+    assert set(CANONICAL_OUTPUTS).issubset({path.name for path in output.iterdir()})
 
+    final_decision = json.loads((output / "gate_result.json").read_text())
+    assert final_decision["authoritative"] is True
+    assert final_decision["implementation_authorized"] is False
     manifest = json.loads((output / "manifest.json").read_text())
-    assert "independent_review.json" in {row["path"] for row in manifest["files"]}
-    assert "manifest.json" not in {row["path"] for row in manifest["files"]}
-    assert verify_manifest(output, manifest) == []
+    manifest_paths = {row["path"] for row in manifest["files"]}
+    assert "raw/source-1.bin" in manifest_paths
+    assert "decoded/source-1.json" in manifest_paths
+    assert "independent_review.json" in manifest_paths
+    assert "manifest.json" not in manifest_paths
+    assert verify_manifest_complete(output, manifest) == []
 
 
-def test_package_refuses_nonempty_directory(tmp_path: Path) -> None:
+def test_package_refuses_existing_canonical_output_but_allows_retained_inputs(tmp_path: Path) -> None:
     output = tmp_path / "artifact"
     output.mkdir()
-    (output / "unexpected.txt").write_text("unexpected")
-    with pytest.raises(SourceAuthorityError, match="must be empty"):
+    (output / "raw.bin").write_bytes(b"retained")
+    (output / "gate_result.json").write_text("{}")
+    with pytest.raises(SourceAuthorityError, match="will not be overwritten"):
         package_gate_artifact(
             output,
             query_inventory={},
