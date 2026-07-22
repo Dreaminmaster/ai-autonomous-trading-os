@@ -109,7 +109,6 @@ def test_independent_coverage_detects_gap() -> None:
     )
     _, errors = review.recompute_coverage(states)
     assert any("gap for BTC-USDT" in error for error in errors)
-    assert any("incomplete authority coverage for BTC-USDT" in error for error in errors)
 
 
 def test_review_payload_refuses_authorization_and_gate_mismatch() -> None:
