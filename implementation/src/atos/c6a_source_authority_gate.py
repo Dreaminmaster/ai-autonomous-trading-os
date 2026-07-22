@@ -1,8 +1,8 @@
-"""Gate orchestration for the C6A historical metadata source-authority stage.
+"""Preliminary gate orchestration for C6A historical metadata authority.
 
-The lower-level validators remain reusable, while this module enforces the
-complete program contract: all four frozen transition windows must be present,
-no extra window may appear, and a PASS can never authorize economic work.
+This module evaluates source and interval evidence but deliberately cannot issue
+an authoritative final PASS.  Artifact completeness and physically separate
+independent review are established later by ``c6a_source_authority_package``.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from atos.c6a_source_authority import (
     gate_result,
     parse_utc_timestamp,
 )
+from atos.c6a_source_authority_identity import validate_metadata_state_identity
 
 
 @dataclass(frozen=True)
@@ -32,8 +33,6 @@ class GateSnapshot:
     forbidden_access_count: int = 0
     unsupported_projection_count: int = 0
     newly_discovered_transition_count: int = 0
-    manifest_complete: bool = False
-    independent_review_matches: bool = False
 
     def validate_counts(self) -> None:
         for name, value in (
@@ -114,7 +113,7 @@ def evaluate_gate_snapshot(
     source_commit_sha: str,
     query_inventory_sha256: str,
 ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...], tuple[str, ...]]:
-    """Evaluate one offline snapshot under the complete frozen gate contract."""
+    """Evaluate evidence and return a non-authoritative preliminary decision."""
 
     snapshot.validate_counts()
     failures: list[str] = list(snapshot.source_failures)
@@ -132,10 +131,12 @@ def evaluate_gate_snapshot(
         failures.append("FAIL_NEW_UNFROZEN_TRANSITION")
 
     try:
+        for state in snapshot.metadata_states:
+            validate_metadata_state_identity(state)
         coverage = build_coverage_matrix(snapshot.metadata_states)
     except SourceAuthorityError as exc:
-        code = str(exc)
-        failures.append(code if code in FAILURE_PRIORITY else "FAIL_AMBIGUOUS_OR_CONTRADICTORY_STATE")
+        code = str(exc).split(":", 1)[0]
+        failures.append(code if code in FAILURE_PRIORITY else "FAIL_REQUIRED_FIELD_MISSING")
         coverage = ()
 
     required = required_transition_keys()
@@ -152,11 +153,6 @@ def evaluate_gate_snapshot(
     if required - proof_keys:
         failures.append("FAIL_TRANSITION_WINDOW_UNPROVEN")
 
-    if not snapshot.manifest_complete:
-        failures.append("FAIL_MANIFEST_INCOMPLETE")
-    if not snapshot.independent_review_matches:
-        failures.append("FAIL_INDEPENDENT_REVIEW_MISMATCH")
-
     unique_failures = tuple(code for code in FAILURE_PRIORITY if code in set(failures))
     decision = gate_result(
         source_commit_sha=source_commit_sha,
@@ -169,6 +165,8 @@ def evaluate_gate_snapshot(
     )
     decision.update(
         {
+            "authoritative": False,
+            "integrity_state": "PENDING_PACKAGE_AND_INDEPENDENT_REVIEW",
             "uncovered_interval_count": sum(
                 code == "FAIL_UNCOVERED_INTERVAL" for code in unique_failures
             ),
@@ -192,7 +190,7 @@ def augment_transition_proof(
     old_state: MetadataState,
     new_state: MetadataState,
 ) -> dict[str, Any]:
-    """Add the primitive exact-decimal fields required by independent review."""
+    """Add primitive exact-decimal fields required by independent review."""
 
     result = dict(proof)
     result.update(
