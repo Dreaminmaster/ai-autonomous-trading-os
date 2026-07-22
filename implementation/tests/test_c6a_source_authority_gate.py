@@ -36,19 +36,21 @@ def _state(
     lot: str,
     minimum: str,
     mode: str = "EXACT_EFFECTIVE_STATE",
+    base_ccy: str | None = None,
 ) -> MetadataState:
     swap = instrument.endswith("-SWAP")
+    expected_base = instrument.split("-")[0]
     return MetadataState.from_mapping(
         {
             "state_id": state_id,
             "instrument": instrument,
             "authority_mode": mode,
             "inst_type": "SWAP" if swap else "SPOT",
-            "base_ccy": instrument.split("-")[0],
+            "base_ccy": base_ccy or expected_base,
             "quote_ccy": "USDT",
             "settle_ccy": "USDT" if swap else None,
             "ct_val": "0.01" if swap else None,
-            "ct_val_ccy": instrument.split("-")[0] if swap else None,
+            "ct_val_ccy": expected_base if swap else None,
             "lot_sz": lot,
             "min_sz": minimum,
             "tick_sz": "0.1",
@@ -245,14 +247,12 @@ def _snapshot(**overrides) -> GateSnapshot:
         "forbidden_access_count": 0,
         "unsupported_projection_count": 0,
         "newly_discovered_transition_count": 0,
-        "manifest_complete": True,
-        "independent_review_matches": True,
     }
     values.update(overrides)
     return GateSnapshot(**values)
 
 
-def test_complete_gate_snapshot_passes_without_authorizing_economics() -> None:
+def test_complete_snapshot_is_preliminary_and_non_authorizing() -> None:
     decision, coverage, failures = evaluate_gate_snapshot(
         _snapshot(),
         source_commit_sha="a" * 40,
@@ -261,6 +261,8 @@ def test_complete_gate_snapshot_passes_without_authorizing_economics() -> None:
     assert failures == ()
     assert decision["status"] == "PASS"
     assert decision["result"] == "PASS"
+    assert decision["authoritative"] is False
+    assert decision["integrity_state"] == "PENDING_PACKAGE_AND_INDEPENDENT_REVIEW"
     assert decision["required_transition_count"] == 4
     assert decision["observed_transition_state_count"] == 4
     assert decision["observed_transition_proof_count"] == 4
@@ -281,17 +283,27 @@ def test_missing_frozen_transition_fails_before_economics() -> None:
     )
     assert "FAIL_TRANSITION_WINDOW_UNPROVEN" in failures
     assert decision["status"] == "FAIL"
+    assert decision["authoritative"] is False
     assert decision["implementation_authorized"] is False
 
 
-def test_manifest_and_independent_review_are_mandatory() -> None:
-    decision, _, failures = evaluate_gate_snapshot(
-        _snapshot(manifest_complete=False, independent_review_matches=False),
+def test_instrument_identity_drift_fails_closed() -> None:
+    states = list(_full_states())
+    states[0] = _state(
+        state_id="btc-spot-wrong-base",
+        instrument="BTC-USDT",
+        start=AUTHORITY_START_TEXT,
+        end=AUTHORITY_END_TEXT,
+        lot="0.00000001",
+        minimum="0.00001",
+        base_ccy="ETH",
+    )
+    decision, coverage, failures = evaluate_gate_snapshot(
+        _snapshot(metadata_states=tuple(states)),
         source_commit_sha="a" * 40,
         query_inventory_sha256="b" * 64,
     )
-    assert failures[-2:] == (
-        "FAIL_MANIFEST_INCOMPLETE",
-        "FAIL_INDEPENDENT_REVIEW_MISMATCH",
-    )
-    assert decision["result"] == "FAIL_MANIFEST_INCOMPLETE"
+    assert "FAIL_REQUIRED_FIELD_MISSING" in failures
+    assert coverage == ()
+    assert decision["status"] == "FAIL"
+    assert decision["authoritative"] is False
