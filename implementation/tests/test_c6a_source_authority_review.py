@@ -11,11 +11,18 @@ def _complete_states() -> list[dict]:
     rows: list[dict] = []
     for instrument in review.INSTRUMENTS:
         swap = instrument.endswith("-SWAP")
+        base = instrument.split("-")[0]
         rows.append(
             {
                 "state_id": f"{instrument}-state",
                 "instrument": instrument,
                 "authority_mode": "EXACT_EFFECTIVE_STATE",
+                "inst_type": "SWAP" if swap else "SPOT",
+                "base_ccy": base,
+                "quote_ccy": "USDT",
+                "settle_ccy": "USDT" if swap else None,
+                "ct_val_ccy": base if swap else None,
+                "listing_state": "live",
                 "effective_from": review.AUTHORITY_START_TEXT,
                 "effective_to": review.AUTHORITY_END_TEXT,
                 "open_ended": False,
@@ -23,9 +30,8 @@ def _complete_states() -> list[dict]:
                 "min_sz": "0.1" if swap else "0.00001",
                 "tick_sz": "0.1",
                 "ct_val": "0.01" if swap else None,
-                "settle_ccy": "USDT" if swap else None,
-                "ct_val_ccy": instrument.split("-")[0] if swap else None,
                 "contradiction": False,
+                "source_ids": [f"source-{instrument}"],
             }
         )
     return rows
@@ -109,6 +115,13 @@ def test_independent_coverage_detects_gap() -> None:
     )
     _, errors = review.recompute_coverage(states)
     assert any("gap for BTC-USDT" in error for error in errors)
+
+
+def test_independent_coverage_detects_identity_drift() -> None:
+    states = _complete_states()
+    states[0]["base_ccy"] = "ETH"
+    _, errors = review.recompute_coverage(states)
+    assert "identity mismatch for BTC-USDT" in errors
 
 
 def test_review_payload_refuses_authorization_and_gate_mismatch() -> None:
