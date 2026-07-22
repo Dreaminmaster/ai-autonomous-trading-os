@@ -14,9 +14,9 @@ env:
   PYTHONUNBUFFERED: "1"
 
 jobs:
-  inspect-official-directory:
+  scan-official-announcements:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -24,14 +24,16 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Resolve official funding archive query shape
+      - name: Exhaustively scan official OKX announcement catalog
         run: |
           python - <<'PY'
           from __future__ import annotations
 
           import hashlib
+          import html
           import json
           import os
+          import re
           import time
           import urllib.error
           import urllib.parse
@@ -49,133 +51,171 @@ jobs:
 
           out = Path("c6a-okx-source-authority-research")
           out.mkdir(exist_ok=True)
-          endpoint = "https://www.okx.com/api/v5/public/market-data-history"
-          begin = "1704067200000"  # 2024-01-01T00:00:00Z
-          end = "1706745599000"    # 2024-01-31T23:59:59Z
-          requests = []
-          for asset in ("BTC", "ETH"):
-              requests.extend(
-                  [
-                      {
-                          "variant": "family-monthly",
-                          "module": "3",
-                          "instType": "SWAP",
-                          "instFamilyList": f"{asset}-USDT",
-                          "dateAggrType": "monthly",
-                          "begin": begin,
-                          "end": end,
-                      },
-                      {
-                          "variant": "instrument-monthly",
-                          "module": "3",
-                          "instType": "SWAP",
-                          "instIdList": f"{asset}-USDT-SWAP",
-                          "dateAggrType": "monthly",
-                          "begin": begin,
-                          "end": end,
-                      },
-                      {
-                          "variant": "instrument-monthly-no-type",
-                          "module": "3",
-                          "instIdList": f"{asset}-USDT-SWAP",
-                          "dateAggrType": "monthly",
-                          "begin": begin,
-                          "end": end,
-                      },
-                      {
-                          "variant": "family-daily-control",
-                          "module": "3",
-                          "instType": "SWAP",
-                          "instFamilyList": f"{asset}-USDT",
-                          "dateAggrType": "daily",
-                          "begin": begin,
-                          "end": "1705276800000",
-                      },
-                  ]
-              )
+          raw_dir = out / "relevant-articles"
+          raw_dir.mkdir(exist_ok=True)
 
-          rows = []
-          for index, source in enumerate(requests, start=1):
-              params = {key: value for key, value in source.items() if key != "variant"}
-              url = f"{endpoint}?{urllib.parse.urlencode(params)}"
+          BASE = "https://www.okx.com"
+          CATALOG = BASE + "/help/section/announcements-latest-announcements/page/{page}"
+          USER_AGENT = "ai-autonomous-trading-os-c6a-source-authority/1.0"
+          LINK_RE = re.compile(
+              r'<a[^>]+href=["\'](?P<href>/help/[^"\'#?]+)["\'][^>]*>(?P<body>.*?)</a>',
+              re.I | re.S,
+          )
+          TAG_RE = re.compile(r"<[^>]+>")
+          PAGE_RE = re.compile(r"/page/(\d+)")
+          TITLE_KEYWORDS = (
+              "adjust",
+              "adjustment",
+              "tick size",
+              "minimum order",
+              "minimum trade",
+              "trading amount precision",
+              "order quantity precision",
+              "step size",
+              "lot size",
+              "face value",
+              "contract unit",
+              "contract size",
+          )
+          SYMBOL_PATTERNS = {
+              "BTC-USDT": re.compile(r"BTC\s*[-/]?\s*USDT", re.I),
+              "ETH-USDT": re.compile(r"ETH\s*[-/]?\s*USDT", re.I),
+          }
+          FIELD_PATTERNS = {
+              "tickSz": re.compile(r"tick\s*size|tickSz", re.I),
+              "lotSz": re.compile(
+                  r"step\s*size|lotSz|quantity\s*precision|amount\s*precision",
+                  re.I,
+              ),
+              "minSz": re.compile(
+                  r"minimum\s+(?:order|trade)\s+quantit|minSz", re.I
+              ),
+              "ctVal": re.compile(
+                  r"face\s*value|contract\s+(?:unit|size)|ctVal", re.I
+              ),
+          }
+
+          def fetch(url: str) -> tuple[bytes, dict]:
+              parsed = urllib.parse.urlparse(url)
+              if parsed.scheme != "https" or parsed.hostname not in {"www.okx.com", "okx.com"}:
+                  raise RuntimeError(f"non-OKX URL refused: {url}")
               request = urllib.request.Request(
                   url,
                   headers={
-                      "User-Agent": "ai-autonomous-trading-os-c6a-source-authority/1.0",
-                      "Accept": "application/json",
+                      "User-Agent": USER_AGENT,
+                      "Accept": "text/html,application/xhtml+xml",
                   },
               )
-              record = {
-                  "index": index,
-                  "variant": source["variant"],
-                  "request_url": url,
-                  "params": params,
-                  "authenticated": False,
-              }
+              with urllib.request.urlopen(request, timeout=45) as response:
+                  body = response.read()
+                  return body, {
+                      "requested_url": url,
+                      "final_url": response.geturl(),
+                      "http_status": response.status,
+                      "content_type": response.headers.get("Content-Type"),
+                      "size": len(body),
+                      "sha256": hashlib.sha256(body).hexdigest(),
+                  }
+
+          first, first_meta = fetch(CATALOG.format(page=1))
+          first_text = first.decode("utf-8", "replace")
+          observed_pages = [int(value) for value in PAGE_RE.findall(first_text)]
+          last_page = max(observed_pages or [1])
+          if not 1 <= last_page <= 250:
+              raise RuntimeError(f"unexpected announcement page count: {last_page}")
+
+          catalog_records = []
+          articles: dict[str, str] = {}
+          for page in range(1, last_page + 1):
+              if page == 1:
+                  body, meta = first, first_meta
+              else:
+                  body, meta = fetch(CATALOG.format(page=page))
+              text = body.decode("utf-8", "replace")
+              meta["page"] = page
+              catalog_records.append(meta)
+              for match in LINK_RE.finditer(text):
+                  href = match.group("href")
+                  title = html.unescape(
+                      TAG_RE.sub(" ", match.group("body"))
+                  )
+                  title = re.sub(r"\s+", " ", title).strip()
+                  if not title or "/page/" in href or "/section/" in href or "/category/" in href:
+                      continue
+                  articles.setdefault(BASE + href, title)
+              if page % 20 == 0:
+                  print(f"catalog progress: {page}/{last_page}")
+              time.sleep(0.08)
+
+          candidates = {
+              url: title
+              for url, title in articles.items()
+              if any(keyword in title.lower() for keyword in TITLE_KEYWORDS)
+          }
+          relevant = []
+          article_errors = []
+          for index, (url, title) in enumerate(sorted(candidates.items()), start=1):
               try:
-                  with urllib.request.urlopen(request, timeout=45) as response:
-                      body = response.read()
-                      record.update(
-                          {
-                              "http_status": response.status,
-                              "final_url": response.geturl(),
-                              "content_type": response.headers.get("Content-Type"),
-                              "response_size": len(body),
-                              "response_sha256": hashlib.sha256(body).hexdigest(),
-                              "response_text": body.decode("utf-8", "replace"),
-                          }
-                      )
-              except urllib.error.HTTPError as exc:
-                  body = exc.read()
-                  record.update(
+                  body, meta = fetch(url)
+              except Exception as exc:
+                  article_errors.append({"url": url, "title": title, "error": repr(exc)})
+                  continue
+              text = html.unescape(body.decode("utf-8", "replace"))
+              plain = re.sub(r"\s+", " ", TAG_RE.sub(" ", text)).strip()
+              symbols = [name for name, pattern in SYMBOL_PATTERNS.items() if pattern.search(plain)]
+              fields = [name for name, pattern in FIELD_PATTERNS.items() if pattern.search(plain)]
+              if symbols and fields:
+                  contexts = []
+                  for symbol in symbols:
+                      match = SYMBOL_PATTERNS[symbol].search(plain)
+                      if match:
+                          contexts.append(plain[max(0, match.start() - 500): match.end() + 1200])
+                  slug = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+                  raw_path = raw_dir / f"{slug}.html"
+                  raw_path.write_bytes(body)
+                  relevant.append(
                       {
-                          "http_status": exc.code,
-                          "final_url": exc.geturl(),
-                          "content_type": exc.headers.get("Content-Type"),
-                          "response_size": len(body),
-                          "response_sha256": hashlib.sha256(body).hexdigest(),
-                          "response_text": body.decode("utf-8", "replace"),
+                          "url": url,
+                          "title": title,
+                          "symbols": symbols,
+                          "fields": fields,
+                          "contexts": contexts,
+                          "response": meta,
+                          "retained_path": str(raw_path),
                       }
                   )
-              except Exception as exc:
-                  record["transport_error"] = repr(exc)
-              rows.append(record)
-              time.sleep(0.4)
+              if index % 25 == 0:
+                  print(f"candidate progress: {index}/{len(candidates)}")
+              time.sleep(0.10)
 
-          parsed = []
-          for row in rows:
-              text = row.get("response_text")
-              payload = None
-              if isinstance(text, str):
-                  try:
-                      payload = json.loads(text)
-                  except json.JSONDecodeError:
-                      payload = None
-              parsed.append(
-                  {
-                      "variant": row["variant"],
-                      "params": row["params"],
-                      "http_status": row.get("http_status"),
-                      "code": payload.get("code") if isinstance(payload, dict) else None,
-                      "msg": payload.get("msg") if isinstance(payload, dict) else None,
-                      "data": payload.get("data") if isinstance(payload, dict) else None,
-                      "response_sha256": row.get("response_sha256"),
-                      "transport_error": row.get("transport_error"),
-                  }
-              )
-
+          catalog_digest = hashlib.sha256(
+              json.dumps(
+                  catalog_records, sort_keys=True, separators=(",", ":")
+              ).encode("utf-8")
+          ).hexdigest()
           summary = {
-              "schema_version": 3,
+              "schema_version": 4,
               "stage": "C6A_SOURCE_AUTHORITY_RESEARCH",
               "status": "PASS",
-              "endpoint": endpoint,
-              "request_count": len(rows),
-              "requests": parsed,
+              "catalog_url_template": CATALOG,
+              "catalog_page_count": last_page,
+              "catalog_page_records": catalog_records,
+              "catalog_records_sha256": catalog_digest,
+              "unique_article_count": len(articles),
+              "metadata_change_candidate_count": len(candidates),
+              "relevant_article_count": len(relevant),
+              "relevant_articles": relevant,
+              "article_errors": article_errors,
+              "search_contract": {
+                  "title_keywords": list(TITLE_KEYWORDS),
+                  "symbol_patterns": list(SYMBOL_PATTERNS),
+                  "field_patterns": list(FIELD_PATTERNS),
+              },
               "authenticated": False,
               "market_file_downloaded": False,
               "economic_result_run": False,
               "c6b_state": "C6B_CLOSED",
-              "c5b_state": "C5B_CLOSED_AND_UNTOUED",
+              "c5b_state": "C5B_CLOSED_AND_UNTOUCHED",
               "holdout_state": "HOLDOUT_CLOSED",
               "paper_state": "PAPER_CLOSED",
               "shadow_state": "SHADOW_CLOSED",
@@ -184,10 +224,13 @@ jobs:
           (out / "summary.json").write_text(
               json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
           )
-          print(f"queried {len(rows)} funding-directory variants")
+          print(
+              f"scan complete: {last_page} pages / {len(articles)} articles / "
+              f"{len(candidates)} candidates / {len(relevant)} relevant"
+          )
           PY
 
-      - name: Upload exact response evidence
+      - name: Upload exact research evidence
         uses: actions/upload-artifact@v4
         with:
           name: c6a-okx-source-authority-${{ github.run_id }}
@@ -203,5 +246,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add research/c6a-okx-source-authority/summary.json
-          git commit -m "research(c6a): retain funding-directory resolution"
+          git commit -m "research(c6a): retain exhaustive metadata announcement scan"
           git push origin HEAD:research/c6a-okx-source-authority
