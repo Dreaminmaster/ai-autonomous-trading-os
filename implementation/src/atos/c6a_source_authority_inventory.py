@@ -1,16 +1,22 @@
 """Higher-level validation for the frozen C6A source-authority inventory.
 
 The catalog title for a critical metadata notice may omit the affected BTC/ETH
-instrument.  This module therefore binds the five already identified official
-transition notices directly and uses a conservative metadata-adjustment title
-classifier for any additional catalog item.
+instrument.  Five already identified official transition notices are bound
+directly, while additional catalog items use a conservative fail-closed title
+classifier.
 """
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlparse
 
-from atos.c6a_source_authority import AUTHORITY_END, AUTHORITY_START, SourceAuthorityError, parse_utc_timestamp, validate_url
+from atos.c6a_source_authority import (
+    AUTHORITY_END,
+    AUTHORITY_START,
+    SourceAuthorityError,
+    parse_utc_timestamp,
+    validate_url,
+)
 from atos.c6a_source_authority_capture import FrozenRequest
 
 
@@ -43,7 +49,9 @@ def direct_transition_article_requests(payload: Mapping[str, Any]) -> tuple[Froz
     if set(rows) != set(KNOWN_TRANSITION_REQUESTS):
         missing = sorted(set(KNOWN_TRANSITION_REQUESTS) - set(rows))
         extra = sorted(set(rows) - set(KNOWN_TRANSITION_REQUESTS))
-        raise SourceAuthorityError(f"known transition announcement inventory drift: missing={missing} extra={extra}")
+        raise SourceAuthorityError(
+            f"known transition announcement inventory drift: missing={missing} extra={extra}"
+        )
     result: list[FrozenRequest] = []
     for request_id, expected_path in KNOWN_TRANSITION_REQUESTS.items():
         row = rows[request_id]
@@ -94,10 +102,13 @@ def classify_catalog_article(
     adjustment_matches = sorted(term for term in ADJUSTMENT_TERMS if term in normalized)
     direct_known_match = url in set(known_urls)
     inside_date_range = AUTHORITY_START <= published_at < AUTHORITY_END
-    selected = inside_date_range and (
-        direct_known_match
-        or bool(metadata_matches and adjustment_matches)
-        or bool(alias_matches and metadata_matches)
+    selected = bool(
+        inside_date_range
+        and (
+            direct_known_match
+            or bool(metadata_matches and adjustment_matches)
+            or bool(alias_matches and metadata_matches)
+        )
     )
     return {
         **dict(article),
