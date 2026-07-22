@@ -1,8 +1,8 @@
 """Controlled public-source capture for the C6A metadata authority gate.
 
-The module expands only the committed query inventory.  It retains response
-bytes before parsing, never calls economic/private endpoints, and emits plain
-records suitable for the separate gate and independent-review modules.
+Only requests derived from the committed query inventory are accepted.  Bytes
+are retained before parsing, redirects remain inside the frozen allowlist, and
+this module contains no candle, funding, account, strategy, or return access.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
+from urllib.parse import parse_qsl, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 from atos.c6a_source_authority import (
@@ -31,6 +31,7 @@ from atos.c6a_source_authority import (
     validate_query_inventory,
     validate_url,
 )
+from atos.c6a_source_authority_metadata import decode_okx_instruments_response
 
 
 CATALOG_PAGE_RE = re.compile(r"Showing\s+(\d+)\s*-\s*(\d+)\s+of\s+(\d+)\s+articles", re.I)
@@ -74,8 +75,7 @@ class _AnchorParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag.lower() == "a" and self._href is None:
-            values = dict(attrs)
-            self._href = values.get("href")
+            self._href = dict(attrs).get("href")
             self._parts = []
 
     def handle_data(self, data: str) -> None:
@@ -139,10 +139,14 @@ def _validate_inventory_extensions(payload: Mapping[str, Any]) -> None:
     if not isinstance(aliases, Mapping) or tuple(aliases.keys()) != INSTRUMENTS:
         raise SourceAuthorityError("query inventory aliases must cover the frozen instruments in order")
     for instrument, values in aliases.items():
-        if not isinstance(values, list) or not values or not all(isinstance(item, str) and item for item in values):
+        if not isinstance(values, list) or not values or not all(
+            isinstance(item, str) and item for item in values
+        ):
             raise SourceAuthorityError(f"invalid aliases for {instrument}")
     terms = payload.get("metadata_terms")
-    if not isinstance(terms, list) or not terms or not all(isinstance(item, str) and item for item in terms):
+    if not isinstance(terms, list) or not terms or not all(
+        isinstance(item, str) and item for item in terms
+    ):
         raise SourceAuthorityError("query inventory metadata terms are required")
     if len({item.casefold() for item in terms}) != len(terms):
         raise SourceAuthorityError("query inventory metadata terms must be unique")
@@ -188,6 +192,8 @@ def _validate_inventory_extensions(payload: Mapping[str, Any]) -> None:
                 raise SourceAuthorityError("archive memento template drift")
             if expansion.get("accepted_status") != "200":
                 raise SourceAuthorityError("archive status contract drift")
+            if "collapse=" in str(row.get("url", "")):
+                raise SourceAuthorityError("archive lookup may not collapse repeated capture timestamps")
     if catalog_count != 1 or archive_count != 4:
         raise SourceAuthorityError("query inventory must contain one catalog and four archive lookups")
 
@@ -246,6 +252,29 @@ def _header_mapping(headers: Message) -> dict[str, str]:
     return {key.lower(): value for key, value in headers.items()}
 
 
+def _retry_delay(
+    error: BaseException,
+    *,
+    default_seconds: int,
+    maximum_backoff_seconds: int,
+) -> int:
+    if isinstance(error, HTTPError) and error.headers is not None:
+        value = error.headers.get("Retry-After")
+        if value and value.isdigit():
+            return min(maximum_backoff_seconds, int(value))
+    return min(maximum_backoff_seconds, default_seconds)
+
+
+def _validate_content_type(expected: str, headers: Mapping[str, str]) -> None:
+    observed = headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    expected_lower = expected.lower()
+    if observed and observed != expected_lower:
+        if not (expected_lower == "application/json" and observed == "text/json"):
+            raise SourceAuthorityError(
+                f"source content type mismatch: expected={expected_lower} observed={observed}"
+            )
+
+
 def capture_request(
     request: FrozenRequest,
     *,
@@ -282,6 +311,12 @@ def capture_request(
                 headers = _header_mapping(response.headers)
             if status != 200 or not data:
                 raise SourceAuthorityError(f"source capture returned status={status} size={len(data)}")
+            validate_url(
+                final_url,
+                request_kind=request.request_kind,
+                canonical_official_url=request.canonical_official_url,
+            )
+            _validate_content_type(request.expected_content_type, headers)
             completed = datetime.now(timezone.utc).isoformat()
             relative = Path("raw") / f"{request.request_id}.bin"
             atomic_write_bytes(output_root / relative, data)
@@ -300,8 +335,14 @@ def capture_request(
             last_error = exc
             if attempt == max_attempts:
                 break
-            delay = min(maximum_backoff_seconds, initial_backoff_seconds * (2 ** (attempt - 1)))
-            time.sleep(delay)
+            exponential = initial_backoff_seconds * (2 ** (attempt - 1))
+            time.sleep(
+                _retry_delay(
+                    exc,
+                    default_seconds=exponential,
+                    maximum_backoff_seconds=maximum_backoff_seconds,
+                )
+            )
     raise SourceAuthorityError(f"source capture failed after {max_attempts} attempts: {last_error}")
 
 
@@ -323,7 +364,9 @@ def response_record(capture: CapturedResponse) -> dict[str, Any]:
     }
 
 
-def parse_announcement_catalog(page_url: str, data: bytes, *, expected_page_size: int = 15) -> dict[str, Any]:
+def parse_announcement_catalog(
+    page_url: str, data: bytes, *, expected_page_size: int = 15
+) -> dict[str, Any]:
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -423,9 +466,7 @@ def classify_article(
         "metadata_term_matches": term_matches,
         "frozen_transition_hint": frozen_transition_hint,
         "selected_for_article_capture": selected,
-        "classification_rule": (
-            "INSTRUMENT_ALIAS_AND_METADATA_TERM_OR_EXACT_FROZEN_TRANSITION_MATCH"
-        ),
+        "classification_rule": "INSTRUMENT_ALIAS_AND_METADATA_TERM_OR_EXACT_FROZEN_TRANSITION_MATCH",
     }
 
 
@@ -450,7 +491,9 @@ def _normalized_okx_instruments_url(url: str) -> tuple[str, tuple[tuple[str, str
     return parsed.path, tuple(sorted(parse_qsl(parsed.query, keep_blank_values=True)))
 
 
-def parse_wayback_cdx(data: bytes, *, canonical_official_url: str) -> tuple[dict[str, Any], ...]:
+def parse_wayback_cdx(
+    data: bytes, *, canonical_official_url: str
+) -> tuple[dict[str, Any], ...]:
     try:
         payload = json.loads(data)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -473,7 +516,10 @@ def parse_wayback_cdx(data: bytes, *, canonical_official_url: str) -> tuple[dict
         captured_at = datetime.strptime(timestamp, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
         if not (AUTHORITY_START <= captured_at < AUTHORITY_END):
             raise SourceAuthorityError("Wayback capture escaped the frozen authority interval")
-        if item["statuscode"] != "200" or item["mimetype"] not in {"application/json", "text/json"}:
+        if item["statuscode"] != "200" or item["mimetype"] not in {
+            "application/json",
+            "text/json",
+        }:
             raise SourceAuthorityError("Wayback capture status or MIME type is ineligible")
         if _normalized_okx_instruments_url(item["original"]) != expected_path_query:
             raise SourceAuthorityError("Wayback original URL does not match the frozen canonical URL")
@@ -492,7 +538,9 @@ def parse_wayback_cdx(data: bytes, *, canonical_official_url: str) -> tuple[dict
     return tuple(captures)
 
 
-def memento_request(capture: Mapping[str, Any], *, parent_request_id: str, index: int) -> FrozenRequest:
+def memento_request(
+    capture: Mapping[str, Any], *, parent_request_id: str, index: int
+) -> FrozenRequest:
     url = str(capture["memento_url"])
     canonical = str(capture["canonical_official_url"])
     validate_url(url, request_kind="archive_lookup", canonical_official_url=canonical)
@@ -506,34 +554,9 @@ def memento_request(capture: Mapping[str, Any], *, parent_request_id: str, index
     )
 
 
-def decode_okx_instruments_response(data: bytes, *, expected_instrument: str) -> dict[str, Any]:
-    try:
-        payload = json.loads(data)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SourceAuthorityError("archived OKX response is not valid JSON") from exc
-    if not isinstance(payload, Mapping) or payload.get("code") != "0" or payload.get("msg") not in ("", None):
-        raise SourceAuthorityError("archived object is not an eligible OKX public response")
-    rows = payload.get("data")
-    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], Mapping):
-        raise SourceAuthorityError("archived OKX instruments response must contain exactly one row")
-    row = rows[0]
-    if row.get("instId") != expected_instrument:
-        raise SourceAuthorityError("archived OKX instrument identity mismatch")
-    required = ["instId", "instType", "baseCcy", "quoteCcy", "lotSz", "minSz", "tickSz", "state"]
-    if expected_instrument.endswith("-SWAP"):
-        required.extend(["settleCcy", "ctVal", "ctValCcy"])
-    missing = [field for field in required if not isinstance(row.get(field), str) or not row[field]]
-    if missing:
-        raise SourceAuthorityError(f"archived OKX response missing required fields: {missing}")
-    selected = {field: row[field] for field in required}
-    return {
-        "code": "0",
-        "msg": "",
-        "data": [selected],
-    }
-
-
-def build_recursive_manifest(root: Path, *, excluded_paths: Iterable[str] = ("manifest.json",)) -> dict[str, Any]:
+def build_recursive_manifest(
+    root: Path, *, excluded_paths: Iterable[str] = ("manifest.json",)
+) -> dict[str, Any]:
     excluded = set(excluded_paths)
     files: list[dict[str, Any]] = []
     for path in sorted(item for item in root.rglob("*") if item.is_file()):
