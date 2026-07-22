@@ -1,0 +1,459 @@
+{
+  "authenticated": false,
+  "c5b_state": "C5B_CLOSED_AND_UNTOUCHED",
+  "c6b_state": "C6B_CLOSED",
+  "economic_result_run": false,
+  "endpoint": "https://www.okx.com/api/v5/public/market-data-history",
+  "holdout_state": "HOLDOUT_CLOSED",
+  "live": "FORBIDDEN",
+  "market_file_downloaded": false,
+  "paper_state": "PAPER_CLOSED",
+  "parsed_response_count": 44,
+  "request_count": 44,
+  "requests": [
+    {
+      "code": "50076",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "1",
+      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
+      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+    },
+    {
+      "code": "50077",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "1",
+      "msg": "The time interval between the start date and end date cannot exceed 20 months.",
+      "response_sha256": "07323365ee248a4cbe302bdd972f95a3ea1d5a46d7dd735dc47e780a34e54c02"
+    },
+    {
+      "code": "50076",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "1",
+      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
+      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+    },
+    {
+      "code": "50077",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "1",
+      "msg": "The time interval between the start date and end date cannot exceed 20 months.",
+      "response_sha256": "07323365ee248a4cbe302bdd972f95a3ea1d5a46d7dd735dc47e780a34e54c02"
+    },
+    {
+      "code": "50076",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "2",
+      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
+      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+    },
+    {
+      "code": "50077",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "2",
+      "msg": "The time interval between the start date and end date cannot exceed 20 months.",
+      "response_sha256": "07323365ee248a4cbe302bdd972f95a3ea1d5a46d7dd735dc47e780a34e54c02"
+    },
+    {
+      "code": "50076",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "2",
+      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
+      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+    },
+    {
+      "code": "50077",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "2",
+      "msg": "The time interval between the start date and end date cannot exceed 20 months.",
+      "response_sha256": "07323365ee248a4cbe302bdd972f95a3ea1d5a46d7dd735dc47e780a34e54c02"
+    },
+    {
+      "code": "50076",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "3",
+      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
+      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+    },
+    {
+      "code": "50077",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "3",
+      "msg": "The time interval between the start date and end date cannot exceed 20 months.",
+      "response_sha256": "07323365ee248a4cbe302bdd972f95a3ea1d5a46d7dd735dc47e780a34e54c02"
+    },
+    {
+      "code": "50076",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "3",
+      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
+      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+    },
+    {
+      "code": "50077",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "3",
+      "msg": "The time interval between the start date and end date cannot exceed 20 months.",
+      "response_sha256": "07323365ee248a4cbe302bdd972f95a3ea1d5a46d7dd735dc47e780a34e54c02"
+    },
+    {
+      "code": "50076",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "4",
+      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
+      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+    },
+    {
+      "code": "50016",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "4",
+      "msg": "Parameter dateAggrType doesn't match parameter module",
+      "response_sha256": "d61cf3ed3e78b6931ba753f8d9c28d3c7abab5b385bfe5cd277b591cb53db593"
+    },
+    {
+      "code": "50076",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "4",
+      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
+      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+    },
+    {
+      "code": "50016",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "4",
+      "msg": "Parameter dateAggrType doesn't match parameter module",
+      "response_sha256": "d61cf3ed3e78b6931ba753f8d9c28d3c7abab5b385bfe5cd277b591cb53db593"
+    },
+    {
+      "code": "50076",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "5",
+      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
+      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+    },
+    {
+      "code": "50016",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "5",
+      "msg": "Parameter dateAggrType doesn't match parameter module",
+      "response_sha256": "d61cf3ed3e78b6931ba753f8d9c28d3c7abab5b385bfe5cd277b591cb53db593"
+    },
+    {
+      "code": "50076",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "5",
+      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
+      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+    },
+    {
+      "code": "50016",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "5",
+      "msg": "Parameter dateAggrType doesn't match parameter module",
+      "response_sha256": "d61cf3ed3e78b6931ba753f8d9c28d3c7abab5b385bfe5cd277b591cb53db593"
+    },
+    {
+      "code": "50076",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "6",
+      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
+      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+    },
+    {
+      "code": "50016",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "6",
+      "msg": "Parameter dateAggrType doesn't match parameter module",
+      "response_sha256": "d61cf3ed3e78b6931ba753f8d9c28d3c7abab5b385bfe5cd277b591cb53db593"
+    },
+    {
+      "code": "50076",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "6",
+      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
+      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+    },
+    {
+      "code": "50016",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "6",
+      "msg": "Parameter dateAggrType doesn't match parameter module",
+      "response_sha256": "d61cf3ed3e78b6931ba753f8d9c28d3c7abab5b385bfe5cd277b591cb53db593"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "7",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "7",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "7",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "7",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "8",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "8",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "8",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "8",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "9",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "9",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "9",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "9",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "10",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "10",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "10",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "51000",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "10",
+      "msg": "Parameter module error",
+      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
+    },
+    {
+      "code": "50016",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "11",
+      "msg": "Parameter instType doesn't match parameter module",
+      "response_sha256": "0fbf291b40c2cdfca65cfcda393b3f4881686cd93441bb6fed434b4f6cdff882"
+    },
+    {
+      "code": "50016",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "BTC-USDT",
+      "http_status": 400,
+      "module": "11",
+      "msg": "Parameter instType doesn't match parameter module",
+      "response_sha256": "0fbf291b40c2cdfca65cfcda393b3f4881686cd93441bb6fed434b4f6cdff882"
+    },
+    {
+      "code": "50016",
+      "data": [],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "11",
+      "msg": "Parameter instType doesn't match parameter module",
+      "response_sha256": "0fbf291b40c2cdfca65cfcda393b3f4881686cd93441bb6fed434b4f6cdff882"
+    },
+    {
+      "code": "50016",
+      "data": [],
+      "dateAggrType": "monthly",
+      "family": "ETH-USDT",
+      "http_status": 400,
+      "module": "11",
+      "msg": "Parameter instType doesn't match parameter module",
+      "response_sha256": "0fbf291b40c2cdfca65cfcda393b3f4881686cd93441bb6fed434b4f6cdff882"
+    }
+  ],
+  "schema_version": 1,
+  "shadow_state": "SHADOW_CLOSED",
+  "stage": "C6A_SOURCE_AUTHORITY_RESEARCH",
+  "status": "PASS"
+}
