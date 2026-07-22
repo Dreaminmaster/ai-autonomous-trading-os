@@ -1,43 +1,75 @@
 #!/usr/bin/env python3
-"""Run multi-period backtests and generate report."""
-import subprocess, os
+"""Run bounded multi-period backtests and generate a diagnostic report."""
+from __future__ import annotations
 
-os.makedirs("freqtrade_data/backtest_results", exist_ok=True)
-os.makedirs("validation_reports", exist_ok=True)
+import os
+from pathlib import Path
 
-PERIODS = ["20250101-20250401", "20250401-20250701", "20250101-20250701"]
+from ci_subprocess_timeout import run_logged
 
-with open("validation_reports/multi_period_backtest.md", "w") as f:
-    f.write("# Multi-Period Backtest\n\n")
-    f.write("| Period | Trades | Profit % | Max DD % | Status |\n")
-    f.write("|--------|--------|----------|----------|--------|\n")
+RESULTS = Path("freqtrade_data/backtest_results")
+REPORTS = Path("validation_reports")
+RESULTS.mkdir(parents=True, exist_ok=True)
+REPORTS.mkdir(parents=True, exist_ok=True)
 
-for i, period in enumerate(PERIODS):
-    log = f"freqtrade_data/backtest_results/mp_{i}.log"
-    print(f"=== Multi-period {i}: {period} ===")
-    subprocess.run([
-        "freqtrade", "backtesting",
-        "--config", "freqtrade_data/config.dryrun.json",
-        "--strategy", "AISupervisedStrategy",
-        "--strategy-path", "freqtrade_data/strategies",
-        "--datadir", "freqtrade_data/data/okx",
-        "--timerange", period,
-        "--timeframe", "5m",
-    ], check=False, stdout=open(log, "w"), stderr=subprocess.STDOUT)
+PERIODS = ("20250101-20250401", "20250401-20250701", "20250101-20250701")
+BACKTEST_TIMEOUT_SECONDS = int(
+    os.environ.get("ATOS_CI_BACKTEST_TIMEOUT_SECONDS", "900")
+)
+REPORT = REPORTS / "multi_period_backtest.md"
 
-    text = open(log).read()
-    found = False
-    for line in text.split("\n"):
-        if "AISupervisedStrategy" in line and "\u2502" in line and "TOTAL" not in line[:20]:
-            parts = [p.strip() for p in line.split("\u2502")]
-            if len(parts) >= 7 and parts[2].strip().isdigit():
-                with open("validation_reports/multi_period_backtest.md", "a") as f:
-                    f.write(f"| {period} | {parts[2].strip()} | {parts[5].strip()} | {parts[8].strip() if len(parts)>8 else '-'} | REAL_RUN |\n")
-                found = True
-                break
-    if not found:
-        with open("validation_reports/multi_period_backtest.md", "a") as f:
-            f.write(f"| {period} | - | - | - | FAILED |\n")
+REPORT.write_text(
+    "# Multi-Period Backtest\n\n"
+    "| Period | Trades | Profit % | Max DD % | Status |\n"
+    "|--------|--------|----------|----------|--------|\n",
+    encoding="utf-8",
+)
+
+for index, period in enumerate(PERIODS):
+    log = RESULTS / f"mp_{index}.log"
+    print(f"=== Multi-period {index}: {period} ===")
+    process_status = run_logged(
+        [
+            "freqtrade",
+            "backtesting",
+            "--config",
+            "freqtrade_data/config.dryrun.json",
+            "--strategy",
+            "AISupervisedStrategy",
+            "--strategy-path",
+            "freqtrade_data/strategies",
+            "--datadir",
+            "freqtrade_data/data/okx",
+            "--timerange",
+            period,
+            "--timeframe",
+            "5m",
+        ],
+        log_path=log,
+        timeout_seconds=BACKTEST_TIMEOUT_SECONDS,
+    )
+
+    text = log.read_text(encoding="utf-8", errors="replace")
+    result_row: str | None = None
+    if process_status == "SUCCESS":
+        for line in text.splitlines():
+            if (
+                "AISupervisedStrategy" in line
+                and "│" in line
+                and "TOTAL" not in line[:20]
+            ):
+                parts = [part.strip() for part in line.split("│")]
+                if len(parts) >= 7 and parts[2].isdigit():
+                    drawdown = parts[8] if len(parts) > 8 else "-"
+                    result_row = (
+                        f"| {period} | {parts[2]} | {parts[5]} | "
+                        f"{drawdown} | REAL_RUN |\n"
+                    )
+                    break
+    if result_row is None:
+        result_row = f"| {period} | - | - | - | {process_status} |\n"
+    with REPORT.open("a", encoding="utf-8") as handle:
+        handle.write(result_row)
 
 print("=== Multi-period done ===")
-print(open("validation_reports/multi_period_backtest.md").read())
+print(REPORT.read_text(encoding="utf-8"))
