@@ -8,452 +8,724 @@
   "live": "FORBIDDEN",
   "market_file_downloaded": false,
   "paper_state": "PAPER_CLOSED",
-  "parsed_response_count": 44,
-  "request_count": 44,
+  "parsed_response_count": 12,
+  "request_count": 12,
   "requests": [
     {
-      "code": "50076",
-      "data": [],
+      "code": "0",
+      "data": [
+        {
+          "dateAggrType": "daily",
+          "details": [
+            {
+              "ccy": "",
+              "dateRangeEnd": "1704816000000",
+              "dateRangeStart": "1704038400000",
+              "groupDetails": [
+                {
+                  "dateTs": "1704816000000",
+                  "filename": "BTC-USDT-SWAP-trades-2024-01-10.zip",
+                  "sizeMB": "10.39",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240110/BTC-USDT-SWAP-trades-2024-01-10.zip?v=999"
+                },
+                {
+                  "dateTs": "1704729600000",
+                  "filename": "BTC-USDT-SWAP-trades-2024-01-09.zip",
+                  "sizeMB": "8.49",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240109/BTC-USDT-SWAP-trades-2024-01-09.zip?v=999"
+                },
+                {
+                  "dateTs": "1704643200000",
+                  "filename": "BTC-USDT-SWAP-trades-2024-01-08.zip",
+                  "sizeMB": "6.29",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240108/BTC-USDT-SWAP-trades-2024-01-08.zip?v=999"
+                },
+                {
+                  "dateTs": "1704556800000",
+                  "filename": "BTC-USDT-SWAP-trades-2024-01-07.zip",
+                  "sizeMB": "2.51",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240107/BTC-USDT-SWAP-trades-2024-01-07.zip?v=999"
+                },
+                {
+                  "dateTs": "1704470400000",
+                  "filename": "BTC-USDT-SWAP-trades-2024-01-06.zip",
+                  "sizeMB": "3.32",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240106/BTC-USDT-SWAP-trades-2024-01-06.zip?v=999"
+                },
+                {
+                  "dateTs": "1704384000000",
+                  "filename": "BTC-USDT-SWAP-trades-2024-01-05.zip",
+                  "sizeMB": "7.18",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240105/BTC-USDT-SWAP-trades-2024-01-05.zip?v=999"
+                },
+                {
+                  "dateTs": "1704297600000",
+                  "filename": "BTC-USDT-SWAP-trades-2024-01-04.zip",
+                  "sizeMB": "6.2",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240104/BTC-USDT-SWAP-trades-2024-01-04.zip?v=999"
+                },
+                {
+                  "dateTs": "1704211200000",
+                  "filename": "BTC-USDT-SWAP-trades-2024-01-03.zip",
+                  "sizeMB": "9.98",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240103/BTC-USDT-SWAP-trades-2024-01-03.zip?v=999"
+                },
+                {
+                  "dateTs": "1704124800000",
+                  "filename": "BTC-USDT-SWAP-trades-2024-01-02.zip",
+                  "sizeMB": "7.45",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240102/BTC-USDT-SWAP-trades-2024-01-02.zip?v=999"
+                },
+                {
+                  "dateTs": "1704038400000",
+                  "filename": "BTC-USDT-SWAP-trades-2024-01-01.zip",
+                  "sizeMB": "2.47",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240101/BTC-USDT-SWAP-trades-2024-01-01.zip?v=999"
+                }
+              ],
+              "groupSizeMB": "64.28",
+              "instFamily": "BTC-USDT",
+              "instId": "",
+              "instType": "SWAP"
+            }
+          ],
+          "totalSizeMB": "64.28",
+          "ts": "1784730594753"
+        }
+      ],
       "dateAggrType": "daily",
       "family": "BTC-USDT",
-      "http_status": 400,
+      "http_status": 200,
       "module": "1",
-      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
-      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+      "msg": "",
+      "response_sha256": "a8e74aee90cfc9f9264e21766fe2ee726285fba15a251d2f174596cd86e29aa1"
     },
     {
-      "code": "50077",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "BTC-USDT",
-      "http_status": 400,
+      "code": "0",
+      "data": [
+        {
+          "dateAggrType": "daily",
+          "details": [
+            {
+              "ccy": "",
+              "dateRangeEnd": "1704816000000",
+              "dateRangeStart": "1704038400000",
+              "groupDetails": [
+                {
+                  "dateTs": "1704816000000",
+                  "filename": "ETH-USDT-SWAP-trades-2024-01-10.zip",
+                  "sizeMB": "11.86",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240110/ETH-USDT-SWAP-trades-2024-01-10.zip?v=999"
+                },
+                {
+                  "dateTs": "1704729600000",
+                  "filename": "ETH-USDT-SWAP-trades-2024-01-09.zip",
+                  "sizeMB": "6.07",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240109/ETH-USDT-SWAP-trades-2024-01-09.zip?v=999"
+                },
+                {
+                  "dateTs": "1704643200000",
+                  "filename": "ETH-USDT-SWAP-trades-2024-01-08.zip",
+                  "sizeMB": "5.7",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240108/ETH-USDT-SWAP-trades-2024-01-08.zip?v=999"
+                },
+                {
+                  "dateTs": "1704556800000",
+                  "filename": "ETH-USDT-SWAP-trades-2024-01-07.zip",
+                  "sizeMB": "2.28",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240107/ETH-USDT-SWAP-trades-2024-01-07.zip?v=999"
+                },
+                {
+                  "dateTs": "1704470400000",
+                  "filename": "ETH-USDT-SWAP-trades-2024-01-06.zip",
+                  "sizeMB": "3.41",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240106/ETH-USDT-SWAP-trades-2024-01-06.zip?v=999"
+                },
+                {
+                  "dateTs": "1704384000000",
+                  "filename": "ETH-USDT-SWAP-trades-2024-01-05.zip",
+                  "sizeMB": "5.17",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240105/ETH-USDT-SWAP-trades-2024-01-05.zip?v=999"
+                },
+                {
+                  "dateTs": "1704297600000",
+                  "filename": "ETH-USDT-SWAP-trades-2024-01-04.zip",
+                  "sizeMB": "5.34",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240104/ETH-USDT-SWAP-trades-2024-01-04.zip?v=999"
+                },
+                {
+                  "dateTs": "1704211200000",
+                  "filename": "ETH-USDT-SWAP-trades-2024-01-03.zip",
+                  "sizeMB": "10.19",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240103/ETH-USDT-SWAP-trades-2024-01-03.zip?v=999"
+                },
+                {
+                  "dateTs": "1704124800000",
+                  "filename": "ETH-USDT-SWAP-trades-2024-01-02.zip",
+                  "sizeMB": "5.8",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240102/ETH-USDT-SWAP-trades-2024-01-02.zip?v=999"
+                },
+                {
+                  "dateTs": "1704038400000",
+                  "filename": "ETH-USDT-SWAP-trades-2024-01-01.zip",
+                  "sizeMB": "2.96",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/trades/daily/20240101/ETH-USDT-SWAP-trades-2024-01-01.zip?v=999"
+                }
+              ],
+              "groupSizeMB": "58.78",
+              "instFamily": "ETH-USDT",
+              "instId": "",
+              "instType": "SWAP"
+            }
+          ],
+          "totalSizeMB": "58.78",
+          "ts": "1784730595367"
+        }
+      ],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 200,
       "module": "1",
-      "msg": "The time interval between the start date and end date cannot exceed 20 months.",
-      "response_sha256": "07323365ee248a4cbe302bdd972f95a3ea1d5a46d7dd735dc47e780a34e54c02"
+      "msg": "",
+      "response_sha256": "4cfa77700e83e93bf622665c91624590025826baa6fce0df5613877f70fab065"
     },
     {
-      "code": "50076",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "1",
-      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
-      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
-    },
-    {
-      "code": "50077",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "1",
-      "msg": "The time interval between the start date and end date cannot exceed 20 months.",
-      "response_sha256": "07323365ee248a4cbe302bdd972f95a3ea1d5a46d7dd735dc47e780a34e54c02"
-    },
-    {
-      "code": "50076",
-      "data": [],
+      "code": "0",
+      "data": [
+        {
+          "dateAggrType": "daily",
+          "details": [
+            {
+              "ccy": "",
+              "dateRangeEnd": "1704816000000",
+              "dateRangeStart": "1704038400000",
+              "groupDetails": [
+                {
+                  "dateTs": "1704816000000",
+                  "filename": "BTC-USDT-SWAP-candlesticks-2024-01-10.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240110/BTC-USDT-SWAP-candlesticks-2024-01-10.zip?v=999"
+                },
+                {
+                  "dateTs": "1704729600000",
+                  "filename": "BTC-USDT-SWAP-candlesticks-2024-01-09.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240109/BTC-USDT-SWAP-candlesticks-2024-01-09.zip?v=999"
+                },
+                {
+                  "dateTs": "1704643200000",
+                  "filename": "BTC-USDT-SWAP-candlesticks-2024-01-08.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240108/BTC-USDT-SWAP-candlesticks-2024-01-08.zip?v=999"
+                },
+                {
+                  "dateTs": "1704556800000",
+                  "filename": "BTC-USDT-SWAP-candlesticks-2024-01-07.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240107/BTC-USDT-SWAP-candlesticks-2024-01-07.zip?v=999"
+                },
+                {
+                  "dateTs": "1704470400000",
+                  "filename": "BTC-USDT-SWAP-candlesticks-2024-01-06.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240106/BTC-USDT-SWAP-candlesticks-2024-01-06.zip?v=999"
+                },
+                {
+                  "dateTs": "1704384000000",
+                  "filename": "BTC-USDT-SWAP-candlesticks-2024-01-05.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240105/BTC-USDT-SWAP-candlesticks-2024-01-05.zip?v=999"
+                },
+                {
+                  "dateTs": "1704297600000",
+                  "filename": "BTC-USDT-SWAP-candlesticks-2024-01-04.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240104/BTC-USDT-SWAP-candlesticks-2024-01-04.zip?v=999"
+                },
+                {
+                  "dateTs": "1704211200000",
+                  "filename": "BTC-USDT-SWAP-candlesticks-2024-01-03.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240103/BTC-USDT-SWAP-candlesticks-2024-01-03.zip?v=999"
+                },
+                {
+                  "dateTs": "1704124800000",
+                  "filename": "BTC-USDT-SWAP-candlesticks-2024-01-02.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240102/BTC-USDT-SWAP-candlesticks-2024-01-02.zip?v=999"
+                },
+                {
+                  "dateTs": "1704038400000",
+                  "filename": "BTC-USDT-SWAP-candlesticks-2024-01-01.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240101/BTC-USDT-SWAP-candlesticks-2024-01-01.zip?v=999"
+                }
+              ],
+              "groupSizeMB": "0.40",
+              "instFamily": "BTC-USDT",
+              "instId": "",
+              "instType": "SWAP"
+            }
+          ],
+          "totalSizeMB": "0.40",
+          "ts": "1784730596006"
+        }
+      ],
       "dateAggrType": "daily",
       "family": "BTC-USDT",
-      "http_status": 400,
+      "http_status": 200,
       "module": "2",
-      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
-      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+      "msg": "",
+      "response_sha256": "87dab21c02b1944dc6bcb84d643929f25e7b44e873b3728f949efd3fd0c74abd"
     },
     {
-      "code": "50077",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "BTC-USDT",
-      "http_status": 400,
+      "code": "0",
+      "data": [
+        {
+          "dateAggrType": "daily",
+          "details": [
+            {
+              "ccy": "",
+              "dateRangeEnd": "1704816000000",
+              "dateRangeStart": "1704038400000",
+              "groupDetails": [
+                {
+                  "dateTs": "1704816000000",
+                  "filename": "ETH-USDT-SWAP-candlesticks-2024-01-10.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240110/ETH-USDT-SWAP-candlesticks-2024-01-10.zip?v=999"
+                },
+                {
+                  "dateTs": "1704729600000",
+                  "filename": "ETH-USDT-SWAP-candlesticks-2024-01-09.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240109/ETH-USDT-SWAP-candlesticks-2024-01-09.zip?v=999"
+                },
+                {
+                  "dateTs": "1704643200000",
+                  "filename": "ETH-USDT-SWAP-candlesticks-2024-01-08.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240108/ETH-USDT-SWAP-candlesticks-2024-01-08.zip?v=999"
+                },
+                {
+                  "dateTs": "1704556800000",
+                  "filename": "ETH-USDT-SWAP-candlesticks-2024-01-07.zip",
+                  "sizeMB": "0.03",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240107/ETH-USDT-SWAP-candlesticks-2024-01-07.zip?v=999"
+                },
+                {
+                  "dateTs": "1704470400000",
+                  "filename": "ETH-USDT-SWAP-candlesticks-2024-01-06.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240106/ETH-USDT-SWAP-candlesticks-2024-01-06.zip?v=999"
+                },
+                {
+                  "dateTs": "1704384000000",
+                  "filename": "ETH-USDT-SWAP-candlesticks-2024-01-05.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240105/ETH-USDT-SWAP-candlesticks-2024-01-05.zip?v=999"
+                },
+                {
+                  "dateTs": "1704297600000",
+                  "filename": "ETH-USDT-SWAP-candlesticks-2024-01-04.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240104/ETH-USDT-SWAP-candlesticks-2024-01-04.zip?v=999"
+                },
+                {
+                  "dateTs": "1704211200000",
+                  "filename": "ETH-USDT-SWAP-candlesticks-2024-01-03.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240103/ETH-USDT-SWAP-candlesticks-2024-01-03.zip?v=999"
+                },
+                {
+                  "dateTs": "1704124800000",
+                  "filename": "ETH-USDT-SWAP-candlesticks-2024-01-02.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240102/ETH-USDT-SWAP-candlesticks-2024-01-02.zip?v=999"
+                },
+                {
+                  "dateTs": "1704038400000",
+                  "filename": "ETH-USDT-SWAP-candlesticks-2024-01-01.zip",
+                  "sizeMB": "0.04",
+                  "url": "https://static.okx.com/cdn/okex/traderecords/candlesticks/daily/20240101/ETH-USDT-SWAP-candlesticks-2024-01-01.zip?v=999"
+                }
+              ],
+              "groupSizeMB": "0.39",
+              "instFamily": "ETH-USDT",
+              "instId": "",
+              "instType": "SWAP"
+            }
+          ],
+          "totalSizeMB": "0.39",
+          "ts": "1784730596642"
+        }
+      ],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 200,
       "module": "2",
-      "msg": "The time interval between the start date and end date cannot exceed 20 months.",
-      "response_sha256": "07323365ee248a4cbe302bdd972f95a3ea1d5a46d7dd735dc47e780a34e54c02"
+      "msg": "",
+      "response_sha256": "cd5bef54436154d0b933f5716114ea21844d90a20b5a15b664cee289671af6d7"
     },
     {
-      "code": "50076",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "2",
-      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
-      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
-    },
-    {
-      "code": "50077",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "2",
-      "msg": "The time interval between the start date and end date cannot exceed 20 months.",
-      "response_sha256": "07323365ee248a4cbe302bdd972f95a3ea1d5a46d7dd735dc47e780a34e54c02"
-    },
-    {
-      "code": "50076",
-      "data": [],
+      "code": "0",
+      "data": [
+        {
+          "dateAggrType": "daily",
+          "details": [],
+          "totalSizeMB": "0",
+          "ts": "1784730597283"
+        }
+      ],
       "dateAggrType": "daily",
       "family": "BTC-USDT",
-      "http_status": 400,
+      "http_status": 200,
       "module": "3",
-      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
-      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+      "msg": "",
+      "response_sha256": "544d47cf80c54b80dc7ba00ea21b2352cbca5f62ec01322fbd0ad114e9d7b7ee"
     },
     {
-      "code": "50077",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "BTC-USDT",
-      "http_status": 400,
+      "code": "0",
+      "data": [
+        {
+          "dateAggrType": "daily",
+          "details": [],
+          "totalSizeMB": "0",
+          "ts": "1784730597930"
+        }
+      ],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 200,
       "module": "3",
-      "msg": "The time interval between the start date and end date cannot exceed 20 months.",
-      "response_sha256": "07323365ee248a4cbe302bdd972f95a3ea1d5a46d7dd735dc47e780a34e54c02"
+      "msg": "",
+      "response_sha256": "212bb35af16a8afb8e0f13ac8b58027320ca08688719f0b60a4818f0974cb13e"
     },
     {
-      "code": "50076",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "3",
-      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
-      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
-    },
-    {
-      "code": "50077",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "3",
-      "msg": "The time interval between the start date and end date cannot exceed 20 months.",
-      "response_sha256": "07323365ee248a4cbe302bdd972f95a3ea1d5a46d7dd735dc47e780a34e54c02"
-    },
-    {
-      "code": "50076",
-      "data": [],
+      "code": "0",
+      "data": [
+        {
+          "dateAggrType": "daily",
+          "details": [
+            {
+              "ccy": "",
+              "dateRangeEnd": "1704844800000",
+              "dateRangeStart": "1704067200000",
+              "groupDetails": [
+                {
+                  "dateTs": "1704844800000",
+                  "filename": "BTC-USDT-SWAP-L2orderbook-400lv-2024-01-10.tar.gz",
+                  "sizeMB": "672.79",
+                  "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20240110/BTC-USDT-SWAP-L2orderbook-400lv-2024-01-10.tar.gz"
+                },
+                {
+                  "dateTs": "1704758400000",
+                  "filename": "BTC-USDT-SWAP-L2orderbook-400lv-2024-01-09.tar.gz",
+                  "sizeMB": "540.09",
+                  "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20240109/BTC-USDT-SWAP-L2orderbook-400lv-2024-01-09.tar.gz"
+                },
+                {
+                  "dateTs": "1704672000000",
+                  "filename": "BTC-USDT-SWAP-L2orderbook-400lv-2024-01-08.tar.gz",
+                  "sizeMB": "565.87",
+                  "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20240108/BTC-USDT-SWAP-L2orderbook-400lv-2024-01-08.tar.gz"
+                },
+                {
+                  "dateTs": "1704585600000",
+                  "filename": "BTC-USDT-SWAP-L2orderbook-400lv-2024-01-07.tar.gz",
+                  "sizeMB": "342.44",
+                  "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20240107/BTC-USDT-SWAP-L2orderbook-400lv-2024-01-07.tar.gz"
+                },
+                {
+                  "dateTs": "1704499200000",
+                  "filename": "BTC-USDT-SWAP-L2orderbook-400lv-2024-01-06.tar.gz",
+                  "sizeMB": "305.43",
+                  "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20240106/BTC-USDT-SWAP-L2orderbook-400lv-2024-01-06.tar.gz"
+                },
+                {
+                  "dateTs": "1704412800000",
+                  "filename": "BTC-USDT-SWAP-L2orderbook-400lv-2024-01-05.tar.gz",
+                  "sizeMB": "476.89",
+                  "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20240105/BTC-USDT-SWAP-L2orderbook-400lv-2024-01-05.tar.gz"
+                },
+                {
+                  "dateTs": "1704326400000",
+                  "filename": "BTC-USDT-SWAP-L2orderbook-400lv-2024-01-04.tar.gz",
+                  "sizeMB": "508.85",
+                  "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20240104/BTC-USDT-SWAP-L2orderbook-400lv-2024-01-04.tar.gz"
+                },
+                {
+                  "dateTs": "1704240000000",
+                  "filename": "BTC-USDT-SWAP-L2orderbook-400lv-2024-01-03.tar.gz",
+                  "sizeMB": "610.77",
+                  "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20240103/BTC-USDT-SWAP-L2orderbook-400lv-2024-01-03.tar.gz"
+                },
+                {
+                  "dateTs": "1704153600000",
+                  "filename": "BTC-USDT-SWAP-L2orderbook-400lv-2024-01-02.tar.gz",
+                  "sizeMB": "561.94",
+                  "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20240102/BTC-USDT-SWAP-L2orderbook-400lv-2024-01-02.tar.gz"
+                },
+                {
+                  "dateTs": "1704067200000",
+                  "filename": "BTC-USDT-SWAP-L2orderbook-400lv-2024-01-01.tar.gz",
+                  "sizeMB": "359.21",
+                  "url": "https://static.okx.com/cdn/okx/match/orderbook/L2/400lv/daily/20240101/BTC-USDT-SWAP-L2orderbook-400lv-2024-01-01.tar.gz"
+                }
+              ],
+              "groupSizeMB": "4944.28",
+              "instFamily": "BTC-USDT",
+              "instId": "",
+              "instType": "SWAP"
+            }
+          ],
+          "totalSizeMB": "4944.28",
+          "ts": "1784730598578"
+        }
+      ],
       "dateAggrType": "daily",
       "family": "BTC-USDT",
-      "http_status": 400,
+      "http_status": 200,
       "module": "4",
-      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
-      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+      "msg": "",
+      "response_sha256": "8e9bd96ae153d2c5a25874e1eee7c059121004aa53d73b017e32b5f5a18342fd"
     },
     {
-      "code": "50016",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "BTC-USDT",
-      "http_status": 400,
+      "code": "0",
+      "data": [
+        {
+          "dateAggrType": "daily",
+          "details": [],
+          "totalSizeMB": "0",
+          "ts": "1784730599229"
+        }
+      ],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 200,
       "module": "4",
-      "msg": "Parameter dateAggrType doesn't match parameter module",
-      "response_sha256": "d61cf3ed3e78b6931ba753f8d9c28d3c7abab5b385bfe5cd277b591cb53db593"
+      "msg": "",
+      "response_sha256": "00c0067d9b714c4183253e364d3301b22ddfa2fbc3f29813be4efb93bbe06430"
     },
     {
-      "code": "50076",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "4",
-      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
-      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
-    },
-    {
-      "code": "50016",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "4",
-      "msg": "Parameter dateAggrType doesn't match parameter module",
-      "response_sha256": "d61cf3ed3e78b6931ba753f8d9c28d3c7abab5b385bfe5cd277b591cb53db593"
-    },
-    {
-      "code": "50076",
-      "data": [],
+      "code": "0",
+      "data": [
+        {
+          "dateAggrType": "daily",
+          "details": [],
+          "totalSizeMB": "0",
+          "ts": "1784730599877"
+        }
+      ],
       "dateAggrType": "daily",
       "family": "BTC-USDT",
-      "http_status": 400,
+      "http_status": 200,
       "module": "5",
-      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
-      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+      "msg": "",
+      "response_sha256": "9154613f82d27d0d52ef7324f43c66aaf1eb6b722e891b127436b1ce7417906e"
     },
     {
-      "code": "50016",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "BTC-USDT",
-      "http_status": 400,
+      "code": "0",
+      "data": [
+        {
+          "dateAggrType": "daily",
+          "details": [],
+          "totalSizeMB": "0",
+          "ts": "1784730600506"
+        }
+      ],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 200,
       "module": "5",
-      "msg": "Parameter dateAggrType doesn't match parameter module",
-      "response_sha256": "d61cf3ed3e78b6931ba753f8d9c28d3c7abab5b385bfe5cd277b591cb53db593"
+      "msg": "",
+      "response_sha256": "7d71da0bdf30c68545db8e12d07fbfe40704a16d1084bb0d06b21068bed84361"
     },
     {
-      "code": "50076",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "5",
-      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
-      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
-    },
-    {
-      "code": "50016",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "5",
-      "msg": "Parameter dateAggrType doesn't match parameter module",
-      "response_sha256": "d61cf3ed3e78b6931ba753f8d9c28d3c7abab5b385bfe5cd277b591cb53db593"
-    },
-    {
-      "code": "50076",
-      "data": [],
+      "code": "0",
+      "data": [
+        {
+          "dateAggrType": "daily",
+          "details": [
+            {
+              "ccy": "",
+              "dateRangeEnd": "1704844800000",
+              "dateRangeStart": "1704067200000",
+              "groupDetails": [
+                {
+                  "dateTs": "1704844800000",
+                  "filename": "BTC-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "756.74",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240110/swap/BTC-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=TEYqCx8LNC9I2CkNWbgObLLAPsc%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704758400000",
+                  "filename": "BTC-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "628.33",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240109/swap/BTC-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=LLR99iSZff%2Foggk8A0jeR002f4Y%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704672000000",
+                  "filename": "BTC-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "648.08",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240108/swap/BTC-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=9u%2BerdaLCQLVTx8Pe8j%2FYX8Bcas%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704585600000",
+                  "filename": "BTC-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "415.68",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240107/swap/BTC-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=HPFOO2o9U4p9cr9wye2jhraO4bY%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704499200000",
+                  "filename": "BTC-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "380.68",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240106/swap/BTC-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=U8P0r%2Bdcu95oY9QGYWT9sfns7qg%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704412800000",
+                  "filename": "BTC-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "595.11",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240105/swap/BTC-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=3R7vLXLBI7hyAeu0eNiQUyKtzW4%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704326400000",
+                  "filename": "BTC-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "650.05",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240104/swap/BTC-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=gwzb7WYGoY1IQOglNtmAC8mrtIk%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704240000000",
+                  "filename": "BTC-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "721.83",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240103/swap/BTC-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=HgYw51GQ8V5Orq%2BHI6L9s4TISdA%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704153600000",
+                  "filename": "BTC-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "714.48",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240102/swap/BTC-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=Lp8RPlmNVwpfNHSrwbjQ3u1Ci78%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704067200000",
+                  "filename": "BTC-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "472.87",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240101/swap/BTC-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=GiacycWoaj4jOhf8eA4ZZQ9VWR8%3D&response-content-type=application%2Fgzip"
+                }
+              ],
+              "groupSizeMB": "5983.85",
+              "instFamily": "BTC-USDT",
+              "instId": "",
+              "instType": "SWAP"
+            }
+          ],
+          "totalSizeMB": "5983.85",
+          "ts": "1784730601285"
+        }
+      ],
       "dateAggrType": "daily",
       "family": "BTC-USDT",
-      "http_status": 400,
+      "http_status": 200,
       "module": "6",
-      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
-      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
+      "msg": "",
+      "response_sha256": "b3600f63d2d884c47c978097a6760e6cbd4ce8ed659553d3c8b9267916c829a3"
     },
     {
-      "code": "50016",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "BTC-USDT",
-      "http_status": 400,
+      "code": "0",
+      "data": [
+        {
+          "dateAggrType": "daily",
+          "details": [
+            {
+              "ccy": "",
+              "dateRangeEnd": "1704844800000",
+              "dateRangeStart": "1704067200000",
+              "groupDetails": [
+                {
+                  "dateTs": "1704844800000",
+                  "filename": "ETH-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "852.54",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240110/swap/ETH-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=TMdLFslKG7r1ZcT09l0le1VRLZo%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704758400000",
+                  "filename": "ETH-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "582.38",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240109/swap/ETH-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=lVfqdG180tomf3ez83T0aNczinI%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704672000000",
+                  "filename": "ETH-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "654.38",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240108/swap/ETH-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=Iq9Xq1qgOWd%2FrGB5nSQiO62OpAQ%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704585600000",
+                  "filename": "ETH-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "413.83",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240107/swap/ETH-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=MRmeho340mdUg1FRt4tINVUCJZs%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704499200000",
+                  "filename": "ETH-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "393.34",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240106/swap/ETH-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=1qiv%2FBAAZUxqO5vyASWVv3krF0Y%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704412800000",
+                  "filename": "ETH-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "563.61",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240105/swap/ETH-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=h4b0za88wnls6xtRF4nIJEyK5fE%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704326400000",
+                  "filename": "ETH-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "613.63",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240104/swap/ETH-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=cknoiG4Y74H9LJKAdzkRhnmg%2FMs%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704240000000",
+                  "filename": "ETH-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "687.18",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240103/swap/ETH-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=eUaF%2Bem6yVbJvySjYxUQVCyhAmQ%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704153600000",
+                  "filename": "ETH-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "628.59",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240102/swap/ETH-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=YWxvuAZAGhT89wBnjpFVfoFVuCI%3D&response-content-type=application%2Fgzip"
+                },
+                {
+                  "dateTs": "1704067200000",
+                  "filename": "ETH-USDT-SWAP.OK.csv.gz",
+                  "sizeMB": "408.65",
+                  "url": "http://qp-pri-hk.oss-cn-hongkong.aliyuncs.com/qp-storage/public_tbt/20240101/swap/ETH-USDT-SWAP.OK.csv.gz?Expires=1784731201&OSSAccessKeyId=LTAI5tHWvMr6hNVEjUuc6DzN&Signature=XphtBN1hODM6pY02wc46TcxQvsQ%3D&response-content-type=application%2Fgzip"
+                }
+              ],
+              "groupSizeMB": "5798.13",
+              "instFamily": "ETH-USDT",
+              "instId": "",
+              "instType": "SWAP"
+            }
+          ],
+          "totalSizeMB": "5798.13",
+          "ts": "1784730601968"
+        }
+      ],
+      "dateAggrType": "daily",
+      "family": "ETH-USDT",
+      "http_status": 200,
       "module": "6",
-      "msg": "Parameter dateAggrType doesn't match parameter module",
-      "response_sha256": "d61cf3ed3e78b6931ba753f8d9c28d3c7abab5b385bfe5cd277b591cb53db593"
-    },
-    {
-      "code": "50076",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "6",
-      "msg": "The time interval between the start date and end date cannot exceed 20 days.",
-      "response_sha256": "fe40cf29b585a3884a06f5d82884c927372d172d765493fb9f9b6cb02b924369"
-    },
-    {
-      "code": "50016",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "6",
-      "msg": "Parameter dateAggrType doesn't match parameter module",
-      "response_sha256": "d61cf3ed3e78b6931ba753f8d9c28d3c7abab5b385bfe5cd277b591cb53db593"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "BTC-USDT",
-      "http_status": 400,
-      "module": "7",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "BTC-USDT",
-      "http_status": 400,
-      "module": "7",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "7",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "7",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "BTC-USDT",
-      "http_status": 400,
-      "module": "8",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "BTC-USDT",
-      "http_status": 400,
-      "module": "8",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "8",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "8",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "BTC-USDT",
-      "http_status": 400,
-      "module": "9",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "BTC-USDT",
-      "http_status": 400,
-      "module": "9",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "9",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "9",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "BTC-USDT",
-      "http_status": 400,
-      "module": "10",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "BTC-USDT",
-      "http_status": 400,
-      "module": "10",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "10",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "51000",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "10",
-      "msg": "Parameter module error",
-      "response_sha256": "11e2afb5cf330126b2674a928017e896d1db54e34b19dd06585c95a1b24427ea"
-    },
-    {
-      "code": "50016",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "BTC-USDT",
-      "http_status": 400,
-      "module": "11",
-      "msg": "Parameter instType doesn't match parameter module",
-      "response_sha256": "0fbf291b40c2cdfca65cfcda393b3f4881686cd93441bb6fed434b4f6cdff882"
-    },
-    {
-      "code": "50016",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "BTC-USDT",
-      "http_status": 400,
-      "module": "11",
-      "msg": "Parameter instType doesn't match parameter module",
-      "response_sha256": "0fbf291b40c2cdfca65cfcda393b3f4881686cd93441bb6fed434b4f6cdff882"
-    },
-    {
-      "code": "50016",
-      "data": [],
-      "dateAggrType": "daily",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "11",
-      "msg": "Parameter instType doesn't match parameter module",
-      "response_sha256": "0fbf291b40c2cdfca65cfcda393b3f4881686cd93441bb6fed434b4f6cdff882"
-    },
-    {
-      "code": "50016",
-      "data": [],
-      "dateAggrType": "monthly",
-      "family": "ETH-USDT",
-      "http_status": 400,
-      "module": "11",
-      "msg": "Parameter instType doesn't match parameter module",
-      "response_sha256": "0fbf291b40c2cdfca65cfcda393b3f4881686cd93441bb6fed434b4f6cdff882"
+      "msg": "",
+      "response_sha256": "2d324e11b8d0975078214393cefe26878efcf236e678b8d97bef1947c0a7cbeb"
     }
   ],
-  "schema_version": 1,
+  "schema_version": 2,
   "shadow_state": "SHADOW_CLOSED",
   "stage": "C6A_SOURCE_AUTHORITY_RESEARCH",
-  "status": "PASS"
+  "status": "PASS",
+  "window": {
+    "begin": "1704067200000",
+    "end": "1704844800000"
+  }
 }
