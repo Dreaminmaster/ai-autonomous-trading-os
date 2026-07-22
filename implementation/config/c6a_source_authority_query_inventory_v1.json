@@ -22,6 +22,7 @@
     "lot size",
     "minimum order size",
     "minimum order quantity",
+    "minimum order quantities",
     "order size",
     "tick size",
     "contract value",
@@ -49,8 +50,48 @@
         "request_kind": "announcement_article",
         "date_start": "2023-06-05T00:00:00Z",
         "date_end_exclusive": "2025-12-29T00:00:00Z",
-        "selection_rule": "INSTRUMENT_ALIAS_AND_METADATA_TERM_OR_EXACT_FROZEN_TRANSITION_MATCH"
+        "selection_rule": "METADATA_ADJUSTMENT_OR_INSTRUMENT_METADATA_MATCH"
       }
+    },
+    {
+      "request_id": "known-transition-eth-2024-04-18",
+      "request_kind": "announcement_article",
+      "method": "GET",
+      "url": "https://www.okx.com/en-us/help/okx-to-adjust-the-minimum-order-quantities-for-several-futures-240412",
+      "canonical_official_url": "https://www.okx.com/en-us/help/okx-to-adjust-the-minimum-order-quantities-for-several-futures-240412",
+      "expected_content_type": "text/html"
+    },
+    {
+      "request_id": "known-transition-btc-2024-04-25",
+      "request_kind": "announcement_article",
+      "method": "GET",
+      "url": "https://www.okx.com/en-us/help/okx-to-adjust-the-minimum-order-quantities-for-several-futures-24-04-19",
+      "canonical_official_url": "https://www.okx.com/en-us/help/okx-to-adjust-the-minimum-order-quantities-for-several-futures-24-04-19",
+      "expected_content_type": "text/html"
+    },
+    {
+      "request_id": "known-transition-eth-original-2024-12-18",
+      "request_kind": "announcement_article",
+      "method": "GET",
+      "url": "https://www.okx.com/en-us/help/okx-to-adjust-the-minimum-order-quantities-for-ethusdt-perpetual-and-expiry",
+      "canonical_official_url": "https://www.okx.com/en-us/help/okx-to-adjust-the-minimum-order-quantities-for-ethusdt-perpetual-and-expiry",
+      "expected_content_type": "text/html"
+    },
+    {
+      "request_id": "known-transition-eth-postponed-2025-01-09",
+      "request_kind": "announcement_article",
+      "method": "GET",
+      "url": "https://www.okx.com/en-us/help/okx-to-postpone-adjusting-minimum-order-quantities-for-ethusdt-perpetual-and",
+      "canonical_official_url": "https://www.okx.com/en-us/help/okx-to-postpone-adjusting-minimum-order-quantities-for-ethusdt-perpetual-and",
+      "expected_content_type": "text/html"
+    },
+    {
+      "request_id": "known-transition-btc-2025-01-22",
+      "request_kind": "announcement_article",
+      "method": "GET",
+      "url": "https://www.okx.com/en-us/help/okx-to-adjust-the-minimum-order-quantities-of-spots-and-futures",
+      "canonical_official_url": "https://www.okx.com/en-us/help/okx-to-adjust-the-minimum-order-quantities-of-spots-and-futures",
+      "expected_content_type": "text/html"
     },
     {
       "request_id": "archive-btc-usdt-spot-instruments",
