@@ -23,11 +23,7 @@ from atos.c6a_source_authority_metadata import decode_okx_instruments_response
 from atos.c6a_source_authority_review import verify_manifest
 
 
-CONFIG = (
-    Path(__file__).resolve().parents[1]
-    / "config"
-    / "c6a_source_authority_query_inventory_v1.json"
-)
+CONFIG = Path(__file__).resolve().parents[1] / "config" / "c6a_source_authority_query_inventory_v1.json"
 
 
 def _inventory() -> dict:
@@ -98,14 +94,7 @@ def test_wayback_index_expands_only_exact_official_instrument_response() -> None
     canonical = "https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=BTC-USDT-SWAP"
     cdx = [
         ["timestamp", "original", "statuscode", "mimetype", "digest", "length"],
-        [
-            "20240425070000",
-            canonical,
-            "200",
-            "application/json",
-            "DIGEST1",
-            "900",
-        ],
+        ["20240425070000", canonical, "200", "application/json", "DIGEST1", "900"],
     ]
     captures = parse_wayback_cdx(json.dumps(cdx).encode(), canonical_official_url=canonical)
     assert len(captures) == 1
@@ -175,6 +164,32 @@ def test_archived_okx_swap_decoder_uses_underlying_and_preserves_exact_strings()
     assert row["ctVal"] == "0.1"
     assert row["lotSz"] == "0.01"
     assert "ignored" not in row
+
+
+def test_archived_okx_spot_decoder_uses_direct_base_and_quote() -> None:
+    response = {
+        "code": "0",
+        "msg": "",
+        "data": [
+            {
+                "instId": "BTC-USDT",
+                "instType": "SPOT",
+                "baseCcy": "BTC",
+                "quoteCcy": "USDT",
+                "uly": "",
+                "lotSz": "0.00000001",
+                "minSz": "0.00001",
+                "tickSz": "0.1",
+                "state": "live",
+            }
+        ],
+    }
+    row = decode_okx_instruments_response(
+        json.dumps(response).encode(), expected_instrument="BTC-USDT"
+    )["data"][0]
+    assert row["baseCcy"] == "BTC"
+    assert row["quoteCcy"] == "USDT"
+    assert row["identity_derivation"] == "DIRECT_SPOT_BASE_QUOTE"
 
 
 def test_archived_okx_decoder_rejects_wrapper_and_swap_identity_drift() -> None:
