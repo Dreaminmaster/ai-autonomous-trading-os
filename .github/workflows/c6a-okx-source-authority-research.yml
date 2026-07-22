@@ -8,7 +8,7 @@ on:
       - .github/workflows/c6a-okx-source-authority-research.yml
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   PYTHONUNBUFFERED: "1"
@@ -48,7 +48,7 @@ jobs:
               raise SystemExit(f"credential-like environment variables present: {forbidden}")
 
           out = Path("c6a-okx-source-authority-research")
-          out.mkdir()
+          out.mkdir(exist_ok=True)
           endpoint = "https://www.okx.com/api/v5/public/market-data-history"
           begin = "1685923200000"  # 2023-06-05T00:00:00Z
           end = "1766966400000"    # 2025-12-29T00:00:00Z
@@ -173,3 +173,14 @@ jobs:
           path: c6a-okx-source-authority-research
           retention-days: 7
           if-no-files-found: error
+
+      - name: Publish compact summary to temporary research branch
+        run: |
+          mkdir -p research/c6a-okx-source-authority
+          cp c6a-okx-source-authority-research/summary.json \
+            research/c6a-okx-source-authority/summary.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add research/c6a-okx-source-authority/summary.json
+          git commit -m "research(c6a): retain official source-directory summary"
+          git push origin HEAD:research/c6a-okx-source-authority
