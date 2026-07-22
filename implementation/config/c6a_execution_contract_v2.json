@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "stage": "C6A",
+  "status": "IMPLEMENTATION_PENDING",
+  "required_design_main_sha": "071e45218e299367f3bef18832d931df7d278ace",
+  "authoritative_entrypoints": {
+    "program_guard": "scripts/c6a_program_guard.py",
+    "execution_guard": "scripts/c6a_execution_guard_v2.py",
+    "source_plan_preflight": "scripts/c6a_source_plan_preflight.py",
+    "source_inventory": "scripts/c6a_authoritative_source_inventory_v3.py",
+    "public_capture": "scripts/c6a_capture_authoritative.py",
+    "canonical_preparation": "scripts/c6a_prepare_public_data.py",
+    "economic_screen": "scripts/run_c6a_screen_authoritative.py",
+    "evidence_shape_preflight": "scripts/c6a_finalizer_preflight.py",
+    "independent_finalizer": "scripts/c6a_strict_finalizer.py",
+    "decision_margin_guard": "scripts/c6a_decision_margin_guard.py",
+    "evidence_packager": "scripts/c6a_pack_authoritative_evidence_v2.py"
+  },
+  "non_authoritative_scaffolds": [
+    "scripts/c6a_capture_public_data.py",
+    "scripts/c6a_finalizer.py",
+    "scripts/c6a_pack_final_evidence.py",
+    "scripts/c6a_pack_authoritative_evidence.py",
+    "scripts/c6a_authoritative_source_inventory.py",
+    "scripts/run_c6a_screen.py"
+  ],
+  "required_order": [
+    "program_guard",
+    "execution_guard",
+    "source_plan_preflight",
+    "source_inventory",
+    "public_capture",
+    "canonical_preparation",
+    "economic_screen",
+    "evidence_shape_preflight",
+    "independent_finalizer",
+    "decision_margin_guard",
+    "evidence_packager"
+  ],
+  "economic_result_run": false,
+  "confirmation_opened": false,
+  "c6b_state": "C6B_CLOSED",
+  "c5b_state": "C5B_CLOSED_AND_UNTOUCHED",
+  "holdout_state": "HOLDOUT_CLOSED",
+  "paper_state": "PAPER_CLOSED",
+  "shadow_state": "SHADOW_CLOSED",
+  "live": "FORBIDDEN"
+}

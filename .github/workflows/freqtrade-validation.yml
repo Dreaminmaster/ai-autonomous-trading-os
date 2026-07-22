@@ -2,10 +2,15 @@ name: Freqtrade Validation
 
 on:
   push:
+    branches: [main]
     paths: ['implementation/**', '.github/workflows/freqtrade-validation.yml']
   pull_request:
     paths: ['implementation/**']
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   atos-tests:

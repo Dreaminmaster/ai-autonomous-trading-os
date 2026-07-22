@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "stage": "C6A",
+  "status": "IMPLEMENTATION_PENDING",
+  "required_design_main_sha": "071e45218e299367f3bef18832d931df7d278ace",
+  "contract_paths": [
+    "docs/architecture/phase-c/c6a-market-neutral-funding-carry/C6A_MARKET_NEUTRAL_FUNDING_CARRY_CONTRACT_V1.md",
+    "docs/architecture/phase-c/c6a-market-neutral-funding-carry/C6A_ACCOUNTING_MARGIN_AND_STATISTICS_ADDENDUM_V1.md",
+    "docs/architecture/phase-c/c6a-market-neutral-funding-carry/C6A_FUNDING_INTERVAL_AND_HISTORY_CLARIFICATION_V1.md",
+    "docs/architecture/phase-c/c6a-market-neutral-funding-carry/C6A_TERMINAL_AND_METADATA_CLARIFICATION_V1.md"
+  ],
+  "candidate_id": "C6AMarketNeutralFundingCarry",
+  "comparators": [
+    "CashComparator",
+    "AlwaysOnDeltaNeutralComparator",
+    "SpotBuyAndHoldComparator"
+  ],
+  "spot_instruments": [
+    "BTC-USDT",
+    "ETH-USDT"
+  ],
+  "swap_instruments": [
+    "BTC-USDT-SWAP",
+    "ETH-USDT-SWAP"
+  ],
+  "timeframe": "1H",
+  "download_start": "2023-06-05T00:00:00Z",
+  "scored_start": "2023-07-03T00:00:00Z",
+  "economic_boundary_exclusive": "2025-12-29T00:00:00Z",
+  "windows": [
+    {"id": "W1", "start": "2023-07-03T00:00:00Z", "end": "2024-01-01T00:00:00Z"},
+    {"id": "W2", "start": "2024-01-01T00:00:00Z", "end": "2024-07-01T00:00:00Z"},
+    {"id": "W3", "start": "2024-07-01T00:00:00Z", "end": "2024-12-30T00:00:00Z"},
+    {"id": "W4", "start": "2024-12-30T00:00:00Z", "end": "2025-06-30T00:00:00Z"},
+    {"id": "W5", "start": "2025-06-30T00:00:00Z", "end": "2025-12-29T00:00:00Z"}
+  ],
+  "funding_lookback_days": 28,
+  "minimum_funding_sum_28d_exclusive": "0.009",
+  "minimum_positive_funding_share": "0.6666666666666666666666666667",
+  "maximum_entry_abs_basis": "0.02",
+  "maximum_risk_abs_basis": "0.05",
+  "minimum_collateral_buffer_ratio": "1.25",
+  "starting_equity": "1000",
+  "spot_capital_fraction": "0.3333333333333333333333333333",
+  "collateral_capital_fraction": "0.6666666666666666666666666667",
+  "resizing_band": "0.10",
+  "maximum_hedge_error": "0.001",
+  "post_trade_cash_tolerance": "0.01",
+  "cost_rates": {
+    "1.0x": "0.0015",
+    "1.5x": "0.00225",
+    "2.0x": "0.0030"
+  },
+  "gate": {
+    "minimum_window_return_exclusive": "0",
+    "minimum_aggregate_return_exclusive": "0",
+    "minimum_aggregate_1_5x_return_exclusive": "0",
+    "minimum_aggregate_2x_return": "0",
+    "minimum_annualized_weekly_sharpe": "1.00",
+    "minimum_weekly_psr": "0.95",
+    "maximum_drawdown": "0.10",
+    "maximum_annualized_one_way_turnover": "6.0",
+    "minimum_funding_cost_coverage": "2.0",
+    "minimum_active_weeks_total": 52,
+    "minimum_active_weeks_per_window": 6,
+    "minimum_active_funding_settlements": 100,
+    "maximum_positive_asset_pnl_share": "0.70",
+    "maximum_positive_window_pnl_share": "0.40",
+    "maximum_positive_week_pnl_share": "0.15",
+    "maximum_top_three_positive_week_pnl_share": "0.35",
+    "minimum_return_delta_vs_always_on_exclusive": "0",
+    "minimum_sharpe_delta_vs_always_on": "0.10"
+  },
+  "confirmation_opened": false,
+  "c5b_state": "C5B_CLOSED_AND_UNTOUCHED",
+  "holdout_state": "HOLDOUT_CLOSED",
+  "paper_state": "PAPER_CLOSED",
+  "shadow_state": "SHADOW_CLOSED",
+  "live": "FORBIDDEN"
+}
