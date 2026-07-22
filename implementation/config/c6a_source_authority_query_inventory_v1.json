@@ -97,7 +97,7 @@
       "request_id": "archive-btc-usdt-spot-instruments",
       "request_kind": "archive_lookup",
       "method": "GET",
-      "url": "https://web.archive.org/cdx/search/cdx?url=https%3A%2F%2Fwww.okx.com%2Fapi%2Fv5%2Fpublic%2Finstruments%3FinstType%3DSPOT%26instId%3DBTC-USDT&from=20230605&to=20251228&output=json&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype%2Cdigest%2Clength&filter=statuscode%3A200&collapse=digest",
+      "url": "https://web.archive.org/cdx/search/cdx?url=https%3A%2F%2Fwww.okx.com%2Fapi%2Fv5%2Fpublic%2Finstruments%3FinstType%3DSPOT%26instId%3DBTC-USDT&from=20230605&to=20251228&output=json&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype%2Cdigest%2Clength&filter=statuscode%3A200",
       "canonical_official_url": "https://www.okx.com/api/v5/public/instruments?instType=SPOT&instId=BTC-USDT",
       "expected_content_type": "application/json",
       "archive_expansion": {
@@ -110,7 +110,7 @@
       "request_id": "archive-eth-usdt-spot-instruments",
       "request_kind": "archive_lookup",
       "method": "GET",
-      "url": "https://web.archive.org/cdx/search/cdx?url=https%3A%2F%2Fwww.okx.com%2Fapi%2Fv5%2Fpublic%2Finstruments%3FinstType%3DSPOT%26instId%3DETH-USDT&from=20230605&to=20251228&output=json&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype%2Cdigest%2Clength&filter=statuscode%3A200&collapse=digest",
+      "url": "https://web.archive.org/cdx/search/cdx?url=https%3A%2F%2Fwww.okx.com%2Fapi%2Fv5%2Fpublic%2Finstruments%3FinstType%3DSPOT%26instId%3DETH-USDT&from=20230605&to=20251228&output=json&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype%2Cdigest%2Clength&filter=statuscode%3A200",
       "canonical_official_url": "https://www.okx.com/api/v5/public/instruments?instType=SPOT&instId=ETH-USDT",
       "expected_content_type": "application/json",
       "archive_expansion": {
@@ -123,7 +123,7 @@
       "request_id": "archive-btc-usdt-swap-instruments",
       "request_kind": "archive_lookup",
       "method": "GET",
-      "url": "https://web.archive.org/cdx/search/cdx?url=https%3A%2F%2Fwww.okx.com%2Fapi%2Fv5%2Fpublic%2Finstruments%3FinstType%3DSWAP%26instId%3DBTC-USDT-SWAP&from=20230605&to=20251228&output=json&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype%2Cdigest%2Clength&filter=statuscode%3A200&collapse=digest",
+      "url": "https://web.archive.org/cdx/search/cdx?url=https%3A%2F%2Fwww.okx.com%2Fapi%2Fv5%2Fpublic%2Finstruments%3FinstType%3DSWAP%26instId%3DBTC-USDT-SWAP&from=20230605&to=20251228&output=json&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype%2Cdigest%2Clength&filter=statuscode%3A200",
       "canonical_official_url": "https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=BTC-USDT-SWAP",
       "expected_content_type": "application/json",
       "archive_expansion": {
@@ -136,7 +136,7 @@
       "request_id": "archive-eth-usdt-swap-instruments",
       "request_kind": "archive_lookup",
       "method": "GET",
-      "url": "https://web.archive.org/cdx/search/cdx?url=https%3A%2F%2Fwww.okx.com%2Fapi%2Fv5%2Fpublic%2Finstruments%3FinstType%3DSWAP%26instId%3DETH-USDT-SWAP&from=20230605&to=20251228&output=json&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype%2Cdigest%2Clength&filter=statuscode%3A200&collapse=digest",
+      "url": "https://web.archive.org/cdx/search/cdx?url=https%3A%2F%2Fwww.okx.com%2Fapi%2Fv5%2Fpublic%2Finstruments%3FinstType%3DSWAP%26instId%3DETH-USDT-SWAP&from=20230605&to=20251228&output=json&fl=timestamp%2Coriginal%2Cstatuscode%2Cmimetype%2Cdigest%2Clength&filter=statuscode%3A200",
       "canonical_official_url": "https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=ETH-USDT-SWAP",
       "expected_content_type": "application/json",
       "archive_expansion": {
