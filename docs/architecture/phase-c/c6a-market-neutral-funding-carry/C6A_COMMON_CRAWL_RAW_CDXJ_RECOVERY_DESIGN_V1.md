@@ -25,19 +25,20 @@ It does not retrieve WARC records, page bodies, article lists, market data, acco
 
 ## Raw ZipNum access method
 
-Common Crawl documents that the CDXJ index is a sorted text index compressed into independently addressable gzip blocks, with `cluster.idx` acting as a secondary index. Each cluster line records the first CDXJ key in a block and the block's shard, byte offset, and byte length.
+Common Crawl documents that the CDXJ index is a sorted text index compressed into independently addressable gzip blocks, with `cluster.idx` acting as a secondary index. Each cluster line records the first CDXJ key in a block and the block's shard, byte offset, byte length, and record count.
 
 For each exact frozen URL, the implementation:
 
 1. applies a deliberately narrow internal SURT transform valid only for the frozen ASCII `https://www.okx.com/help/...` URLs;
 2. byte-range binary-searches `cluster.idx` for the predecessor of the URL's lowest possible timestamp;
-3. retains enough adjacent cluster lines to prove the upper boundary;
+3. retains a contiguous cluster context that proves the predecessor, selected block sequence, and upper boundary;
 4. retrieves no more than four exact gzip blocks;
-5. requires each decompressed block's first CDXJ row to equal its cluster-index identity;
-6. retains only exact URL-key, exact official URL, HTTP `200` rows with valid WARC locators in the same frozen crawl;
-7. stops before fetching any WARC bytes.
+5. binds each selected compressed byte range to the retained decompressed CDXJ block;
+6. requires the decompressed block's first CDXJ row and line count to equal its cluster-index identity;
+7. retains only exact URL-key, exact official URL, HTTP `200` rows with valid WARC locators in the same frozen crawl;
+8. stops before fetching any WARC bytes.
 
-A successfully executed no-hit is a valid raw-index finding. A transport, range, gzip, boundary, parse, or integrity failure is an execution failure and cannot be reported as a no-hit.
+A successfully executed no-hit is a valid raw-index finding. A transport, range, object-identity, gzip, boundary, parse, or integrity failure is an execution failure and cannot be reported as a no-hit.
 
 ## Network and resource boundary
 
@@ -53,11 +54,11 @@ Frozen limits include:
 - 64 KiB cluster search windows;
 - at most 32 cluster range requests per target/crawl query;
 - at most four CDX gzip blocks per query;
-- at most 2 MiB per CDX block;
+- at most 2 MiB compressed and 16 MiB decompressed per CDX block;
 - at most 32 exact rows per query;
 - at least 0.5 seconds between uncached requests.
 
-All unique responses are retained with URL, range, `Content-Range`, size, and SHA-256. Identical ranges are cached within the run.
+All unique responses are retained with URL, range, `Content-Range`, object size, ETag when supplied, modification metadata, size, and SHA-256. Identical ranges are cached within the run. A total-size or ETag change for the same remote object fails the probe.
 
 ## Independent review
 
@@ -65,11 +66,13 @@ The reviewer imports no producer, HTTP, binary-search, block-selection, or gzip 
 
 - the seven-target and 23-query matrix;
 - the narrow SURT key for every target;
-- all range-file hashes and protocol metadata;
-- cluster-line identities and ordering;
-- selected block hashes, line counts, and first-row binding;
+- all range-file hashes, protocol metadata, and remote-object identity consistency;
+- the contiguous retained cluster context;
+- the predecessor, selected block sequence, and upper boundary;
+- each compressed-range-to-decompressed-block binding;
+- cluster first-row and record-count binding;
 - every exact CDXJ hit and WARC locator;
-- producer counts, hit inventory, status, and result;
+- producer counts, completed/failed query partition, hit inventory, status, and result;
 - all safety flags.
 
 A failed execution may still have an independent-review PASS when the retained failure package is internally complete and correctly classified. That does not turn the failed execution into a valid access-path result.
