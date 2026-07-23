@@ -40,6 +40,17 @@
       "method": "GET",
       "url": "https://www.okx.com/help/section/announcements-latest-announcements/page/{page}",
       "expected_content_type": "text/html",
+      "authority_jurisdiction": "GLOBAL",
+      "requested_scope": {
+        "host": "www.okx.com",
+        "path_mode": "GLOBAL_LOCALE_NEUTRAL_HELP",
+        "regional_substitution_allowed": false
+      },
+      "required_scope_proof": {
+        "final_url": true,
+        "page_content": true,
+        "cross_page_consistency": true
+      },
       "page_range": {
         "start": 1,
         "end": 250,
@@ -158,18 +169,20 @@
     "maximum_requests_per_minute": 60
   },
   "parser_versions": {
-    "announcement_catalog": "c6a-announcement-catalog-v1",
+    "announcement_catalog": "c6a-announcement-catalog-global-scope-v2",
     "announcement_article": "c6a-announcement-article-v1",
     "archive_index": "c6a-wayback-cdx-v1",
     "archived_official_response": "c6a-okx-instruments-v1"
   },
   "generated_request_rules": [
     {
-      "rule_id": "ANNOUNCEMENT_ARTICLE_FROM_CATALOG_V1",
+      "rule_id": "ANNOUNCEMENT_ARTICLE_FROM_GLOBAL_CATALOG_V2",
       "source_request_id": "okx-announcement-catalog-global",
       "request_kind": "announcement_article",
+      "authority_jurisdiction": "GLOBAL",
       "host_must_be": "www.okx.com",
       "path_prefix": "/help/",
+      "regional_substitution_allowed": false,
       "date_start": "2023-06-05T00:00:00Z",
       "date_end_exclusive": "2025-12-29T00:00:00Z"
     },
