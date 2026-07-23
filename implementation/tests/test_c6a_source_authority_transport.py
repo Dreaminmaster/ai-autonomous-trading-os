@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from email.message import Message
 from pathlib import Path
+from urllib.request import Request
 
 import pytest
 
@@ -33,12 +35,29 @@ def _capture(final_url: str) -> CapturedResponse:
     )
 
 
-def test_archive_redirect_must_remain_on_wayback(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(
-        transport,
-        "capture_request",
-        lambda *args, **kwargs: _capture("https://web.archive.org/web/20240101id_/https://www.okx.com/"),
-    )
+def test_redirect_handler_rejects_archive_escape_before_follow() -> None:
+    handler = transport._FrozenRedirectHandler(_request())
+    initial = Request(_request().url, method="GET")
+    with pytest.raises(SourceAuthorityError, match="before follow"):
+        handler.redirect_request(
+            initial,
+            None,
+            302,
+            "Found",
+            Message(),
+            "https://example.invalid/archive-wrapper",
+        )
+
+
+def test_archive_capture_uses_guarded_opener_and_restores_global(monkeypatch, tmp_path: Path) -> None:
+    original_urlopen = transport.capture_module.urlopen
+    observed = {}
+
+    def capture_stub(*args, **kwargs):
+        observed["urlopen_during_capture"] = transport.capture_module.urlopen
+        return _capture("https://web.archive.org/web/20240101id_/https://www.okx.com/")
+
+    monkeypatch.setattr(transport.capture_module, "capture_request", capture_stub)
     result = transport.strict_capture_request(
         _request(),
         output_root=tmp_path,
@@ -48,9 +67,13 @@ def test_archive_redirect_must_remain_on_wayback(monkeypatch, tmp_path: Path) ->
         maximum_backoff_seconds=0,
     )
     assert result.final_url.startswith("https://web.archive.org/")
+    assert observed["urlopen_during_capture"] is not original_urlopen
+    assert transport.capture_module.urlopen is original_urlopen
 
+
+def test_final_url_check_remains_defense_in_depth(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
-        transport,
+        transport.capture_module,
         "capture_request",
         lambda *args, **kwargs: _capture("https://example.invalid/archive-wrapper"),
     )
