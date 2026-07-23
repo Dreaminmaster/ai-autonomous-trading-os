@@ -14,8 +14,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from atos.c6a_source_authority_attempt import run_source_authority_attempt
 from atos.c6a_source_authority_capture import atomic_write_json
+from atos.c6a_source_authority_execution import run_strict_source_authority_attempt
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,7 +41,7 @@ def main() -> int:
     args = parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     try:
-        summary = run_source_authority_attempt(
+        summary = run_strict_source_authority_attempt(
             inventory_path=args.inventory,
             output_root=args.output,
             source_commit_sha=args.source_commit_sha,
