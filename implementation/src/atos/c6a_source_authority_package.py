@@ -30,6 +30,7 @@ from atos.c6a_source_authority_schema import (
     validate_metadata_state_records,
     validate_transition_proof_records,
 )
+from atos.c6a_source_authority_source_review import review_source_boundaries
 
 
 CANONICAL_OUTPUTS = (
@@ -74,6 +75,26 @@ def _prepare_output_root(output_root: Path) -> None:
 def _evidence_hashes(root: Path) -> dict[str, str]:
     manifest = build_recursive_manifest(root, excluded_paths=EVIDENCE_HASH_EXCLUSIONS)
     return {str(row["path"]): str(row["sha256"]) for row in manifest["files"]}
+
+
+def _append_review_errors(independent: dict[str, Any], subreview: Mapping[str, Any]) -> None:
+    if subreview.get("status") == "PASS":
+        return
+    existing = independent.get("errors", [])
+    errors = (
+        list(existing)
+        if isinstance(existing, Sequence) and not isinstance(existing, (str, bytes))
+        else [str(existing)]
+    )
+    subreview_errors = subreview.get("errors", [])
+    if isinstance(subreview_errors, Sequence) and not isinstance(
+        subreview_errors, (str, bytes)
+    ):
+        errors.extend(str(error) for error in subreview_errors)
+    else:
+        errors.append(str(subreview_errors))
+    independent["errors"] = errors
+    independent["status"] = "FAIL"
 
 
 def _finalize_decision(
@@ -177,40 +198,30 @@ def package_gate_artifact(
         output_root,
         excluded_paths=("manifest.json", "independent_review.json"),
     )
-    independent = review_package(
-        output_root,
-        query_inventory=query,
-        source_inventory=sources,
-        announcement_catalog=catalog,
-        metadata_states=states,
-        transition_proofs=proofs,
-        coverage_matrix=coverage,
-        failures=failure_list,
-        gate_result=preliminary,
-        preliminary_manifest=preliminary_manifest,
+    independent = dict(
+        review_package(
+            output_root,
+            query_inventory=query,
+            source_inventory=sources,
+            announcement_catalog=catalog,
+            metadata_states=states,
+            transition_proofs=proofs,
+            coverage_matrix=coverage,
+            failures=failure_list,
+            gate_result=preliminary,
+            preliminary_manifest=preliminary_manifest,
+        )
     )
+
     partition_review = review_transition_partition(
         states,
         recorded_failures=failure_list,
     )
-    independent = dict(independent)
+    source_review = review_source_boundaries(sources)
     independent["transition_partition_review"] = partition_review
-    if partition_review.get("status") != "PASS":
-        existing_errors = independent.get("errors", [])
-        normalized_errors = (
-            list(existing_errors)
-            if isinstance(existing_errors, Sequence) and not isinstance(existing_errors, (str, bytes))
-            else [str(existing_errors)]
-        )
-        partition_errors = partition_review.get("errors", [])
-        if isinstance(partition_errors, Sequence) and not isinstance(
-            partition_errors, (str, bytes)
-        ):
-            normalized_errors.extend(str(error) for error in partition_errors)
-        else:
-            normalized_errors.append(str(partition_errors))
-        independent["errors"] = normalized_errors
-        independent["status"] = "FAIL"
+    independent["retained_source_review"] = source_review
+    _append_review_errors(independent, partition_review)
+    _append_review_errors(independent, source_review)
 
     final_decision = _finalize_decision(
         preliminary,
