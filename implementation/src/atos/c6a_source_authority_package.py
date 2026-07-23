@@ -18,7 +18,7 @@ from atos.c6a_source_authority_capture import (
     canonical_json_bytes,
     sha256_bytes,
 )
-from atos.c6a_source_authority_review import (
+from atos.c6a_source_authority_independent import (
     choose_primary_failure,
     review_package,
     verify_manifest_complete,
