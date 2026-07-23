@@ -1,0 +1,141 @@
+name: C6A Source Authority Capture Once
+
+# This temporary workflow is intentionally triggered only by the main-branch
+# commit that first adds this exact file. It has no workflow_dispatch entry and
+# must be deleted after the single result artifact is frozen.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/c6a-source-authority-capture-once.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: c6a-source-authority-capture-once
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    name: exact public metadata source capture
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      C6A_IMPLEMENTATION_SHA: 9ccda298e1acdfb3422173e5990d978d4a9e07c3
+      C6A_VALIDATED_PR_MERGE_REF: refs/pull/62/merge@f2812d54408f5e80cac664d4159d361f94982f5a
+      C6A_ARTIFACT_DIR: ${{ github.workspace }}/c6a-source-authority-artifact
+    steps:
+      - name: Checkout exact validated implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 9ccda298e1acdfb3422173e5990d978d4a9e07c3
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Verify immutable execution identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          observed="$(git rev-parse HEAD)"
+          test "$observed" = "$C6A_IMPLEMENTATION_SHA"
+          test "$(git status --porcelain)" = ""
+          printf 'implementation_sha=%s\n' "$observed" | tee execution-identity.txt
+          printf 'validated_pr_merge_ref=%s\n' "$C6A_VALIDATED_PR_MERGE_REF" | tee -a execution-identity.txt
+          printf 'trigger_commit=%s\n' "$GITHUB_SHA" | tee -a execution-identity.txt
+
+      - name: Run one-shot fail-closed source-authority attempt
+        id: capture
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          cd implementation
+          PYTHONPATH=src python scripts/run_c6a_source_authority_gate.py \
+            --inventory config/c6a_source_authority_query_inventory_v1.json \
+            --output "$C6A_ARTIFACT_DIR" \
+            --source-commit-sha "$C6A_IMPLEMENTATION_SHA" \
+            --pr-merge-ref "$C6A_VALIDATED_PR_MERGE_REF" \
+            2>&1 | tee "$GITHUB_WORKSPACE/c6a-source-authority-capture.log"
+          status=${PIPESTATUS[0]}
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Retain execution identity and complete log
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$C6A_ARTIFACT_DIR/workflow"
+          cp execution-identity.txt "$C6A_ARTIFACT_DIR/workflow/execution-identity.txt"
+          if [ -f c6a-source-authority-capture.log ]; then
+            cp c6a-source-authority-capture.log "$C6A_ARTIFACT_DIR/workflow/capture.log"
+          fi
+
+      - name: Upload complete source-authority result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: c6a-source-authority-capture-${{ github.run_id }}
+          path: ${{ env.C6A_ARTIFACT_DIR }}
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+      - name: Publish non-authorizing result summary
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["C6A_ARTIFACT_DIR"])
+          gate = root / "gate_result.json"
+          emergency = root / "emergency_failure.json"
+          lines = [
+              "## C6A source-authority one-shot result",
+              "",
+              f"- implementation SHA: `{os.environ['C6A_IMPLEMENTATION_SHA']}`",
+              f"- validated PR merge ref: `{os.environ['C6A_VALIDATED_PR_MERGE_REF']}`",
+              "- economic implementation authorized: `false`",
+              "- live state: `LIVE_FORBIDDEN`",
+          ]
+          if gate.is_file():
+              payload = json.loads(gate.read_text(encoding="utf-8"))
+              lines.extend([
+                  f"- gate status: `{payload.get('status')}`",
+                  f"- gate result: `{payload.get('result')}`",
+                  f"- independent review: `{payload.get('independent_review_status')}`",
+              ])
+          elif emergency.is_file():
+              payload = json.loads(emergency.read_text(encoding="utf-8"))
+              lines.extend([
+                  "- gate status: `EMERGENCY_FAILURE`",
+                  f"- error type: `{payload.get('error_type')}`",
+              ])
+          else:
+              lines.append("- gate status: `ARTIFACT_MISSING`")
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Enforce execution completion after artifact upload
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status='${{ steps.capture.outputs.exit_code }}'
+          if [ "$status" != "0" ]; then
+            echo "Unexpected implementation/runtime failure was retained in the artifact (exit=$status)." >&2
+            exit 1
+          fi
+          test -f "$C6A_ARTIFACT_DIR/gate_result.json"
+          test -f "$C6A_ARTIFACT_DIR/independent_review.json"
+          test -f "$C6A_ARTIFACT_DIR/manifest.json"
