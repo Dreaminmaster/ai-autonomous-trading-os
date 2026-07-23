@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Run one bounded Common Crawl coverage probe for official OKX GLOBAL bytes.
-
-A reviewed coverage PASS or coverage FAIL is a valid completed probe. It never
-runs article expansion, the full source-authority capture, or any economic path.
-"""
+"""Run one bounded, independently reviewed Common Crawl coverage probe."""
 from __future__ import annotations
 
 import argparse
@@ -11,12 +7,9 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from atos.c6a_common_crawl_probe import (
-    atomic_write_json,
-    build_manifest,
-    run_probe,
-)
-from atos.c6a_common_crawl_probe_independent import review_probe
+from atos.c6a_common_crawl_probe import atomic_write_json, build_manifest
+from atos.c6a_common_crawl_probe_independent_v2 import review_probe
+from atos.c6a_common_crawl_probe_v2 import run_probe
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,15 +35,10 @@ def main() -> int:
             "probe_status": result["status"],
             "probe_result": result["result"],
             "independent_review_status": review["status"],
-            "independent_probe_status": review[
-                "probe_status_recomputed"
-            ],
-            "covered_target_ids": review[
-                "covered_target_ids_recomputed"
-            ],
-            "missing_target_ids": review[
-                "missing_target_ids_recomputed"
-            ],
+            "independent_probe_status": review["probe_status_recomputed"],
+            "covered_target_ids": review["covered_target_ids_recomputed"],
+            "missing_target_ids": review["missing_target_ids_recomputed"],
+            "coverage_findings": review["coverage_findings"],
             "manifest_file_count": manifest["file_count"],
             "article_expansion_authorized": False,
             "third_full_capture_authorized": False,
