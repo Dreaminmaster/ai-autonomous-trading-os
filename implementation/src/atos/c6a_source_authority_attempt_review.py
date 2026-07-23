@@ -39,6 +39,7 @@ FAILURE_PRIORITY = (
 
 _RECONCILED_ERROR_PREFIX = "recorded failure set mismatch:"
 _RECONCILED_PRIMARY_ERROR = "recomputed primary failure does not match recorded primary failure"
+_STRUCTURED_CATALOG_STAGES = {"announcement_catalog_deduplication"}
 
 
 def choose_primary_failure(failures: Sequence[str]) -> str | None:
@@ -57,7 +58,11 @@ def _derive_event_failure(event: Mapping[str, Any]) -> str:
         return "FAIL_FORBIDDEN_DATA_ACCESS"
     if request_kind == "archive_lookup" or stage in {"archive_index", "archive_memento"}:
         return "FAIL_ARCHIVE_DECODING_OR_PROVENANCE"
-    if request_kind == "announcement_catalog" or stage == "announcement_catalog":
+    if (
+        request_kind == "announcement_catalog"
+        or stage == "announcement_catalog"
+        or stage in _STRUCTURED_CATALOG_STAGES
+    ):
         return "FAIL_ANNOUNCEMENT_CATALOG_INCOMPLETE"
     if request_kind == "announcement_article" or stage in {
         "known_transition_notice",
@@ -112,6 +117,8 @@ def review_attempt_diagnostics(root: Path) -> dict[str, Any]:
         if not isinstance(event, Mapping):
             errors.append(f"attempt event {index} is not an object")
             continue
+        stage = str(event.get("stage", ""))
+        request_kind = str(event.get("request_kind", ""))
         derived = _derive_event_failure(event)
         failures.add(derived)
         recorded = str(event.get("failure_code", ""))
@@ -119,10 +126,17 @@ def review_attempt_diagnostics(root: Path) -> dict[str, Any]:
             errors.append(
                 f"attempt event {index} failure mismatch: recorded={recorded!r} derived={derived!r}"
             )
-        if not str(event.get("stage", "")) or not str(event.get("request_kind", "")):
-            errors.append(f"attempt event {index} lacks stage or request_kind")
-        if not str(event.get("error_type", "")) or not str(event.get("error", "")):
-            errors.append(f"attempt event {index} lacks retained error identity")
+        if not stage:
+            errors.append(f"attempt event {index} lacks stage")
+        if stage in _STRUCTURED_CATALOG_STAGES:
+            duplicates = event.get("duplicate_urls")
+            if not isinstance(duplicates, Sequence) or isinstance(duplicates, (str, bytes)) or not duplicates:
+                errors.append(f"attempt event {index} lacks duplicate URL evidence")
+        else:
+            if not request_kind:
+                errors.append(f"attempt event {index} lacks request_kind")
+            if not str(event.get("error_type", "")) or not str(event.get("error", "")):
+                errors.append(f"attempt event {index} lacks retained error identity")
 
     return {
         "schema_version": 1,
