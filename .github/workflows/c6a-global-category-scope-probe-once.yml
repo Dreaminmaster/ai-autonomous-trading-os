@@ -1,0 +1,223 @@
+name: C6A GLOBAL Category Scope Probe Once
+
+# This temporary workflow is triggered only by the main-branch commit that first
+# adds this exact file. It has no workflow_dispatch, pull_request, schedule, or
+# reusable-workflow entry. Any UI rerun is rejected before checkout or network
+# access, and this file must be deleted after the result artifact is frozen.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/c6a-global-category-scope-probe-once.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: c6a-global-category-scope-probe-once
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: exact bounded public GLOBAL category source-scope probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      C6A_PROBE_IMPLEMENTATION_SHA: 9337ad3813c007883fe2017f9c73cf367b35cf8a
+      C6A_VALIDATED_PR_MERGE_REF: refs/pull/74/merge@0d2010a84a69b699da4c8c2a7cf51e01403440d1
+      C6A_BUNDLE_DIR: ${{ github.workspace }}/c6a-global-category-scope-probe-bundle
+      C6A_PROBE_DIR: ${{ github.workspace }}/c6a-global-category-scope-probe-bundle/probe
+
+    steps:
+      - name: Reject any rerun before checkout or network access
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+
+      - name: Checkout exact validated category-probe implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 9337ad3813c007883fe2017f9c73cf367b35cf8a
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Verify immutable execution identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          observed="$(git rev-parse HEAD)"
+          test "$observed" = "$C6A_PROBE_IMPLEMENTATION_SHA"
+          test "$(git status --porcelain)" = ""
+          mkdir -p "$C6A_BUNDLE_DIR/workflow"
+          printf 'implementation_sha=%s\n' "$observed" | tee "$C6A_BUNDLE_DIR/workflow/execution-identity.txt"
+          printf 'validated_pr_merge_ref=%s\n' "$C6A_VALIDATED_PR_MERGE_REF" | tee -a "$C6A_BUNDLE_DIR/workflow/execution-identity.txt"
+          printf 'trigger_commit=%s\n' "$GITHUB_SHA" | tee -a "$C6A_BUNDLE_DIR/workflow/execution-identity.txt"
+          printf 'workflow_ref=%s\n' "$GITHUB_WORKFLOW_REF" | tee -a "$C6A_BUNDLE_DIR/workflow/execution-identity.txt"
+          printf 'run_id=%s\n' "$GITHUB_RUN_ID" | tee -a "$C6A_BUNDLE_DIR/workflow/execution-identity.txt"
+          printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT" | tee -a "$C6A_BUNDLE_DIR/workflow/execution-identity.txt"
+
+      - name: Run bounded fail-closed GLOBAL category source-scope probe
+        id: probe
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          cd implementation
+          PYTHONPATH=src python scripts/run_c6a_source_scope_category_probe.py \
+            --output "$C6A_PROBE_DIR" \
+            2>&1 | tee "$C6A_BUNDLE_DIR/workflow/probe.log"
+          status=${PIPESTATUS[0]}
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Build complete outer bundle manifest
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["C6A_BUNDLE_DIR"])
+          root.mkdir(parents=True, exist_ok=True)
+          files = []
+          for path in sorted(item for item in root.rglob("*") if item.is_file()):
+              relative = path.relative_to(root).as_posix()
+              if relative == "bundle-manifest.json":
+                  continue
+              data = path.read_bytes()
+              files.append({
+                  "path": relative,
+                  "size": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest(),
+              })
+          payload = {
+              "schema_version": 1,
+              "stage": "C6A_GLOBAL_CATEGORY_SOURCE_SCOPE_PROBE_BUNDLE",
+              "implementation_sha": os.environ["C6A_PROBE_IMPLEMENTATION_SHA"],
+              "validated_pr_merge_ref": os.environ["C6A_VALIDATED_PR_MERGE_REF"],
+              "trigger_commit": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "files": files,
+              "file_count": len(files),
+              "implementation_authorized": False,
+              "economic_data_access_authorized": False,
+              "third_full_capture_authorized": False,
+              "live_state": "LIVE_FORBIDDEN",
+          }
+          encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+          (root / "bundle-manifest.json").write_bytes(encoded)
+          PY
+
+      - name: Upload complete category-probe result bundle
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: c6a-global-category-scope-probe-${{ github.run_id }}
+          path: ${{ env.C6A_BUNDLE_DIR }}
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
+
+      - name: Publish non-authorizing category-probe summary
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["C6A_PROBE_DIR"])
+          result_path = root / "probe_result.json"
+          review_path = root / "independent_review.json"
+          lines = [
+              "## C6A GLOBAL announcements-category source-scope probe",
+              "",
+              f"- implementation SHA: `{os.environ['C6A_PROBE_IMPLEMENTATION_SHA']}`",
+              f"- validated PR merge ref: `{os.environ['C6A_VALIDATED_PR_MERGE_REF']}`",
+              "- third full capture authorized: `false`",
+              "- economic implementation authorized: `false`",
+              "- live state: `LIVE_FORBIDDEN`",
+          ]
+          if result_path.is_file():
+              result = json.loads(result_path.read_text(encoding="utf-8"))
+              lines.extend([
+                  f"- probe status: `{result.get('status')}`",
+                  f"- probe result: `{result.get('result')}`",
+                  f"- reproducible passing profiles: `{result.get('reproducible_passing_profiles')}`",
+              ])
+          else:
+              lines.append("- probe status: `ARTIFACT_MISSING`")
+          if review_path.is_file():
+              review = json.loads(review_path.read_text(encoding="utf-8"))
+              lines.extend([
+                  f"- independent review: `{review.get('status')}`",
+                  f"- independent probe status: `{review.get('probe_status_recomputed')}`",
+              ])
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Enforce execution and bundle integrity after upload
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status='${{ steps.probe.outputs.exit_code }}'
+          if [ "$status" != "0" ]; then
+            echo "Unexpected category-probe implementation/runtime failure was retained in the bundle (exit=$status)." >&2
+            exit 1
+          fi
+          test -f "$C6A_PROBE_DIR/probe_result.json"
+          test -f "$C6A_PROBE_DIR/independent_review.json"
+          test -f "$C6A_PROBE_DIR/manifest.json"
+          test -f "$C6A_BUNDLE_DIR/bundle-manifest.json"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["C6A_BUNDLE_DIR"])
+          manifest = json.loads((root / "bundle-manifest.json").read_text(encoding="utf-8"))
+          observed = {row["path"]: row for row in manifest["files"]}
+          expected = {
+              path.relative_to(root).as_posix(): path
+              for path in root.rglob("*")
+              if path.is_file() and path.name != "bundle-manifest.json"
+          }
+          if set(observed) != set(expected) or manifest.get("file_count") != len(expected):
+              raise SystemExit("outer bundle manifest coverage mismatch")
+          for relative, path in expected.items():
+              data = path.read_bytes()
+              row = observed[relative]
+              if row.get("size") != len(data) or row.get("sha256") != hashlib.sha256(data).hexdigest():
+                  raise SystemExit(f"outer bundle manifest mismatch: {relative}")
+
+          probe_root = Path(os.environ["C6A_PROBE_DIR"])
+          result = json.loads((probe_root / "probe_result.json").read_text())
+          review = json.loads((probe_root / "independent_review.json").read_text())
+          if review.get("status") != "PASS":
+              raise SystemExit("category-probe independent review did not pass")
+          if result.get("status") != review.get("probe_status_recomputed"):
+              raise SystemExit("category-probe result/reviewer status mismatch")
+          if result.get("implementation_authorized") is not False:
+              raise SystemExit("category probe improperly authorizes implementation")
+          if result.get("economic_data_access_authorized") is not False:
+              raise SystemExit("category probe improperly authorizes economic data access")
+          if result.get("third_full_capture_authorized") is not False:
+              raise SystemExit("category probe improperly authorizes third full capture")
+          if result.get("live_state") != "LIVE_FORBIDDEN":
+              raise SystemExit("category-probe live-state boundary drift")
+          PY
