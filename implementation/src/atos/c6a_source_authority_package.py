@@ -23,6 +23,7 @@ from atos.c6a_source_authority_independent import (
     review_package,
     verify_manifest_complete,
 )
+from atos.c6a_source_authority_partition_review import review_transition_partition
 from atos.c6a_source_authority_schema import (
     artifact_statistics,
     validate_coverage_records,
@@ -188,6 +189,29 @@ def package_gate_artifact(
         gate_result=preliminary,
         preliminary_manifest=preliminary_manifest,
     )
+    partition_review = review_transition_partition(
+        states,
+        recorded_failures=failure_list,
+    )
+    independent = dict(independent)
+    independent["transition_partition_review"] = partition_review
+    if partition_review.get("status") != "PASS":
+        existing_errors = independent.get("errors", [])
+        normalized_errors = (
+            list(existing_errors)
+            if isinstance(existing_errors, Sequence) and not isinstance(existing_errors, (str, bytes))
+            else [str(existing_errors)]
+        )
+        partition_errors = partition_review.get("errors", [])
+        if isinstance(partition_errors, Sequence) and not isinstance(
+            partition_errors, (str, bytes)
+        ):
+            normalized_errors.extend(str(error) for error in partition_errors)
+        else:
+            normalized_errors.append(str(partition_errors))
+        independent["errors"] = normalized_errors
+        independent["status"] = "FAIL"
+
     final_decision = _finalize_decision(
         preliminary,
         failures=failure_list,
