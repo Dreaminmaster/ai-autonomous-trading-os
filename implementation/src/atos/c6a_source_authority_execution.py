@@ -1,9 +1,10 @@
-"""Strict execution boundary for the one-shot C6A source-authority attempt.
+"""Strict execution boundary for C6A source-authority attempts.
 
-The executable path binds the attempt's transport to the strict redirect guard,
-to the committed rate-limit policy, to the bounded locale-aware catalog parser,
-and to the independent retained-attempt diagnostic reconciliation.  Every
-binding is restored in ``finally`` so focused offline tests remain isolated.
+The executable path binds the attempt to strict redirect-safe transport,
+committed pacing, GLOBAL source-scope validation, scope-aware parsing, complete
+failure taxonomy, retained-attempt diagnostic reconciliation, and independent
+GLOBAL scope review.  Every binding is restored in ``finally`` so focused
+offline tests remain isolated.
 """
 from __future__ import annotations
 
@@ -12,21 +13,34 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+import atos.c6a_source_authority as core
 import atos.c6a_source_authority_attempt as attempt
+import atos.c6a_source_authority_attempt_review as attempt_review
+import atos.c6a_source_authority_gate as gate
+import atos.c6a_source_authority_independent as independent
 import atos.c6a_source_authority_package as package
 from atos.c6a_source_authority import SourceAuthorityError
 from atos.c6a_source_authority_attempt_review import (
     review_package_with_attempt_diagnostics,
 )
 from atos.c6a_source_authority_catalog_remediation import (
-    parse_announcement_catalog,
+    parse_announcement_catalog as parse_locale_aware_catalog,
+)
+from atos.c6a_source_authority_scope import (
+    SCOPE_FAILURE,
+    extend_failure_priority,
+    parse_global_announcement_catalog,
+    validate_global_scope_inventory,
 )
 from atos.c6a_source_authority_transport import strict_capture_request
 
 
 def _paced_capture(inventory_path: Path) -> Callable[..., Any]:
     payload = json.loads(inventory_path.read_text(encoding="utf-8"))
-    policy = payload.get("rate_limit_policy") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        raise SourceAuthorityError("query inventory root must be an object")
+    validate_global_scope_inventory(payload)
+    policy = payload.get("rate_limit_policy")
     if not isinstance(policy, dict):
         raise SourceAuthorityError("query inventory rate-limit policy is required")
     minimum = policy.get("minimum_interval_seconds")
@@ -51,6 +65,34 @@ def _paced_capture(inventory_path: Path) -> Callable[..., Any]:
     return capture
 
 
+def _scope_validated_loader(original: Callable[[Path], Any]) -> Callable[[Path], Any]:
+    def load(path: Path) -> Any:
+        return validate_global_scope_inventory(original(path))
+
+    return load
+
+
+def _global_catalog_parser(page_url: str, data: bytes, *, expected_page_size: int = 15) -> dict[str, Any]:
+    return parse_global_announcement_catalog(
+        page_url,
+        data,
+        base_parser=parse_locale_aware_catalog,
+        expected_page_size=expected_page_size,
+    )
+
+
+def _scope_failure_mapper(
+    original: Callable[..., str],
+) -> Callable[..., str]:
+    def classify(exc: BaseException, *, request_kind: str) -> str:
+        message = str(exc).casefold()
+        if SCOPE_FAILURE.casefold() in message or "source authority scope drift" in message:
+            return SCOPE_FAILURE
+        return original(exc, request_kind=request_kind)
+
+    return classify
+
+
 def run_strict_source_authority_attempt(
     *,
     inventory_path: Path,
@@ -61,9 +103,27 @@ def run_strict_source_authority_attempt(
     original_capture = attempt.capture_request
     original_catalog_parser = attempt.parse_announcement_catalog
     original_package_review = package.review_package
+    original_loader = attempt.load_frozen_inventory
+    original_exception_mapper = attempt._failure_for_exception
+    original_priorities = {
+        "core": core.FAILURE_PRIORITY,
+        "attempt": attempt.FAILURE_PRIORITY,
+        "gate": gate.FAILURE_PRIORITY,
+        "independent": independent.FAILURE_PRIORITY,
+        "attempt_review": attempt_review.FAILURE_PRIORITY,
+    }
+    extended_priority = extend_failure_priority(core.FAILURE_PRIORITY)
+
     attempt.capture_request = _paced_capture(inventory_path)
-    attempt.parse_announcement_catalog = parse_announcement_catalog
+    attempt.parse_announcement_catalog = _global_catalog_parser
+    attempt.load_frozen_inventory = _scope_validated_loader(original_loader)
+    attempt._failure_for_exception = _scope_failure_mapper(original_exception_mapper)
     package.review_package = review_package_with_attempt_diagnostics
+    core.FAILURE_PRIORITY = extended_priority
+    attempt.FAILURE_PRIORITY = extended_priority
+    gate.FAILURE_PRIORITY = extended_priority
+    independent.FAILURE_PRIORITY = extended_priority
+    attempt_review.FAILURE_PRIORITY = extended_priority
     try:
         return attempt.run_source_authority_attempt(
             inventory_path=inventory_path,
@@ -72,6 +132,13 @@ def run_strict_source_authority_attempt(
             pr_merge_ref=pr_merge_ref,
         )
     finally:
+        attempt_review.FAILURE_PRIORITY = original_priorities["attempt_review"]
+        independent.FAILURE_PRIORITY = original_priorities["independent"]
+        gate.FAILURE_PRIORITY = original_priorities["gate"]
+        attempt.FAILURE_PRIORITY = original_priorities["attempt"]
+        core.FAILURE_PRIORITY = original_priorities["core"]
         package.review_package = original_package_review
+        attempt._failure_for_exception = original_exception_mapper
+        attempt.load_frozen_inventory = original_loader
         attempt.parse_announcement_catalog = original_catalog_parser
         attempt.capture_request = original_capture

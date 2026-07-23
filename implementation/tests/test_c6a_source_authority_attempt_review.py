@@ -36,6 +36,29 @@ def test_attempt_diagnostics_recomputes_archive_failure_without_trusting_code(
     assert review["errors"] == []
 
 
+def test_attempt_diagnostics_recomputes_scope_drift_before_catalog_failure(
+    tmp_path: Path,
+) -> None:
+    _write_attempt_log(
+        tmp_path,
+        [
+            {
+                "timestamp": "2026-07-23T09:31:39+00:00",
+                "stage": "announcement_catalog",
+                "request_id": "okx-announcement-catalog-global-page-001",
+                "request_kind": "announcement_catalog",
+                "url": "https://www.okx.com/help/section/announcements-latest-announcements/page/1",
+                "failure_code": "FAIL_SOURCE_AUTHORITY_SCOPE_DRIFT",
+                "error_type": "SourceAuthorityError",
+                "error": "FAIL_SOURCE_AUTHORITY_SCOPE_DRIFT: GLOBAL catalog was substituted by a regional locale path",
+            }
+        ],
+    )
+    review = attempt_review.review_attempt_diagnostics(tmp_path)
+    assert review["status"] == "PASS"
+    assert review["recomputed_failures"] == ["FAIL_SOURCE_AUTHORITY_SCOPE_DRIFT"]
+
+
 def test_attempt_diagnostics_recomputes_structured_catalog_deduplication(
     tmp_path: Path,
 ) -> None:
@@ -45,7 +68,7 @@ def test_attempt_diagnostics_recomputes_structured_catalog_deduplication(
             {
                 "stage": "announcement_catalog_deduplication",
                 "failure_code": "FAIL_ANNOUNCEMENT_CATALOG_INCOMPLETE",
-                "duplicate_urls": ["https://www.okx.com/en-us/help/example"],
+                "duplicate_urls": ["https://www.okx.com/help/example"],
             }
         ],
     )
@@ -92,7 +115,18 @@ def test_package_review_reconciles_retained_archive_failure(monkeypatch, tmp_pat
             "live_state": "LIVE_FORBIDDEN",
         }
 
+    def scope_review(*args, **kwargs):
+        return {
+            "status": "PASS",
+            "recomputed_failures": [],
+            "errors": [],
+            "implementation_authorized": False,
+            "economic_data_access_authorized": False,
+            "live_state": "LIVE_FORBIDDEN",
+        }
+
     monkeypatch.setattr(attempt_review.independent, "review_package", base_review)
+    monkeypatch.setattr(attempt_review, "review_global_scope", scope_review)
     result = attempt_review.review_package_with_attempt_diagnostics(
         tmp_path,
         query_inventory={},
@@ -111,3 +145,4 @@ def test_package_review_reconciles_retained_archive_failure(monkeypatch, tmp_pat
     assert result["recorded_failures"] == result["recomputed_failures"]
     assert result["errors"] == []
     assert result["attempt_diagnostics_review"]["status"] == "PASS"
+    assert result["source_scope_review"]["status"] == "PASS"

@@ -1,10 +1,10 @@
-"""Independent reconciliation of retained C6A attempt diagnostics.
+"""Independent reconciliation of retained C6A attempt diagnostics and scope.
 
-This module imports no production gate, capture, parser, schema, or package
-code.  It derives transport/parser failure codes from retained diagnostic
-fields, verifies that the producer recorded the same code, and then combines
-those independently derived failures with the physically separate package
-review.
+This module derives transport/parser failure codes from retained diagnostic
+fields, verifies that the producer recorded the same code, combines them with
+the physically separate package review, and separately invokes a reviewer that
+recomputes GLOBAL source scope from retained bytes rather than trusting the
+production verdict.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import atos.c6a_source_authority_independent as independent
+from atos.c6a_source_authority_scope_independent import review_global_scope
 
 
 FAILURE_PRIORITY = (
@@ -21,6 +22,7 @@ FAILURE_PRIORITY = (
     "FAIL_SOURCE_BYTES_MISSING",
     "FAIL_SOURCE_HASH_MISMATCH",
     "FAIL_SOURCE_NOT_OFFICIAL_OKX",
+    "FAIL_SOURCE_AUTHORITY_SCOPE_DRIFT",
     "FAIL_ARCHIVE_DECODING_OR_PROVENANCE",
     "FAIL_ANNOUNCEMENT_CATALOG_INCOMPLETE",
     "FAIL_REQUIRED_FIELD_MISSING",
@@ -40,6 +42,13 @@ FAILURE_PRIORITY = (
 _RECONCILED_ERROR_PREFIX = "recorded failure set mismatch:"
 _RECONCILED_PRIMARY_ERROR = "recomputed primary failure does not match recorded primary failure"
 _STRUCTURED_CATALOG_STAGES = {"announcement_catalog_deduplication"}
+_SCOPE_MARKERS = (
+    "fail_source_authority_scope_drift",
+    "source authority scope drift",
+    "regional locale path",
+    "regional path",
+    "global category evidence",
+)
 
 
 def choose_primary_failure(failures: Sequence[str]) -> str | None:
@@ -54,6 +63,8 @@ def _derive_event_failure(event: Mapping[str, Any]) -> str:
     message = str(event.get("error", "")).casefold()
     stage = str(event.get("stage", ""))
     request_kind = str(event.get("request_kind", ""))
+    if any(marker in message for marker in _SCOPE_MARKERS):
+        return "FAIL_SOURCE_AUTHORITY_SCOPE_DRIFT"
     if "forbidden" in message or "credential" in message:
         return "FAIL_FORBIDDEN_DATA_ACCESS"
     if request_kind == "archive_lookup" or stage in {"archive_index", "archive_memento"}:
@@ -165,7 +176,7 @@ def review_package_with_attempt_diagnostics(
     gate_result: Mapping[str, Any],
     preliminary_manifest: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Run the base independent review and reconcile retained attempt failures."""
+    """Run base review, diagnostic review, and independent GLOBAL scope review."""
 
     result = dict(
         independent.review_package(
@@ -182,7 +193,14 @@ def review_package_with_attempt_diagnostics(
         )
     )
     attempt_review = review_attempt_diagnostics(root)
+    scope_review = review_global_scope(
+        root,
+        query_inventory=query_inventory,
+        source_inventory=source_inventory,
+        announcement_catalog=announcement_catalog,
+    )
     result["attempt_diagnostics_review"] = attempt_review
+    result["source_scope_review"] = scope_review
 
     errors = [
         str(error)
@@ -191,10 +209,12 @@ def review_package_with_attempt_diagnostics(
         and str(error) != _RECONCILED_PRIMARY_ERROR
     ]
     errors.extend(str(error) for error in attempt_review.get("errors", []))
+    errors.extend(str(error) for error in scope_review.get("errors", []))
 
     recorded = {str(code) for code in failures}
     recomputed = {str(code) for code in result.get("recomputed_failures", [])}
     recomputed.update(str(code) for code in attempt_review.get("recomputed_failures", []))
+    recomputed.update(str(code) for code in scope_review.get("recomputed_failures", []))
 
     try:
         recorded_primary = choose_primary_failure(tuple(recorded))
