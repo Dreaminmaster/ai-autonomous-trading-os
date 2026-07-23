@@ -173,18 +173,37 @@ def _full_states() -> tuple[MetadataState, ...]:
 def _proof(instrument: str, start: str, end: str, old_step: str, new_step: str) -> dict:
     transition_lot = old_step
     transition_min = old_step
+    old_source = f"source-{instrument}-{start}-old"
+    new_source = f"source-{instrument}-{end}-new"
+    window_source = f"notice-{instrument}-{start}"
+    unchanged_fields = (
+        "inst_type",
+        "base_ccy",
+        "quote_ccy",
+        "settle_ccy",
+        "ct_val",
+        "ct_val_ccy",
+        "tick_sz",
+        "listing_state",
+    )
     return {
         "instrument": instrument,
         "window_start": start,
         "window_end_exclusive": end,
         "old_state_id": f"{instrument}-{start}-old",
         "new_state_id": f"{instrument}-{end}-new",
+        "official_window_source_id": window_source,
+        "old_source_ids": [old_source],
+        "new_source_ids": [new_source],
         "old_lot": old_step,
         "new_lot": new_step,
         "old_min": old_step,
         "new_min": new_step,
         "transition_lot": transition_lot,
         "transition_min": transition_min,
+        "unchanged_field_proof": {
+            field: [old_source, new_source] for field in unchanged_fields
+        },
         "boundary_cases": [
             {
                 "quantity": "0",
@@ -257,6 +276,7 @@ def test_complete_snapshot_is_preliminary_and_non_authorizing() -> None:
         _snapshot(),
         source_commit_sha="a" * 40,
         query_inventory_sha256="b" * 64,
+        pr_merge_ref="refs/pull/61/merge@deadbeef",
     )
     assert failures == ()
     assert decision["status"] == "PASS"
@@ -268,7 +288,10 @@ def test_complete_snapshot_is_preliminary_and_non_authorizing() -> None:
     assert decision["observed_transition_proof_count"] == 4
     assert decision["implementation_authorized"] is False
     assert decision["economic_data_access_authorized"] is False
+    assert decision["pr_merge_ref"] == "refs/pull/61/merge@deadbeef"
     assert len(coverage) == 12
+    assert all(row["required_fields_present"] is True for row in coverage)
+    assert all(row["modeled_timestamp_outside_authority"] is False for row in coverage)
 
 
 def test_missing_frozen_transition_fails_before_economics() -> None:
