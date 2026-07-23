@@ -1,13 +1,14 @@
 """Independent retained-source host and provenance review for C6A.
 
-This module imports no production gate, capture, parser, or package code.  It
+This module imports no production gate, capture, parser, or package code. It
 prevents a manually assembled source inventory from treating arbitrary HTTPS
 content as an eligible archived official OKX response.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 
 ALLOWED_AUTHORITY_CLASSES = {
@@ -16,11 +17,19 @@ ALLOWED_AUTHORITY_CLASSES = {
     "EXACT_ARCHIVED_OFFICIAL_OKX_RESPONSE",
     "OFFICIAL_OKX_METADATA_DOWNLOAD",
 }
+WAYBACK_PATH_RE = re.compile(r"^/web/(?P<timestamp>\d{14})(?:id_)?/(?P<original>https?://.+)$")
 
 
 def _is_okx_host(hostname: str) -> bool:
     hostname = hostname.lower()
     return hostname == "okx.com" or hostname.endswith(".okx.com")
+
+
+def _wayback_timestamp_text(timestamp: str) -> str:
+    return (
+        f"{timestamp[0:4]}-{timestamp[4:6]}-{timestamp[6:8]}T"
+        f"{timestamp[8:10]}:{timestamp[10:12]}:{timestamp[12:14]}+00:00"
+    )
 
 
 def review_source_boundaries(source_inventory: Mapping[str, Any]) -> dict[str, Any]:
@@ -45,12 +54,14 @@ def review_source_boundaries(source_inventory: Mapping[str, Any]) -> dict[str, A
         if authority_class not in ALLOWED_AUTHORITY_CLASSES:
             errors.append(f"source {source_id} authority class is not permitted")
 
-        canonical = urlparse(str(row.get("canonical_official_url", "")))
+        canonical_text = str(row.get("canonical_official_url", ""))
+        canonical = urlparse(canonical_text)
         canonical_host = (canonical.hostname or "").lower()
         if canonical.scheme != "https" or not _is_okx_host(canonical_host):
             errors.append(f"source {source_id} canonical authority is not official OKX HTTPS")
 
-        retrieval = urlparse(str(row.get("retrieval_url", "")))
+        retrieval_text = str(row.get("retrieval_url", ""))
+        retrieval = urlparse(retrieval_text)
         retrieval_host = (retrieval.hostname or "").lower()
         if retrieval.scheme != "https" or not retrieval_host:
             errors.append(f"source {source_id} retrieval URL is not HTTPS")
@@ -58,10 +69,19 @@ def review_source_boundaries(source_inventory: Mapping[str, Any]) -> dict[str, A
             archived_count += 1
             if retrieval_host != "web.archive.org":
                 errors.append(f"source {source_id} archived retrieval host is not web.archive.org")
-            if not isinstance(row.get("archive_capture_timestamp"), str) or not row.get(
-                "archive_capture_timestamp"
-            ):
-                errors.append(f"source {source_id} archive capture timestamp is missing")
+            match = WAYBACK_PATH_RE.match(unquote(retrieval.path))
+            if match is None:
+                errors.append(f"source {source_id} Wayback path lacks an exact capture timestamp and original URL")
+            else:
+                archived_original = match.group("original")
+                if retrieval.query:
+                    archived_original = f"{archived_original}?{retrieval.query}"
+                if archived_original != canonical_text:
+                    errors.append(f"source {source_id} archived original URL does not match canonical authority")
+                derived_timestamp = _wayback_timestamp_text(match.group("timestamp"))
+                declared_timestamp = row.get("archive_capture_timestamp")
+                if declared_timestamp not in (None, "") and str(declared_timestamp) != derived_timestamp:
+                    errors.append(f"source {source_id} archive capture timestamp disagrees with Wayback path")
         elif not _is_okx_host(retrieval_host):
             errors.append(f"source {source_id} non-archive retrieval escaped official OKX")
 
