@@ -14,8 +14,13 @@ from atos.c6a_common_crawl_raw_cdxj_core import (
     parse_cdxj_line,
     parse_cluster_line,
 )
-from atos.c6a_common_crawl_raw_cdxj_probe import run_probe, select_cluster_blocks
-from atos.c6a_common_crawl_raw_cdxj_probe_independent import review_probe
+from atos.c6a_common_crawl_raw_cdxj_probe import (
+    run_probe,
+    select_cluster_blocks,
+)
+from atos.c6a_common_crawl_raw_cdxj_probe_independent import (
+    review_probe,
+)
 from atos.c6a_common_crawl_raw_cdxj_transport import (
     MemoryRangeTransport,
     RecordingRangeReader,
@@ -28,18 +33,6 @@ INVENTORY = (
     / "config/c6a_common_crawl_raw_cdxj_probe_inventory_v1.json"
 )
 DATA = "https://data.commoncrawl.org"
-
-
-def _canonical(value: object) -> bytes:
-    return (
-        json.dumps(
-            value,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        )
-        + "\n"
-    ).encode()
 
 
 def _build_objects(
@@ -222,7 +215,10 @@ def test_transport_failure_is_retained_as_execution_failure(
     tmp_path: Path,
 ) -> None:
     inventory = _load_inventory(INVENTORY)
-    objects = _build_objects(inventory, omit_crawl="CC-MAIN-2025-13")
+    objects = _build_objects(
+        inventory,
+        omit_crawl="CC-MAIN-2025-13",
+    )
     result = run_probe(
         INVENTORY,
         tmp_path,
@@ -269,3 +265,88 @@ def test_forbidden_proxy_state_fails_before_network(
             transport=MemoryRangeTransport({}),
             sleeper=lambda _: None,
         )
+
+
+def test_independent_review_binds_compressed_range_to_block(
+    tmp_path: Path,
+) -> None:
+    inventory = _load_inventory(INVENTORY)
+    result = run_probe(
+        INVENTORY,
+        tmp_path,
+        transport=MemoryRangeTransport(_build_objects(inventory)),
+        sleeper=lambda _: None,
+        validate_environment=False,
+    )
+    assert result["status"] == "PASS"
+    evidence_path = tmp_path / "range_evidence.json"
+    evidence = json.loads(evidence_path.read_text())
+    row = next(
+        item
+        for item in evidence["requests"]
+        if item["url"].endswith("cdx-00000.gz")
+    )
+    retained = tmp_path / row["path"]
+    original = retained.read_bytes()
+    tampered = original[:-1] + bytes([original[-1] ^ 1])
+    retained.write_bytes(tampered)
+    row["sha256"] = hashlib.sha256(tampered).hexdigest()
+    row["size"] = len(tampered)
+    evidence_path.write_text(
+        json.dumps(
+            evidence,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    review = review_probe(tmp_path)
+    assert review["status"] == "FAIL"
+    assert any(
+        "decompress" in error or "binding mismatch" in error
+        for error in review["errors"]
+    )
+
+
+def test_independent_review_recomputes_cluster_selection(
+    tmp_path: Path,
+) -> None:
+    inventory = _load_inventory(INVENTORY)
+    result = run_probe(
+        INVENTORY,
+        tmp_path,
+        transport=MemoryRangeTransport(_build_objects(inventory)),
+        sleeper=lambda _: None,
+        validate_environment=False,
+    )
+    assert result["status"] == "PASS"
+    result_path = tmp_path / "probe_result.json"
+    payload = json.loads(result_path.read_text())
+    query = payload["queries"][0]
+    del query["cluster_context_lines"][1]
+    result_path.write_text(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    query_path = tmp_path / f"queries/{query['query_id']}/query.json"
+    query_path.write_text(
+        json.dumps(
+            query,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    review = review_probe(tmp_path)
+    assert review["status"] == "FAIL"
+    assert any(
+        "context not bound" in error
+        or "selection proof" in error
+        or "selected block sequence" in error
+        or "upper boundary" in error
+        for error in review["errors"]
+    )
