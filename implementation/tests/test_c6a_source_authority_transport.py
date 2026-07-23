@@ -55,7 +55,9 @@ def test_archive_capture_uses_guarded_opener_and_restores_global(monkeypatch, tm
 
     def capture_stub(*args, **kwargs):
         observed["urlopen_during_capture"] = transport.capture_module.urlopen
-        return _capture("https://web.archive.org/web/20240101id_/https://www.okx.com/")
+        return _capture(
+            "https://web.archive.org/web/20240101000000id_/https://www.okx.com/"
+        )
 
     monkeypatch.setattr(transport.capture_module, "capture_request", capture_stub)
     result = transport.strict_capture_request(
@@ -80,6 +82,25 @@ def test_final_url_check_remains_defense_in_depth(monkeypatch, tmp_path: Path) -
     with pytest.raises(SourceAuthorityError, match="escaped frozen host"):
         transport.strict_capture_request(
             _request(),
+            output_root=tmp_path,
+            timeout_seconds=1,
+            max_attempts=1,
+            initial_backoff_seconds=0,
+            maximum_backoff_seconds=0,
+        )
+
+
+def test_transport_rejects_non_help_announcement_path_before_capture(tmp_path: Path) -> None:
+    request = FrozenRequest(
+        request_id="article-1",
+        request_kind="announcement_article",
+        url="https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT",
+        canonical_official_url="https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT",
+        expected_content_type="application/json",
+    )
+    with pytest.raises(SourceAuthorityError, match="frozen help path"):
+        transport.strict_capture_request(
+            request,
             output_root=tmp_path,
             timeout_seconds=1,
             max_attempts=1,
