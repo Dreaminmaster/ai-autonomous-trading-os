@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "stage": "C6A_COMMON_CRAWL_OFFICIAL_SOURCE_COVERAGE_PROBE",
+  "archive_carrier": "COMMON_CRAWL",
+  "authority_source": "OFFICIAL_OKX_HTTP_RESPONSE_BYTES",
+  "match_type": "exact",
+  "max_records_per_query": 1,
+  "minimum_request_interval_seconds": 1,
+  "targets": [
+    {
+      "target_id": "global-announcements-category",
+      "kind": "catalog",
+      "url": "https://www.okx.com/help/category/announcements",
+      "crawl_indexes": [
+        "CC-MAIN-2024-18",
+        "CC-MAIN-2024-51",
+        "CC-MAIN-2025-05",
+        "CC-MAIN-2025-21"
+      ],
+      "required_markers": [
+        "announcements",
+        "latest announcements",
+        "trading updates"
+      ]
+    },
+    {
+      "target_id": "global-latest-announcements-page-1",
+      "kind": "catalog",
+      "url": "https://www.okx.com/help/section/announcements-latest-announcements/page/1",
+      "crawl_indexes": [
+        "CC-MAIN-2024-18",
+        "CC-MAIN-2024-51",
+        "CC-MAIN-2025-05",
+        "CC-MAIN-2025-21"
+      ],
+      "required_markers": [
+        "latest announcements",
+        "announcements"
+      ]
+    },
+    {
+      "target_id": "eth-minimum-order-2024-04-18",
+      "kind": "announcement_article",
+      "url": "https://www.okx.com/help/okx-to-adjust-the-minimum-order-quantities-for-several-futures-240412",
+      "crawl_indexes": [
+        "CC-MAIN-2024-18",
+        "CC-MAIN-2024-22",
+        "CC-MAIN-2024-26"
+      ],
+      "required_markers": [
+        "adjust the minimum order quantities",
+        "ethusdt"
+      ]
+    },
+    {
+      "target_id": "btc-minimum-order-2024-04-25",
+      "kind": "announcement_article",
+      "url": "https://www.okx.com/help/okx-to-adjust-the-minimum-order-quantities-for-several-futures-24-04-19",
+      "crawl_indexes": [
+        "CC-MAIN-2024-18",
+        "CC-MAIN-2024-22",
+        "CC-MAIN-2024-26"
+      ],
+      "required_markers": [
+        "adjust the minimum order quantities",
+        "btcusdt"
+      ]
+    },
+    {
+      "target_id": "eth-minimum-order-original-2024-12-18",
+      "kind": "announcement_article",
+      "url": "https://www.okx.com/help/okx-to-adjust-the-minimum-order-quantities-for-ethusdt-perpetual-and-expiry",
+      "crawl_indexes": [
+        "CC-MAIN-2024-51",
+        "CC-MAIN-2025-05",
+        "CC-MAIN-2025-08"
+      ],
+      "required_markers": [
+        "minimum order quantities",
+        "ethusdt perpetual"
+      ]
+    },
+    {
+      "target_id": "eth-minimum-order-postponed-2025-01-09",
+      "kind": "announcement_article",
+      "url": "https://www.okx.com/help/okx-to-postpone-adjusting-minimum-order-quantities-for-ethusdt-perpetual-and",
+      "crawl_indexes": [
+        "CC-MAIN-2025-05",
+        "CC-MAIN-2025-08",
+        "CC-MAIN-2025-13"
+      ],
+      "required_markers": [
+        "postpone",
+        "minimum order quantities",
+        "ethusdt"
+      ]
+    },
+    {
+      "target_id": "btc-minimum-order-2025-01-22",
+      "kind": "announcement_article",
+      "url": "https://www.okx.com/help/okx-to-adjust-the-minimum-order-quantities-of-spots-and-futures",
+      "crawl_indexes": [
+        "CC-MAIN-2025-05",
+        "CC-MAIN-2025-08",
+        "CC-MAIN-2025-13"
+      ],
+      "required_markers": [
+        "minimum order quantities",
+        "btc"
+      ]
+    }
+  ],
+  "article_expansion_authorized": false,
+  "third_full_capture_authorized": false,
+  "implementation_authorized": false,
+  "economic_data_access_authorized": false,
+  "paper_state": "PAPER_CLOSED",
+  "shadow_state": "SHADOW_CLOSED",
+  "live_state": "LIVE_FORBIDDEN"
+}
