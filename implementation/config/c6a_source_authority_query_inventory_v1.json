@@ -153,6 +153,10 @@
     "maximum_backoff_seconds": 15,
     "respect_retry_after": true
   },
+  "rate_limit_policy": {
+    "minimum_interval_seconds": 1,
+    "maximum_requests_per_minute": 60
+  },
   "parser_versions": {
     "announcement_catalog": "c6a-announcement-catalog-v1",
     "announcement_article": "c6a-announcement-article-v1",
