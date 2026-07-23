@@ -9,7 +9,7 @@ from pathlib import Path
 
 from atos.c6a_common_crawl_raw_cdxj_core import atomic_write_json
 from atos.c6a_common_crawl_raw_cdxj_probe import build_manifest, run_probe
-from atos.c6a_common_crawl_raw_cdxj_probe_independent import review_probe
+from atos.c6a_common_crawl_raw_cdxj_probe_independent_v2 import review_probe
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,7 +45,12 @@ def main() -> int:
             "live_state": "LIVE_FORBIDDEN",
         }
         print(json.dumps(summary, sort_keys=True))
-        return 0 if result["status"] == "PASS" and review["status"] == "PASS" else 3
+        return (
+            0
+            if result["status"] == "PASS"
+            and review["status"] == "PASS"
+            else 3
+        )
     except BaseException as exc:
         emergency = {
             "schema_version": 1,
@@ -63,7 +68,10 @@ def main() -> int:
             "shadow_state": "SHADOW_CLOSED",
             "live_state": "LIVE_FORBIDDEN",
         }
-        atomic_write_json(args.output / "emergency_failure.json", emergency)
+        atomic_write_json(
+            args.output / "emergency_failure.json",
+            emergency,
+        )
         print(json.dumps(emergency, sort_keys=True))
         return 2
 
