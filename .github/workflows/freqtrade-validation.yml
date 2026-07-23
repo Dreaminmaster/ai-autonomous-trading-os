@@ -9,6 +9,7 @@ on:
       - '!implementation/config/c6a_source_authority_query_inventory_v1.json'
       - '!implementation/src/atos/c6a_source_authority*.py'
       - '!implementation/tests/test_c6a_source_authority*.py'
+      - '!implementation/scripts/run_c6a_source_authority_gate.py'
   workflow_dispatch:
 
 jobs:
