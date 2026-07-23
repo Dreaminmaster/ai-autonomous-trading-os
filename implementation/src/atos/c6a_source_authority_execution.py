@@ -1,8 +1,9 @@
 """Strict execution boundary for the one-shot C6A source-authority attempt.
 
-The executable path binds the attempt's transport to the strict redirect guard
-and to the committed rate-limit policy.  The original binding is restored in
-``finally`` so focused offline tests remain isolated.
+The executable path binds the attempt's transport to the strict redirect guard,
+to the committed rate-limit policy, to the bounded locale-aware catalog parser,
+and to the independent retained-attempt diagnostic reconciliation.  Every
+binding is restored in ``finally`` so focused offline tests remain isolated.
 """
 from __future__ import annotations
 
@@ -12,7 +13,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 import atos.c6a_source_authority_attempt as attempt
+import atos.c6a_source_authority_package as package
 from atos.c6a_source_authority import SourceAuthorityError
+from atos.c6a_source_authority_attempt_review import (
+    review_package_with_attempt_diagnostics,
+)
+from atos.c6a_source_authority_catalog_remediation import (
+    parse_announcement_catalog,
+)
 from atos.c6a_source_authority_transport import strict_capture_request
 
 
@@ -50,8 +58,12 @@ def run_strict_source_authority_attempt(
     source_commit_sha: str,
     pr_merge_ref: str | None,
 ) -> dict[str, Any]:
-    original = attempt.capture_request
+    original_capture = attempt.capture_request
+    original_catalog_parser = attempt.parse_announcement_catalog
+    original_package_review = package.review_package
     attempt.capture_request = _paced_capture(inventory_path)
+    attempt.parse_announcement_catalog = parse_announcement_catalog
+    package.review_package = review_package_with_attempt_diagnostics
     try:
         return attempt.run_source_authority_attempt(
             inventory_path=inventory_path,
@@ -60,4 +72,6 @@ def run_strict_source_authority_attempt(
             pr_merge_ref=pr_merge_ref,
         )
     finally:
-        attempt.capture_request = original
+        package.review_package = original_package_review
+        attempt.parse_announcement_catalog = original_catalog_parser
+        attempt.capture_request = original_capture
