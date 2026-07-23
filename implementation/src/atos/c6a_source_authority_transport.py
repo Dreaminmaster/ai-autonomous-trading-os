@@ -1,8 +1,10 @@
-"""Strict transport wrapper for the one-shot C6A source capture.
+"""Strict transport wrapper for C6A source-authority capture.
 
 The lower-level capture primitive validates request scope and retained bytes.
 This wrapper additionally validates every initial target and HTTP redirect
-against a positive path allowlist before it is contacted.
+against a positive path allowlist before it is contacted.  GLOBAL catalog and
+catalog-derived article requests cannot silently become regional Help Center
+requests.
 """
 from __future__ import annotations
 
@@ -15,6 +17,12 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import atos.c6a_source_authority_capture as capture_module
 from atos.c6a_source_authority import SourceAuthorityError, validate_url
 from atos.c6a_source_authority_capture import CapturedResponse, FrozenRequest
+from atos.c6a_source_authority_scope import (
+    is_global_catalog_article_request,
+    is_global_catalog_request,
+    validate_global_article_url,
+    validate_global_catalog_url,
+)
 
 
 _HELP_PATH_RE = re.compile(r"^/(?:[a-z]{2}(?:-[a-z]{2})?/)?help(?:/.*)?$", re.IGNORECASE)
@@ -41,6 +49,13 @@ def _validate_frozen_transport_target(url: str, request: FrozenRequest) -> None:
             path == "/cdx/search/cdx" or _WAYBACK_MEMENTO_PATH_RE.fullmatch(path)
         ):
             raise SourceAuthorityError(f"archive target escaped frozen host/path: {url}")
+        return
+
+    if is_global_catalog_request(request):
+        validate_global_catalog_url(url)
+        return
+    if is_global_catalog_article_request(request):
+        validate_global_article_url(url)
         return
 
     if host != "okx.com" and not host.endswith(".okx.com"):
