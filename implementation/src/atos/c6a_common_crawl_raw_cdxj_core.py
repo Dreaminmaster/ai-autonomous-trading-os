@@ -1,7 +1,6 @@
 """Shared immutable types and validators for the raw Common Crawl CDXJ probe."""
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -19,9 +18,123 @@ CDX_SHARD_RE = re.compile(r"cdx-\d{5}\.gz\Z")
 TIMESTAMP_RE = re.compile(r"\d{14}\Z")
 CONTENT_RANGE_RE = re.compile(r"bytes (\d+)-(\d+)/(\d+)\Z", re.I)
 FORBIDDEN_ENV = (
-    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy",
-    "all_proxy", "COOKIE", "COOKIES", "AUTHORIZATION",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "COOKIE",
+    "COOKIES",
+    "AUTHORIZATION",
     "PROXY_AUTHORIZATION",
+)
+FROZEN_LIMITS: dict[str, int | float | str] = {
+    "archive_carrier": "COMMON_CRAWL",
+    "index_format": "ZIPNUM_SHARDED_CDXJ",
+    "authority_source": "NOT_EVALUATED_IN_THIS_PROBE",
+    "data_host": DATA_HOST,
+    "minimum_request_interval_seconds": 0.5,
+    "cluster_window_bytes": 65_536,
+    "max_cluster_range_requests_per_query": 32,
+    "max_cdx_blocks_per_query": 4,
+    "max_cdx_block_bytes": 2_097_152,
+    "max_decompressed_cdx_block_bytes": 16_777_216,
+    "max_exact_rows_per_query": 32,
+}
+FROZEN_TARGETS: tuple[
+    tuple[str, str, str, tuple[str, ...]], ...
+] = (
+    (
+        "global-announcements-category",
+        "catalog",
+        "https://www.okx.com/help/category/announcements",
+        (
+            "CC-MAIN-2024-18",
+            "CC-MAIN-2024-51",
+            "CC-MAIN-2025-05",
+            "CC-MAIN-2025-21",
+        ),
+    ),
+    (
+        "global-latest-announcements-page-1",
+        "catalog",
+        (
+            "https://www.okx.com/help/section/"
+            "announcements-latest-announcements/page/1"
+        ),
+        (
+            "CC-MAIN-2024-18",
+            "CC-MAIN-2024-51",
+            "CC-MAIN-2025-05",
+            "CC-MAIN-2025-21",
+        ),
+    ),
+    (
+        "eth-minimum-order-2024-04-18",
+        "announcement_article",
+        (
+            "https://www.okx.com/help/okx-to-adjust-the-minimum-order-"
+            "quantities-for-several-futures-240412"
+        ),
+        (
+            "CC-MAIN-2024-18",
+            "CC-MAIN-2024-22",
+            "CC-MAIN-2024-26",
+        ),
+    ),
+    (
+        "btc-minimum-order-2024-04-25",
+        "announcement_article",
+        (
+            "https://www.okx.com/help/okx-to-adjust-the-minimum-order-"
+            "quantities-for-several-futures-24-04-19"
+        ),
+        (
+            "CC-MAIN-2024-18",
+            "CC-MAIN-2024-22",
+            "CC-MAIN-2024-26",
+        ),
+    ),
+    (
+        "eth-minimum-order-original-2024-12-18",
+        "announcement_article",
+        (
+            "https://www.okx.com/help/okx-to-adjust-the-minimum-order-"
+            "quantities-for-ethusdt-perpetual-and-expiry"
+        ),
+        (
+            "CC-MAIN-2024-51",
+            "CC-MAIN-2025-05",
+            "CC-MAIN-2025-08",
+        ),
+    ),
+    (
+        "eth-minimum-order-postponed-2025-01-09",
+        "announcement_article",
+        (
+            "https://www.okx.com/help/okx-to-postpone-adjusting-minimum-"
+            "order-quantities-for-ethusdt-perpetual-and"
+        ),
+        (
+            "CC-MAIN-2025-05",
+            "CC-MAIN-2025-08",
+            "CC-MAIN-2025-13",
+        ),
+    ),
+    (
+        "btc-minimum-order-2025-01-22",
+        "announcement_article",
+        (
+            "https://www.okx.com/help/okx-to-adjust-the-minimum-order-"
+            "quantities-of-spots-and-futures"
+        ),
+        (
+            "CC-MAIN-2025-05",
+            "CC-MAIN-2025-08",
+            "CC-MAIN-2025-13",
+        ),
+    ),
 )
 
 
@@ -92,10 +205,17 @@ def normalized_okx_url(value: Any) -> str:
         or parsed.query
         or parsed.fragment
     ):
-        raise ProbeError("target URL escaped frozen official OKX URL scope")
+        raise ProbeError(
+            "target URL escaped frozen official OKX URL scope"
+        )
     path = parsed.path or "/"
-    if not path.startswith("/help/") or not re.fullmatch(r"/[a-z0-9_./-]+", path):
-        raise ProbeError("target URL path is outside frozen ASCII Help Center scope")
+    if (
+        not path.startswith("/help/")
+        or not re.fullmatch(r"/[a-z0-9_./-]+", path)
+    ):
+        raise ProbeError(
+            "target URL path is outside frozen ASCII Help Center scope"
+        )
     return f"https://www.okx.com{path.rstrip('/') or '/'}"
 
 
@@ -127,7 +247,15 @@ def parse_cluster_line(line: str) -> ClusterBlock:
         or count <= 0
     ):
         raise ProbeError("cluster line value outside frozen contract")
-    return ClusterBlock(urlkey, timestamp, shard, offset, length, count, line.rstrip("\r\n"))
+    return ClusterBlock(
+        urlkey,
+        timestamp,
+        shard,
+        offset,
+        length,
+        count,
+        line.rstrip("\r\n"),
+    )
 
 
 def parse_cdxj_line(line: str) -> tuple[str, str, dict[str, Any]]:
@@ -146,17 +274,34 @@ def parse_cdxj_line(line: str) -> tuple[str, str, dict[str, Any]]:
 def _cluster_url(crawl: str) -> str:
     if CRAWL_RE.fullmatch(crawl) is None:
         raise ProbeError("invalid crawl identifier")
-    return f"https://{DATA_HOST}/cc-index/collections/{crawl}/indexes/cluster.idx"
+    return (
+        f"https://{DATA_HOST}/cc-index/collections/{crawl}/"
+        "indexes/cluster.idx"
+    )
 
 
 def _cdx_url(crawl: str, shard: str) -> str:
-    if CRAWL_RE.fullmatch(crawl) is None or CDX_SHARD_RE.fullmatch(shard) is None:
+    if (
+        CRAWL_RE.fullmatch(crawl) is None
+        or CDX_SHARD_RE.fullmatch(shard) is None
+    ):
         raise ProbeError("invalid CDX object identity")
-    return f"https://{DATA_HOST}/cc-index/collections/{crawl}/indexes/{shard}"
+    return (
+        f"https://{DATA_HOST}/cc-index/collections/{crawl}/"
+        f"indexes/{shard}"
+    )
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
-    return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
+    return (
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        + "\n"
+    ).encode("utf-8")
 
 
 def atomic_write_json(path: Path, value: Any) -> None:
@@ -171,43 +316,61 @@ def _load_inventory(path: Path) -> dict[str, Any]:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ProbeError(f"inventory load failed: {exc}") from exc
-    if not isinstance(value, dict) or value.get("schema_version") != 1 or value.get("stage") != STAGE:
+    if (
+        not isinstance(value, dict)
+        or value.get("schema_version") != 1
+        or value.get("stage") != STAGE
+    ):
         raise ProbeError("inventory identity mismatch")
+    for key, expected in FROZEN_LIMITS.items():
+        if value.get(key) != expected:
+            raise ProbeError(f"inventory frozen value drift: {key}")
     for key in (
-        "direct_okx_access_authorized", "warc_retrieval_authorized",
-        "article_expansion_authorized", "third_full_capture_authorized",
-        "implementation_authorized", "economic_data_access_authorized",
+        "direct_okx_access_authorized",
+        "warc_retrieval_authorized",
+        "article_expansion_authorized",
+        "third_full_capture_authorized",
+        "implementation_authorized",
+        "economic_data_access_authorized",
     ):
         if value.get(key) is not False:
             raise ProbeError(f"inventory improperly authorizes {key}")
-    if value.get("paper_state") != "PAPER_CLOSED" or value.get("shadow_state") != "SHADOW_CLOSED" or value.get("live_state") != "LIVE_FORBIDDEN":
+    if (
+        value.get("paper_state") != "PAPER_CLOSED"
+        or value.get("shadow_state") != "SHADOW_CLOSED"
+        or value.get("live_state") != "LIVE_FORBIDDEN"
+    ):
         raise ProbeError("inventory safety-state drift")
     targets = value.get("targets")
-    if not isinstance(targets, list) or len(targets) != 7:
-        raise ProbeError("inventory must freeze exactly seven targets")
-    query_count = 0
-    seen: set[str] = set()
+    if not isinstance(targets, list):
+        raise ProbeError("inventory targets missing")
+    observed: list[tuple[str, str, str, tuple[str, ...]]] = []
+    required_keys = {"target_id", "kind", "url", "crawl_indexes"}
     for target in targets:
-        if not isinstance(target, dict):
-            raise ProbeError("inventory target is not an object")
+        if not isinstance(target, dict) or set(target) != required_keys:
+            raise ProbeError("inventory target structure drift")
         target_id = target.get("target_id")
-        if not isinstance(target_id, str) or not target_id or target_id in seen:
-            raise ProbeError("inventory target identity invalid")
-        seen.add(target_id)
-        normalized_okx_url(target.get("url"))
+        kind = target.get("kind")
         crawls = target.get("crawl_indexes")
-        if not isinstance(crawls, list) or not crawls:
-            raise ProbeError("inventory target crawl list invalid")
-        for crawl in crawls:
-            if not isinstance(crawl, str) or CRAWL_RE.fullmatch(crawl) is None:
-                raise ProbeError("inventory crawl identifier invalid")
-            query_count += 1
-    if query_count != 23:
-        raise ProbeError("inventory must freeze exactly 23 target/crawl queries")
+        if (
+            not isinstance(target_id, str)
+            or not isinstance(kind, str)
+            or not isinstance(crawls, list)
+            or not all(isinstance(crawl, str) for crawl in crawls)
+        ):
+            raise ProbeError("inventory target value invalid")
+        normalized = normalized_okx_url(target.get("url"))
+        observed.append((target_id, kind, normalized, tuple(crawls)))
+    if tuple(observed) != FROZEN_TARGETS:
+        raise ProbeError("inventory frozen target matrix drift")
     return value
 
 
 def _validate_environment() -> None:
-    present = sorted(name for name in FORBIDDEN_ENV if os.environ.get(name))
+    present = sorted(
+        name for name in FORBIDDEN_ENV if os.environ.get(name)
+    )
     if present:
-        raise ProbeError("forbidden network state present: " + ",".join(present))
+        raise ProbeError(
+            "forbidden network state present: " + ",".join(present)
+        )
