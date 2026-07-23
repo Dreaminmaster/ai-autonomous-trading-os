@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 import platform
-import sys
+import re
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -37,7 +37,13 @@ FORBIDDEN_STATE_ENVIRONMENT_KEYS = (
     "COOKIES",
     "AUTHORIZATION",
     "PROXY_AUTHORIZATION",
+    "cookie",
+    "cookies",
+    "authorization",
+    "proxy_authorization",
 )
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_MERGE_REF_RE = re.compile(r"^refs/pull/[1-9][0-9]*/merge@[0-9a-f]{40}$")
 
 
 def _present_nonempty(environ: Mapping[str, str], keys: Sequence[str]) -> list[str]:
@@ -60,8 +66,10 @@ def build_venue_attestation(
         raise SourceAuthorityError("execution venue label is required")
     if execution_mode not in ALLOWED_EXECUTION_MODES:
         raise SourceAuthorityError(f"unsupported execution venue mode: {execution_mode}")
-    if len(implementation_sha) != 40 or len(source_commit_sha) != 40:
-        raise SourceAuthorityError("execution venue SHA identity must use full 40-character SHAs")
+    if _SHA_RE.fullmatch(implementation_sha) is None or _SHA_RE.fullmatch(source_commit_sha) is None:
+        raise SourceAuthorityError("execution venue SHA identity must use full lowercase hexadecimal SHAs")
+    if validated_pr_merge_ref is not None and _MERGE_REF_RE.fullmatch(validated_pr_merge_ref) is None:
+        raise SourceAuthorityError("execution venue validated PR merge-ref format is invalid")
 
     proxy_keys = _present_nonempty(environ, FORBIDDEN_PROXY_ENVIRONMENT_KEYS)
     state_keys = _present_nonempty(environ, FORBIDDEN_STATE_ENVIRONMENT_KEYS)
@@ -74,6 +82,17 @@ def build_venue_attestation(
         raise SourceAuthorityError(
             "execution venue contains prohibited cookie/auth environment state: "
             + ",".join(state_keys)
+        )
+
+    github_actions = str(environ.get("GITHUB_ACTIONS", "")).casefold() == "true"
+    runner_environment = environ.get("RUNNER_ENVIRONMENT") or None
+    if execution_mode == "LOCAL_USER_CONTROLLED" and github_actions:
+        raise SourceAuthorityError("LOCAL_USER_CONTROLLED venue cannot run inside GitHub Actions")
+    if execution_mode == "SELF_HOSTED_RUNNER" and not (
+        github_actions and str(runner_environment).casefold() == "self-hosted"
+    ):
+        raise SourceAuthorityError(
+            "SELF_HOSTED_RUNNER venue requires GitHub Actions RUNNER_ENVIRONMENT=self-hosted"
         )
 
     return {
@@ -90,8 +109,8 @@ def build_venue_attestation(
         "platform_system": platform.system(),
         "platform_release": platform.release(),
         "platform_machine": platform.machine(),
-        "github_actions": str(environ.get("GITHUB_ACTIONS", "")).casefold() == "true",
-        "runner_environment": environ.get("RUNNER_ENVIRONMENT") or None,
+        "github_actions": github_actions,
+        "runner_environment": runner_environment,
         "proxy_environment_keys_present": proxy_keys,
         "cookie_or_auth_environment_keys_present": state_keys,
         "probe_url": category.CATEGORY_PROBE_URL,
