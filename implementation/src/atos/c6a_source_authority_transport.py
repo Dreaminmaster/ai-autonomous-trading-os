@@ -22,6 +22,10 @@ _CATALOG_PATH_RE = re.compile(
     r"^/(?:[a-z]{2}(?:-[a-z]{2})?/)?help/section/[^/]+(?:/page/\d+)?$",
     re.IGNORECASE,
 )
+_WAYBACK_MEMENTO_PATH_RE = re.compile(
+    r"^/web/\d{14}(?:id_)?/https?://.+$",
+    re.IGNORECASE,
+)
 
 
 def _validate_frozen_transport_target(url: str, request: FrozenRequest) -> None:
@@ -34,7 +38,7 @@ def _validate_frozen_transport_target(url: str, request: FrozenRequest) -> None:
 
     if kind == "archive_lookup":
         if host != "web.archive.org" or not (
-            path == "/cdx/search/cdx" or path.startswith("/web/")
+            path == "/cdx/search/cdx" or _WAYBACK_MEMENTO_PATH_RE.fullmatch(path)
         ):
             raise SourceAuthorityError(f"archive target escaped frozen host/path: {url}")
         return
@@ -66,12 +70,15 @@ class _FrozenRedirectHandler(HTTPRedirectHandler):
         newurl: str,
     ) -> Request | None:
         resolved = urljoin(req.full_url, newurl)
-        validate_url(
-            resolved,
-            request_kind=self._frozen_request.request_kind,
-            canonical_official_url=self._frozen_request.canonical_official_url,
-        )
-        _validate_frozen_transport_target(resolved, self._frozen_request)
+        try:
+            validate_url(
+                resolved,
+                request_kind=self._frozen_request.request_kind,
+                canonical_official_url=self._frozen_request.canonical_official_url,
+            )
+            _validate_frozen_transport_target(resolved, self._frozen_request)
+        except SourceAuthorityError as exc:
+            raise SourceAuthorityError(f"redirect rejected before follow: {exc}") from exc
         return super().redirect_request(req, fp, code, msg, headers, resolved)
 
 
