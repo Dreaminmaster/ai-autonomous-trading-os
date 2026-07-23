@@ -113,7 +113,7 @@ No third-party executable code, package, crawler output, or saved HTML is vendor
 Research references:
 
 1. **Common Crawl official documentation** — CDX URL Index, WARC storage, HTTP range access, and responsible access guidance. This defines the archive protocol and remains the primary technical authority.
-2. **DIYgod/RSSHub**, commit `0fafcbba7a99c9b9b0461f8a5376812e96d46c86`, OKX route, MIT License. Used only as a methodological reference confirming that OKX Help Center pages expose announcement metadata through `__app_data_for_ssr__`; no code copied.
+2. **DIYgod/RSSHub**, commit `0fafcbba7a99c9b9b0461f8a5376812e96d46c86`, OKX route, GNU Affero General Public License v3.0 (AGPL-3.0). Used only as a methodological reference confirming that OKX Help Center pages expose announcement metadata through `__app_data_for_ssr__`; no code copied.
 3. **lowweihong/crypto_exchange_news_crawler**, commit `eaf437d48e3eb461e9a33d96a73004fd8b43c739`, declared MIT in `setup.py`. Used only as a methodological reference for the same public SSR structure; no code or output copied.
 4. **Antoo1/test_task_okx_news_parser**, commit `c4dd6ee2d21bf9ae7ecd346b52db3d11cabb33c3`. A committed historical fixture exposed the research clue `siteList: ["OKX_GLOBAL"]`. Its license was not relied upon and its HTML was not copied, vendored, or used as runtime data. Tests use independently created minimal synthetic HTML.
 
