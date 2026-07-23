@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -17,6 +21,23 @@ jobs:
           cd implementation
           python -m pip install -e '.[dev]'
       - name: Tests
+        id: tests
+        continue-on-error: true
         run: |
           cd implementation
-          python -m pytest
+          set +e
+          python -m pytest 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
+          exit "$status"
+      - name: Upload pytest failure log
+        if: steps.tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-pytest-failure-${{ github.run_id }}
+          path: implementation/pytest.log
+          if-no-files-found: error
+          retention-days: 7
+      - name: Enforce test result
+        if: steps.tests.outcome == 'failure'
+        run: exit 1
