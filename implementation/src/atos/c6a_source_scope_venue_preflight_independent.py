@@ -8,6 +8,7 @@ verdicts.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlparse
@@ -28,6 +29,8 @@ EXPECTED_CANDIDATES = {
     "browser-en-gb-a",
     "browser-en-gb-b",
 }
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_MERGE_REF_RE = re.compile(r"^refs/pull/[1-9][0-9]*/merge@[0-9a-f]{40}$")
 
 
 def _load_object(path: Path, errors: list[str]) -> dict[str, Any]:
@@ -70,11 +73,22 @@ def review_venue_preflight(
     result = _load_object(root / "probe_result.json", errors)
     probe_review = _load_object(root / "independent_review.json", errors)
 
+    if _SHA_RE.fullmatch(expected_implementation_sha) is None:
+        errors.append("expected implementation SHA format invalid")
+    if _SHA_RE.fullmatch(expected_source_commit_sha) is None:
+        errors.append("expected source commit SHA format invalid")
+    if (
+        expected_validated_pr_merge_ref is not None
+        and _MERGE_REF_RE.fullmatch(expected_validated_pr_merge_ref) is None
+    ):
+        errors.append("expected validated PR merge-ref format invalid")
+
     if attestation.get("stage") != VENUE_STAGE:
         errors.append("venue stage drift")
     if attestation.get("status") != "PREPARED_NOT_AUTHORIZED":
         errors.append("venue status drift")
-    if attestation.get("execution_mode") not in ALLOWED_EXECUTION_MODES:
+    mode = attestation.get("execution_mode")
+    if mode not in ALLOWED_EXECUTION_MODES:
         errors.append("venue execution mode is not allowed")
     if not isinstance(attestation.get("venue_label"), str) or not attestation.get("venue_label", "").strip():
         errors.append("venue label missing")
@@ -90,6 +104,15 @@ def review_venue_preflight(
         errors.append("venue cookie/auth environment state is not clean")
     if attestation.get("probe_url") != CATEGORY_PROBE_URL:
         errors.append("venue probe URL drift")
+
+    github_actions = attestation.get("github_actions")
+    runner_environment = attestation.get("runner_environment")
+    if mode == "LOCAL_USER_CONTROLLED" and github_actions is not False:
+        errors.append("local venue unexpectedly reports GitHub Actions")
+    if mode == "SELF_HOSTED_RUNNER" and not (
+        github_actions is True and str(runner_environment).casefold() == "self-hosted"
+    ):
+        errors.append("self-hosted venue identity is inconsistent")
 
     for key in (
         "article_expansion_authorized",
