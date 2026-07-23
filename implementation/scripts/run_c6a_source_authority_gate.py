@@ -3,7 +3,7 @@
 
 A packaged gate FAIL is a valid completed attempt and therefore exits zero; a
 workflow should upload the artifact first and enforce the recorded gate status
-in a later step.  Unexpected implementation errors exit non-zero after writing
+in a later step. Unexpected implementation errors exit non-zero after writing
 a minimal emergency diagnostic into the output directory.
 """
 from __future__ import annotations
@@ -47,7 +47,8 @@ def main() -> int:
             source_commit_sha=args.source_commit_sha,
             pr_merge_ref=args.pr_merge_ref,
         )
-        atomic_write_json(args.output / "run_summary.json", summary)
+        # The package is immutable after manifest creation. Print the summary to
+        # the workflow log rather than creating an unmanifested post-package file.
         print(json.dumps(summary, sort_keys=True))
         return 0
     except BaseException as exc:
