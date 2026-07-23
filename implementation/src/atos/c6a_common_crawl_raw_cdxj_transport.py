@@ -9,18 +9,31 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from atos.c6a_common_crawl_raw_cdxj_core import (
-    CONTENT_RANGE_RE, ClusterBlock, ProbeError, RangeResponse,
-    RangeTransport, TextLine, _validate_data_url, parse_cluster_line,
+    CONTENT_RANGE_RE,
+    ClusterBlock,
+    ProbeError,
+    RangeResponse,
+    RangeTransport,
+    TextLine,
+    _validate_data_url,
+    parse_cluster_line,
 )
 
 
 class UrllibRangeTransport:
     """Small exact-range HTTP client with no proxy or cookie state."""
 
-    def __init__(self, *, timeout_seconds: float = 30.0, max_bytes: int = 2_097_152):
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 30.0,
+        max_bytes: int = 2_097_152,
+    ) -> None:
         self.timeout_seconds = timeout_seconds
         self.max_bytes = max_bytes
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        self._opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({})
+        )
 
     def read(self, url: str, start: int, end: int) -> RangeResponse:
         _validate_data_url(url)
@@ -34,29 +47,53 @@ class UrllibRangeTransport:
             headers={
                 "Range": f"bytes={start}-{end}",
                 "Accept-Encoding": "identity",
-                "User-Agent": "ATOS-C6A-Raw-CDXJ-Probe/1.0 (+https://github.com/Dreaminmaster/ai-autonomous-trading-os)",
+                "User-Agent": (
+                    "ATOS-C6A-Raw-CDXJ-Probe/1.0 "
+                    "(+https://github.com/Dreaminmaster/"
+                    "ai-autonomous-trading-os)"
+                ),
             },
             method="GET",
         )
         try:
-            with self._opener.open(request, timeout=self.timeout_seconds) as response:
+            with self._opener.open(
+                request,
+                timeout=self.timeout_seconds,
+            ) as response:
                 body = response.read(self.max_bytes + 1)
                 status = int(response.status)
-                headers = {str(k).lower(): str(v) for k, v in response.headers.items()}
+                headers = {
+                    str(key).lower(): str(value)
+                    for key, value in response.headers.items()
+                }
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise ProbeError(f"range request failed: {type(exc).__name__}: {exc}") from exc
+            raise ProbeError(
+                f"range request failed: {type(exc).__name__}: {exc}"
+            ) from exc
         if len(body) > self.max_bytes:
             raise ProbeError("range response exceeds frozen maximum")
         content_range = headers.get("content-range", "")
         match = CONTENT_RANGE_RE.fullmatch(content_range.strip())
         if status != 206 or match is None:
-            raise ProbeError(f"expected HTTP 206 with Content-Range, got {status}")
+            raise ProbeError(
+                f"expected HTTP 206 with Content-Range, got {status}"
+            )
         observed_start, observed_end, total = map(int, match.groups())
         if (observed_start, observed_end) != (start, end):
-            raise ProbeError("Content-Range does not equal requested range")
+            raise ProbeError(
+                "Content-Range does not equal requested range"
+            )
         if len(body) != expected:
             raise ProbeError("range response byte length mismatch")
-        return RangeResponse(url, start, end, total, status, headers, body)
+        return RangeResponse(
+            url,
+            start,
+            end,
+            total,
+            status,
+            headers,
+            body,
+        )
 
 
 class RecordingRangeReader:
@@ -75,20 +112,38 @@ class RecordingRangeReader:
         self.minimum_interval_seconds = minimum_interval_seconds
         self.sleeper = sleeper
         self._cache: dict[tuple[str, int, int], RangeResponse] = {}
+        self._object_identity: dict[str, tuple[int, str | None]] = {}
         self._last_request_at: float | None = None
         self._sequence = 0
         self.evidence: list[dict[str, Any]] = []
 
-    def read(self, url: str, start: int, end: int, purpose: str) -> RangeResponse:
+    def read(
+        self,
+        url: str,
+        start: int,
+        end: int,
+        purpose: str,
+    ) -> RangeResponse:
         key = (url, start, end)
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        if self._last_request_at is not None and self.minimum_interval_seconds > 0:
+        if (
+            self._last_request_at is not None
+            and self.minimum_interval_seconds > 0
+        ):
             elapsed = time.monotonic() - self._last_request_at
             if elapsed < self.minimum_interval_seconds:
                 self.sleeper(self.minimum_interval_seconds - elapsed)
         response = self.transport.read(url, start, end)
+        etag = response.headers.get("etag")
+        identity = (response.total_size, etag)
+        prior_identity = self._object_identity.get(url)
+        if prior_identity is not None and prior_identity != identity:
+            raise ProbeError(
+                "remote object identity changed during probe"
+            )
+        self._object_identity[url] = identity
         self._last_request_at = time.monotonic()
         self._sequence += 1
         relative = f"ranges/range-{self._sequence:04d}.bin"
@@ -105,6 +160,8 @@ class RecordingRangeReader:
             "status": response.status,
             "content_range": response.headers.get("content-range"),
             "content_type": response.headers.get("content-type"),
+            "etag": etag,
+            "last_modified": response.headers.get("last-modified"),
             "path": relative,
             "size": len(response.body),
             "sha256": hashlib.sha256(response.body).hexdigest(),
@@ -115,7 +172,7 @@ class RecordingRangeReader:
 
 
 class RemoteSortedLineIndex:
-    """Binary-search a remote newline-delimited sorted file with byte ranges."""
+    """Binary-search a remote newline-delimited sorted file."""
 
     def __init__(
         self,
@@ -135,23 +192,41 @@ class RemoteSortedLineIndex:
         if self.total_size <= 0:
             raise ProbeError("empty remote sorted index")
 
-    def _read(self, start: int, end: int, purpose: str) -> RangeResponse:
+    def _read(
+        self,
+        start: int,
+        end: int,
+        purpose: str,
+    ) -> RangeResponse:
         self._request_count += 1
         if self._request_count > self.max_requests:
             raise ProbeError("cluster range-request budget exceeded")
         return self.reader.read(self.url, start, end, purpose)
 
-    def _window(self, center: int, purpose: str) -> tuple[RangeResponse, list[TextLine]]:
+    def _window(
+        self,
+        center: int,
+        purpose: str,
+    ) -> tuple[RangeResponse, list[TextLine]]:
         radius = max(1024, self.window_bytes // 2)
         start = max(0, center - radius)
         end = min(self.total_size - 1, center + radius - 1)
         response = self._read(start, end, purpose)
-        lines = _complete_lines(response.body, start, self.total_size)
+        lines = _complete_lines(
+            response.body,
+            start,
+            self.total_size,
+        )
         if not lines:
             raise ProbeError("cluster range contains no complete line")
         return response, lines
 
-    def context_for_predecessor(self, target: str, *, following: int) -> list[ClusterBlock]:
+    def context_for_predecessor(
+        self,
+        target: str,
+        *,
+        following: int,
+    ) -> list[ClusterBlock]:
         low = 0
         high = self.total_size
         seen: set[tuple[int, int]] = set()
@@ -159,45 +234,83 @@ class RemoteSortedLineIndex:
             if high - low <= self.window_bytes:
                 break
             midpoint = (low + high) // 2
-            response, lines = self._window(midpoint, f"cluster-binary-search-{iteration:02d}")
+            response, lines = self._window(
+                midpoint,
+                f"cluster-binary-search-{iteration:02d}",
+            )
             pair = (response.start, response.end)
             if pair in seen:
                 break
             seen.add(pair)
-            pivot = next((line for line in lines if line.start >= midpoint), lines[-1])
+            pivot = next(
+                (
+                    line
+                    for line in lines
+                    if line.start >= midpoint
+                ),
+                lines[-1],
+            )
             block = parse_cluster_line(pivot.text)
             if block.sort_key <= target:
                 low = max(low + 1, pivot.end + 1)
             else:
                 high = min(high - 1, pivot.start)
-        center = min(self.total_size - 1, max(0, (low + high) // 2))
+        center = min(
+            self.total_size - 1,
+            max(0, (low + high) // 2),
+        )
         _, lines = self._window(center, "cluster-final-context")
         parsed: list[tuple[TextLine, ClusterBlock]] = []
         for line in lines:
             try:
-                parsed.append((line, parse_cluster_line(line.text)))
+                parsed.append(
+                    (line, parse_cluster_line(line.text))
+                )
             except ProbeError:
                 continue
         if not parsed:
             raise ProbeError("no valid cluster lines in final context")
-        predecessors = [item for item in parsed if item[1].sort_key <= target]
+        predecessors = [
+            item
+            for item in parsed
+            if item[1].sort_key <= target
+        ]
         if predecessors:
-            anchor_line, _ = max(predecessors, key=lambda item: item[1].sort_key)
-            anchor_index = next(i for i, item in enumerate(parsed) if item[0] == anchor_line)
+            anchor_line, _ = max(
+                predecessors,
+                key=lambda item: item[1].sort_key,
+            )
+            anchor_index = next(
+                index
+                for index, item in enumerate(parsed)
+                if item[0] == anchor_line
+            )
         else:
             anchor_index = 0
         start_index = max(0, anchor_index - 1)
-        end_index = min(len(parsed), anchor_index + following + 3)
-        context = [item[1] for item in parsed[start_index:end_index]]
+        end_index = min(
+            len(parsed),
+            anchor_index + following + 3,
+        )
+        context = [
+            item[1]
+            for item in parsed[start_index:end_index]
+        ]
         if len(context) < 2:
-            raise ProbeError("cluster context lacks an upper boundary line")
+            raise ProbeError(
+                "cluster context lacks an upper boundary line"
+            )
         return context
 
 
 class MemoryRangeTransport:
     """Deterministic test transport."""
 
-    def __init__(self, objects: Mapping[str, bytes], failures: Iterable[str] = ()) -> None:
+    def __init__(
+        self,
+        objects: Mapping[str, bytes],
+        failures: Iterable[str] = (),
+    ) -> None:
         self.objects = dict(objects)
         self.failures = set(failures)
         self.calls: list[tuple[str, int, int]] = []
@@ -216,10 +329,22 @@ class MemoryRangeTransport:
             "content-range": f"bytes {start}-{end}/{len(data)}",
             "content-type": "application/octet-stream",
         }
-        return RangeResponse(url, start, end, len(data), 206, headers, body)
+        return RangeResponse(
+            url,
+            start,
+            end,
+            len(data),
+            206,
+            headers,
+            body,
+        )
 
 
-def _complete_lines(data: bytes, global_start: int, total_size: int) -> list[TextLine]:
+def _complete_lines(
+    data: bytes,
+    global_start: int,
+    total_size: int,
+) -> list[TextLine]:
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -233,7 +358,16 @@ def _complete_lines(data: bytes, global_start: int, total_size: int) -> list[Tex
         line_end = cursor + len(encoded) - 1
         cursor += len(encoded)
         complete_left = global_start == 0 or index > 0
-        complete_right = raw.endswith(("\n", "\r")) or cursor >= total_size
+        complete_right = (
+            raw.endswith(("\n", "\r"))
+            or cursor >= total_size
+        )
         if complete_left and complete_right:
-            lines.append(TextLine(line_start, line_end, raw.rstrip("\r\n")))
+            lines.append(
+                TextLine(
+                    line_start,
+                    line_end,
+                    raw.rstrip("\r\n"),
+                )
+            )
     return lines
