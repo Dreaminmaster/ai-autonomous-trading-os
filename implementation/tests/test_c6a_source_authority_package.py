@@ -7,13 +7,24 @@ import pytest
 
 from atos.c6a_source_authority import SourceAuthorityError
 from atos.c6a_source_authority_capture import canonical_json_bytes, sha256_bytes
+from atos.c6a_source_authority_independent import verify_manifest_complete
 from atos.c6a_source_authority_package import CANONICAL_OUTPUTS, package_gate_artifact
-from atos.c6a_source_authority_review import verify_manifest_complete
 
 
 def _state(instrument: str) -> dict:
     swap = instrument.endswith("-SWAP")
     base = instrument.split("-")[0]
+    required = [
+        "inst_type",
+        "base_ccy",
+        "quote_ccy",
+        "lot_sz",
+        "min_sz",
+        "tick_sz",
+        "listing_state",
+    ]
+    if swap:
+        required.extend(["settle_ccy", "ct_val", "ct_val_ccy"])
     return {
         "state_id": f"{instrument}-state",
         "instrument": instrument,
@@ -33,6 +44,12 @@ def _state(instrument: str) -> dict:
         "ct_val": "0.01" if swap else None,
         "contradiction": False,
         "source_ids": ["source-1"],
+        "derivation_rule_id": "TEST_EXACT_EFFECTIVE_STATE_V1",
+        "field_source_ids": {field: ["source-1"] for field in required},
+        "boundary_source_ids": {
+            "effective_from": ["source-1"],
+            "effective_to": ["source-1"],
+        },
     }
 
 
@@ -48,6 +65,8 @@ def _coverage(states: list[dict]) -> list[dict]:
             "overlap_count": 0,
             "contradiction_count": 0,
             "uncovered_duration_seconds": 0,
+            "required_fields_present": True,
+            "modeled_timestamp_outside_authority": False,
         }
         for state in states
     ]
@@ -57,6 +76,7 @@ def _query_inventory() -> dict:
     return {
         "schema_version": 1,
         "stage": "C6A_SOURCE_AUTHORITY_GATE",
+        "design_authority_sha": "26a7604c34c610562643d7a732d35b39df84c94f",
         "authenticated": False,
         "economic_endpoints_forbidden": True,
         "authority_start": "2023-06-05T00:00:00Z",
@@ -79,13 +99,18 @@ def _query_inventory() -> dict:
     }
 
 
-def _catalog() -> dict:
+def _catalog(raw_sha256: str) -> dict:
     return {
         "pages": [
             {
                 "page_number": 1,
                 "declared_terminal_page": 1,
                 "is_terminal_page": True,
+                "requested_url": "https://www.okx.com/help/section/announcements/page/1",
+                "retrieval_timestamp": "2025-12-28T00:00:00Z",
+                "status_code": 200,
+                "raw_path": "raw/source-1.bin",
+                "raw_sha256": raw_sha256,
             }
         ],
         "items": [
@@ -119,6 +144,7 @@ def _prepare_retained_source(output: Path) -> dict:
                 "decoded_path": "decoded/source-1.json",
                 "decoded_size": len(decoded),
                 "decoded_sha256": sha256_bytes(decoded),
+                "parser_version": "c6a-test-source-v1",
                 "eligible": True,
                 "rejection_reason": None,
             }
@@ -126,7 +152,7 @@ def _prepare_retained_source(output: Path) -> dict:
     }
 
 
-def test_failed_gate_package_retains_source_bytes_and_is_non_authorizing(tmp_path: Path) -> None:
+def test_failed_gate_package_retains_source_bytes_and_is_independently_verified(tmp_path: Path) -> None:
     output = tmp_path / "artifact"
     sources = _prepare_retained_source(output)
     states = [
@@ -138,6 +164,7 @@ def test_failed_gate_package_retains_source_bytes_and_is_non_authorizing(tmp_pat
         "schema_version": 1,
         "stage": "C6A_SOURCE_AUTHORITY_GATE",
         "source_commit_sha": "a" * 40,
+        "pr_merge_ref": "refs/pull/61/merge@deadbeef",
         "query_inventory_sha256": sha256_bytes(canonical_json_bytes(query)),
         "status": "FAIL",
         "result": "FAIL_TRANSITION_WINDOW_UNPROVEN",
@@ -145,13 +172,16 @@ def test_failed_gate_package_retains_source_bytes_and_is_non_authorizing(tmp_pat
         "integrity_state": "PENDING_PACKAGE_AND_INDEPENDENT_REVIEW",
         "implementation_authorized": False,
         "economic_data_access_authorized": False,
+        "unsupported_projection_count": 0,
+        "forbidden_access_count": 0,
+        "newly_discovered_transition_count": 0,
         "live_state": "LIVE_FORBIDDEN",
     }
     summary = package_gate_artifact(
         output,
         query_inventory=query,
         source_inventory=sources,
-        announcement_catalog=_catalog(),
+        announcement_catalog=_catalog(sources["sources"][0]["raw_sha256"]),
         metadata_states=states,
         transition_proofs=[],
         coverage_matrix=_coverage(states),
@@ -160,6 +190,7 @@ def test_failed_gate_package_retains_source_bytes_and_is_non_authorizing(tmp_pat
     )
     assert summary["gate_status"] == "FAIL"
     assert summary["gate_result"] == "FAIL_TRANSITION_WINDOW_UNPROVEN"
+    assert summary["independent_review_status"] == "PASS"
     assert summary["manifest_status"] == "PASS"
     assert summary["retained_noncanonical_file_count"] == 2
     assert summary["implementation_authorized"] is False
@@ -169,8 +200,13 @@ def test_failed_gate_package_retains_source_bytes_and_is_non_authorizing(tmp_pat
     assert set(CANONICAL_OUTPUTS).issubset({path.name for path in output.iterdir()})
 
     final_decision = json.loads((output / "gate_result.json").read_text())
+    independent = json.loads((output / "independent_review.json").read_text())
     assert final_decision["authoritative"] is True
+    assert final_decision["independent_review_status"] == "PASS"
     assert final_decision["implementation_authorized"] is False
+    assert independent["status"] == "PASS"
+    assert independent["gate_status_recomputed"] == "FAIL"
+    assert independent["gate_result_recomputed"] == "FAIL_TRANSITION_WINDOW_UNPROVEN"
     manifest = json.loads((output / "manifest.json").read_text())
     manifest_paths = {row["path"] for row in manifest["files"]}
     assert "raw/source-1.bin" in manifest_paths
