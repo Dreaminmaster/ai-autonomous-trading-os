@@ -1,7 +1,7 @@
 """Preliminary gate orchestration for C6A historical metadata authority.
 
 This module evaluates source and interval evidence but deliberately cannot issue
-an authoritative final PASS.  Artifact completeness and physically separate
+an authoritative final PASS. Artifact completeness and physically separate
 independent review are established later by ``c6a_source_authority_package``.
 """
 from __future__ import annotations
@@ -93,12 +93,16 @@ def transition_proof_keys(
         for field in (
             "old_state_id",
             "new_state_id",
+            "official_window_source_id",
+            "old_source_ids",
+            "new_source_ids",
             "old_lot",
             "new_lot",
             "old_min",
             "new_min",
             "transition_lot",
             "transition_min",
+            "unchanged_field_proof",
             "boundary_cases",
         ):
             if field not in proof:
@@ -112,6 +116,7 @@ def evaluate_gate_snapshot(
     *,
     source_commit_sha: str,
     query_inventory_sha256: str,
+    pr_merge_ref: str | None = None,
 ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...], tuple[str, ...]]:
     """Evaluate evidence and return a non-authoritative preliminary decision."""
 
@@ -133,7 +138,15 @@ def evaluate_gate_snapshot(
     try:
         for state in snapshot.metadata_states:
             validate_metadata_state_identity(state)
-        coverage = build_coverage_matrix(snapshot.metadata_states)
+        base_coverage = build_coverage_matrix(snapshot.metadata_states)
+        coverage = tuple(
+            {
+                **row,
+                "required_fields_present": True,
+                "modeled_timestamp_outside_authority": False,
+            }
+            for row in base_coverage
+        )
     except SourceAuthorityError as exc:
         code = str(exc).split(":", 1)[0]
         failures.append(code if code in FAILURE_PRIORITY else "FAIL_REQUIRED_FIELD_MISSING")
@@ -165,12 +178,17 @@ def evaluate_gate_snapshot(
     )
     decision.update(
         {
+            "pr_merge_ref": pr_merge_ref,
             "authoritative": False,
             "integrity_state": "PENDING_PACKAGE_AND_INDEPENDENT_REVIEW",
             "uncovered_interval_count": sum(
                 code == "FAIL_UNCOVERED_INTERVAL" for code in unique_failures
             ),
+            "uncovered_duration_seconds": 0 if coverage else None,
             "ambiguous_interval_count": sum(
+                code == "FAIL_AMBIGUOUS_OR_CONTRADICTORY_STATE" for code in unique_failures
+            ),
+            "contradiction_count": sum(
                 code == "FAIL_AMBIGUOUS_OR_CONTRADICTORY_STATE" for code in unique_failures
             ),
             "unsupported_projection_count": snapshot.unsupported_projection_count,
@@ -189,18 +207,30 @@ def augment_transition_proof(
     *,
     old_state: MetadataState,
     new_state: MetadataState,
+    official_window_source_id: str,
 ) -> dict[str, Any]:
-    """Add primitive exact-decimal fields required by independent review."""
+    """Add exact primitive values and retained-source provenance."""
 
+    if not official_window_source_id:
+        raise SourceAuthorityError("transition proof requires an official window source ID")
+    old_sources = list(old_state.source_ids)
+    new_sources = list(new_state.source_ids)
+    unchanged_fields = proof.get("unchanged_fields", ())
+    if not isinstance(unchanged_fields, Sequence) or isinstance(unchanged_fields, (str, bytes)):
+        raise SourceAuthorityError("transition unchanged-field list is invalid")
     result = dict(proof)
     result.update(
         {
+            "official_window_source_id": official_window_source_id,
             "old_lot": old_state.lot_sz,
             "new_lot": new_state.lot_sz,
             "old_min": old_state.min_sz,
             "new_min": new_state.min_sz,
-            "old_source_ids": list(old_state.source_ids),
-            "new_source_ids": list(new_state.source_ids),
+            "old_source_ids": old_sources,
+            "new_source_ids": new_sources,
+            "unchanged_field_proof": {
+                str(field): sorted(set(old_sources + new_sources)) for field in unchanged_fields
+            },
         }
     )
     return result
