@@ -36,6 +36,25 @@ def test_attempt_diagnostics_recomputes_archive_failure_without_trusting_code(
     assert review["errors"] == []
 
 
+def test_attempt_diagnostics_recomputes_structured_catalog_deduplication(
+    tmp_path: Path,
+) -> None:
+    _write_attempt_log(
+        tmp_path,
+        [
+            {
+                "stage": "announcement_catalog_deduplication",
+                "failure_code": "FAIL_ANNOUNCEMENT_CATALOG_INCOMPLETE",
+                "duplicate_urls": ["https://www.okx.com/en-us/help/example"],
+            }
+        ],
+    )
+    review = attempt_review.review_attempt_diagnostics(tmp_path)
+    assert review["status"] == "PASS"
+    assert review["recomputed_failures"] == ["FAIL_ANNOUNCEMENT_CATALOG_INCOMPLETE"]
+    assert review["errors"] == []
+
+
 def test_attempt_diagnostics_rejects_producer_failure_code_drift(tmp_path: Path) -> None:
     event = _archive_event()
     event["failure_code"] = "FAIL_REQUIRED_FIELD_MISSING"
