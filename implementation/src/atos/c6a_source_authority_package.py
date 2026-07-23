@@ -1,10 +1,10 @@
 """Canonical artifact finalization for the C6A source-authority gate.
 
 The output root may already contain retained raw/decoded source bytes,
-transcripts, and logs.  Canonical derived files are added without overwriting
-those inputs.  A physically separate module reviews the preliminary package;
-only then is the authoritative fail-closed decision written and the complete
-recursive manifest verified.
+transcripts, and logs. Canonical derived files are added without overwriting
+those inputs. A physically separate module reviews the complete preliminary
+package; only then is the authoritative fail-closed decision written and the
+complete recursive manifest verified.
 """
 from __future__ import annotations
 
@@ -23,6 +23,12 @@ from atos.c6a_source_authority_review import (
     review_package,
     verify_manifest_complete,
 )
+from atos.c6a_source_authority_schema import (
+    artifact_statistics,
+    validate_coverage_records,
+    validate_metadata_state_records,
+    validate_transition_proof_records,
+)
 
 
 CANONICAL_OUTPUTS = (
@@ -32,6 +38,11 @@ CANONICAL_OUTPUTS = (
     "metadata_states.json",
     "transition_proofs.json",
     "coverage_matrix.json",
+    "gate_result.json",
+    "independent_review.json",
+    "manifest.json",
+)
+EVIDENCE_HASH_EXCLUSIONS = (
     "gate_result.json",
     "independent_review.json",
     "manifest.json",
@@ -59,17 +70,23 @@ def _prepare_output_root(output_root: Path) -> None:
         )
 
 
+def _evidence_hashes(root: Path) -> dict[str, str]:
+    manifest = build_recursive_manifest(root, excluded_paths=EVIDENCE_HASH_EXCLUSIONS)
+    return {str(row["path"]): str(row["sha256"]) for row in manifest["files"]}
+
+
 def _finalize_decision(
     preliminary: Mapping[str, Any],
     *,
     failures: Sequence[str],
-    independent_status: str,
+    independent: Mapping[str, Any],
 ) -> dict[str, Any]:
+    independent_status = str(independent.get("status", "FAIL"))
     final_failures = list(failures)
     if independent_status != "PASS":
         final_failures.append("FAIL_INDEPENDENT_REVIEW_MISMATCH")
     primary = choose_primary_failure(final_failures)
-    unique = []
+    unique: list[str] = []
     for code in final_failures:
         if code not in unique:
             unique.append(code)
@@ -85,6 +102,8 @@ def _finalize_decision(
                 if independent_status == "PASS"
                 else "FINAL_PACKAGE_VERIFIED_INDEPENDENT_REVIEW_FAILED"
             ),
+            "independent_review_status": independent_status,
+            "independent_review_sha256": sha256_bytes(canonical_json_bytes(independent)),
             "implementation_authorized": False,
             "economic_data_access_authorized": False,
             "live_state": "LIVE_FORBIDDEN",
@@ -123,12 +142,34 @@ def package_gate_artifact(
     query = _as_object(query_inventory, label="query_inventory")
     sources = _as_object(source_inventory, label="source_inventory")
     catalog = _as_object(announcement_catalog, label="announcement_catalog")
+    validate_metadata_state_records(states)
+    validate_transition_proof_records(proofs)
+    validate_coverage_records(coverage)
+
     atomic_write_json(output_root / "query_inventory.json", query)
     atomic_write_json(output_root / "source_inventory.json", sources)
     atomic_write_json(output_root / "announcement_catalog.json", catalog)
     atomic_write_json(output_root / "metadata_states.json", {"states": states})
     atomic_write_json(output_root / "transition_proofs.json", {"proofs": proofs})
     atomic_write_json(output_root / "coverage_matrix.json", {"rows": coverage})
+
+    statistics = artifact_statistics(
+        source_inventory=sources,
+        announcement_catalog=catalog,
+        metadata_states=states,
+        transition_proofs=proofs,
+        coverage_matrix=coverage,
+    )
+    preliminary.update(statistics)
+    preliminary.update(
+        {
+            "query_inventory_sha256": sha256_bytes(canonical_json_bytes(query)),
+            "artifact_hash_scope": "ALL_RETAINED_AND_DERIVED_FILES_EXCEPT_GATE_REVIEW_MANIFEST",
+            "artifact_hash_exclusions": list(EVIDENCE_HASH_EXCLUSIONS),
+        }
+    )
+    atomic_write_json(output_root / "gate_result.json", preliminary)
+    preliminary["artifact_hashes"] = _evidence_hashes(output_root)
     atomic_write_json(output_root / "gate_result.json", preliminary)
 
     preliminary_manifest = build_recursive_manifest(
@@ -150,7 +191,7 @@ def package_gate_artifact(
     final_decision = _finalize_decision(
         preliminary,
         failures=failure_list,
-        independent_status=str(independent.get("status", "FAIL")),
+        independent=independent,
     )
     atomic_write_json(output_root / "gate_result.json", final_decision)
     atomic_write_json(output_root / "independent_review.json", independent)
