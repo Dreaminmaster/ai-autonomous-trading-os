@@ -1,8 +1,8 @@
 """Bounded public Help Center probe for reproducible GLOBAL source scope.
 
-The probe is deliberately narrower than the source-authority gate.  It requests
-only page 1 of the public OKX announcement catalog with a frozen transparent
-header matrix, retains raw bytes/headers/redirects, and never accesses articles,
+The probe is deliberately narrower than the source-authority gate. It requests
+only one public OKX announcement-catalog root with a frozen transparent header
+matrix, retains raw bytes/headers/redirects, and never accesses articles,
 Wayback, instruments, candles, funding, accounts, trading, paper, shadow, or
 live endpoints.
 """
@@ -34,6 +34,8 @@ PROBE_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
 _ATOS_USER_AGENT = "atos-c6a-source-scope-probe/1.0"
+EXECUTION_FAILURE = "FAIL_SOURCE_SCOPE_PROBE_EXECUTION"
+_NOT_EVALUATED = "NOT_EVALUATED"
 _ALLOWED_HELP_PATH_RE = re.compile(
     r"^/(?:[a-z]{2,3}(?:-[a-z]{2,4})?/)?help/(?:"
     r"section/announcements-latest-announcements(?:/page/1)?|"
@@ -41,6 +43,10 @@ _ALLOWED_HELP_PATH_RE = re.compile(
     r")/?$",
     re.IGNORECASE,
 )
+
+
+class ProbeExecutionError(SourceAuthorityError):
+    """The bounded request did not produce response evidence to evaluate."""
 
 
 @dataclass(frozen=True)
@@ -180,7 +186,7 @@ def network_fetch_candidate(
                 headers = _header_mapping(response.headers)
             validate_probe_target(final_url)
             if status != 200 or not data:
-                raise SourceAuthorityError(
+                raise ProbeExecutionError(
                     f"probe source returned status={status} size={len(data)}"
                 )
             return {
@@ -193,13 +199,13 @@ def network_fetch_candidate(
                 "redirect_chain": chain,
                 "raw_bytes": data,
             }
-        except (HTTPError, URLError, TimeoutError, SourceAuthorityError) as exc:
+        except (HTTPError, URLError, TimeoutError, OSError, SourceAuthorityError) as exc:
             last_error = exc
             if attempt_number < max_attempts:
                 time.sleep(retry_delay_seconds)
-    raise SourceAuthorityError(
+    raise ProbeExecutionError(
         f"probe candidate failed after {max_attempts} attempts: {last_error}"
-    )
+    ) from last_error
 
 
 def _scope_verdict(final_url: str, data: bytes) -> tuple[str, dict[str, Any] | None, str | None]:
@@ -214,8 +220,34 @@ def _profile_passes(rows: Sequence[Mapping[str, Any]], profile_id: str) -> bool:
     return bool(
         len(selected) == 2
         and {row.get("replicate") for row in selected} == {"A", "B"}
+        and all(row.get("execution_status") == "COMPLETE" for row in selected)
         and all(row.get("scope_status") == "PASS" for row in selected)
         and len({row.get("final_url") for row in selected}) == 1
+    )
+
+
+def _write_progress(
+    output_root: Path,
+    rows: Sequence[Mapping[str, Any]],
+    candidate_count: int,
+    *,
+    state: str,
+) -> None:
+    atomic_write_json(
+        output_root / "probe_progress.json",
+        {
+            "schema_version": 1,
+            "stage": f"{PROBE_STAGE}_PROGRESS",
+            "state": state,
+            "probe_url": PROBE_URL,
+            "candidate_count": candidate_count,
+            "recorded_candidate_count": len(rows),
+            "candidate_results": list(rows),
+            "implementation_authorized": False,
+            "economic_data_access_authorized": False,
+            "third_full_capture_authorized": False,
+            "live_state": "LIVE_FORBIDDEN",
+        },
     )
 
 
@@ -229,6 +261,7 @@ def run_probe(
 
     output_root.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
+    _write_progress(output_root, rows, len(candidates), state="STARTED")
     for index, candidate in enumerate(candidates):
         if index:
             time.sleep(1)
@@ -243,15 +276,18 @@ def run_probe(
             fetched = dict(fetch_candidate(candidate))
             raw = fetched.pop("raw_bytes")
             if not isinstance(raw, bytes):
-                raise SourceAuthorityError("probe fetcher did not return raw bytes")
+                raise ProbeExecutionError("probe fetcher did not return raw bytes")
             raw_path = Path("raw") / f"{candidate.candidate_id}.bin"
             atomic_write_bytes(output_root / raw_path, raw)
             final_url = str(fetched.get("final_url", ""))
+            if not final_url:
+                raise ProbeExecutionError("probe fetcher did not return a final URL")
             scope_status, scope_proof, scope_error = _scope_verdict(final_url, raw)
             rows.append(
                 {
                     **base,
                     **fetched,
+                    "execution_status": "COMPLETE",
                     "raw_path": raw_path.as_posix(),
                     "raw_size": len(raw),
                     "raw_sha256": sha256_bytes(raw),
@@ -265,22 +301,38 @@ def run_probe(
             rows.append(
                 {
                     **base,
-                    "scope_status": "FAIL",
-                    "failure_code": SCOPE_FAILURE,
+                    "execution_status": "FAIL",
+                    "scope_status": _NOT_EVALUATED,
+                    "final_url": None,
+                    "failure_code": EXECUTION_FAILURE,
                     "error_type": type(exc).__name__,
-                    "scope_error": str(exc),
+                    "execution_error": str(exc),
                 }
             )
+        _write_progress(output_root, rows, len(candidates), state="RUNNING")
 
     profile_ids = tuple(dict.fromkeys(candidate.profile_id for candidate in candidates))
     passing_profiles = [profile_id for profile_id in profile_ids if _profile_passes(rows, profile_id)]
+    failed_candidate_count = sum(row.get("execution_status") == "FAIL" for row in rows)
+    completed_candidate_count = sum(row.get("execution_status") == "COMPLETE" for row in rows)
+    if failed_candidate_count:
+        status = "ERROR"
+        result = EXECUTION_FAILURE
+    elif passing_profiles:
+        status = "PASS"
+        result = "PASS"
+    else:
+        status = "FAIL"
+        result = SCOPE_FAILURE
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "stage": PROBE_STAGE,
-        "status": "PASS" if passing_profiles else "FAIL",
-        "result": "PASS" if passing_profiles else SCOPE_FAILURE,
+        "status": status,
+        "result": result,
         "probe_url": PROBE_URL,
         "candidate_count": len(candidates),
+        "completed_candidate_count": completed_candidate_count,
+        "failed_candidate_count": failed_candidate_count,
         "candidate_results": rows,
         "reproducible_passing_profiles": passing_profiles,
         "implementation_authorized": False,
@@ -291,6 +343,7 @@ def run_probe(
         "live_state": "LIVE_FORBIDDEN",
     }
     atomic_write_json(output_root / "probe_result.json", payload)
+    _write_progress(output_root, rows, len(candidates), state="COMPLETE")
     return payload
 
 
