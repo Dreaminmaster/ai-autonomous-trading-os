@@ -37,6 +37,16 @@ def test_reviewer_matches_beta_rejection_and_detects_funding_sum_tamper() -> Non
             INSTRUMENTS[1]: dependent,
         },
         "funding_daily_sums": daily,
+        "execution_metadata": {
+            "stage": "C7A",
+            "source_kind": "SYNTHETIC",
+            "contains_real_market_rows": False,
+            "network_access": False,
+            "economic_run": False,
+            "paper_state": "PAPER_CLOSED",
+            "shadow_state": "SHADOW_CLOSED",
+            "live_state": "LIVE_FORBIDDEN",
+        },
     }
     assert review_decision_evidence(evidence)["status"] == "PASS"
 
