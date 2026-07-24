@@ -27,7 +27,9 @@ def main() -> int:
     print("economic_data_access_authorized=false")
     print("third_full_capture_authorized=false")
     print("live_state=LIVE_FORBIDDEN")
-    return 0
+    if review["status"] != "PASS":
+        return 2
+    return 3 if result["status"] == "ERROR" else 0
 
 
 if __name__ == "__main__":

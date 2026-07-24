@@ -88,6 +88,7 @@ def test_global_probe_pass_requires_replicated_profile_and_independent_pass(
     monkeypatch.setattr(probe.time, "sleep", lambda _: None)
     result = run_probe(tmp_path, fetch_candidate=_fetcher(_global_page(), PROBE_URL))
     assert result["status"] == "PASS"
+    assert result["failed_candidate_count"] == 0
     assert set(result["reproducible_passing_profiles"]) == {
         "control-atos-minimal",
         "browser-neutral-en",
@@ -102,7 +103,7 @@ def test_global_probe_pass_requires_replicated_profile_and_independent_pass(
     ]
     atomic_write_json(tmp_path / "independent_review.json", review)
     manifest = build_manifest(tmp_path)
-    assert manifest["file_count"] == 10
+    assert manifest["file_count"] == 11
     assert manifest["third_full_capture_authorized"] is False
 
 
@@ -117,6 +118,7 @@ def test_regional_substitution_is_expected_probe_fail_with_review_pass(
     assert result["status"] == "FAIL"
     assert result["result"] == "FAIL_SOURCE_AUTHORITY_SCOPE_DRIFT"
     assert result["reproducible_passing_profiles"] == []
+    assert result["failed_candidate_count"] == 0
     assert all(
         row["failure_code"] == "FAIL_SOURCE_AUTHORITY_SCOPE_DRIFT"
         for row in result["candidate_results"]

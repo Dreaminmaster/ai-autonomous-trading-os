@@ -50,6 +50,7 @@ def test_category_probe_passes_and_restores_bindings(monkeypatch, tmp_path: Path
 
     assert result["status"] == "PASS"
     assert result["result"] == "PASS"
+    assert result["failed_candidate_count"] == 0
     assert result["probe_url"] == execution.CATEGORY_PROBE_URL
     assert result["reproducible_passing_profiles"] == [
         "control-atos-minimal",
@@ -60,7 +61,7 @@ def test_category_probe_passes_and_restores_bindings(monkeypatch, tmp_path: Path
     assert review["status"] == "PASS"
     assert review["probe_status_recomputed"] == "PASS"
     assert review["reproducible_passing_profiles"] == result["reproducible_passing_profiles"]
-    assert manifest["file_count"] == 10
+    assert manifest["file_count"] == 11
     assert probe.PROBE_URL == original_probe_url
     assert independent.PROBE_URL == original_review_url
 
@@ -79,6 +80,7 @@ def test_category_probe_fails_closed_on_regional_substitution(
 
     assert result["status"] == "FAIL"
     assert result["result"] == "FAIL_SOURCE_AUTHORITY_SCOPE_DRIFT"
+    assert result["failed_candidate_count"] == 0
     assert result["reproducible_passing_profiles"] == []
     assert review["status"] == "PASS"
     assert review["probe_status_recomputed"] == "FAIL"
