@@ -66,11 +66,33 @@ def _regression(
 
 def review_decision_evidence(evidence: Mapping[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
-    if set(evidence) != {"decision", "mark_returns", "funding_daily_sums"}:
+    if set(evidence) != {
+        "decision",
+        "mark_returns",
+        "funding_daily_sums",
+        "execution_metadata",
+    }:
         errors.append("evidence section set mismatch")
     decision = evidence.get("decision")
     mark_returns = evidence.get("mark_returns")
     daily = evidence.get("funding_daily_sums")
+    metadata = evidence.get("execution_metadata")
+    expected_metadata = {
+        "stage": "C7A",
+        "source_kind": "SYNTHETIC",
+        "contains_real_market_rows": False,
+        "network_access": False,
+        "economic_run": False,
+        "paper_state": "PAPER_CLOSED",
+        "shadow_state": "SHADOW_CLOSED",
+        "live_state": "LIVE_FORBIDDEN",
+    }
+    if not isinstance(metadata, Mapping):
+        errors.append("execution metadata must be an object")
+    else:
+        for key, expected in expected_metadata.items():
+            if metadata.get(key) != expected:
+                errors.append(f"execution metadata mismatch: {key}")
     if not isinstance(decision, Mapping):
         errors.append("decision must be an object")
         decision = {}
