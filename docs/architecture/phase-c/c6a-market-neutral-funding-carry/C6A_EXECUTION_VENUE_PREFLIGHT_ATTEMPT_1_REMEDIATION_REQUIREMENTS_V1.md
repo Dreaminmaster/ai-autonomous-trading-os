@@ -1,0 +1,1 @@
+Required tests before any new venue execution is considered: broken pipe, connection reset, timeout, DNS failure, TLS failure, missing final URL, missing raw bytes, interrupted execution with retained partial evidence, existing invocation marker, invocation-marker tampering, repeated start rejection, and independent-review rejection of execution failure mislabeled as scope drift.
