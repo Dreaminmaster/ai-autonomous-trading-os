@@ -1,0 +1,1 @@
+The delivered ZIP has SHA-256 `fb2bfb5d98967475589b51cba01fe7df431ac0a00ef094acfcd3d0467650ad48` and compressed size 3886 bytes. It contains one directory and five JSON files. The included manifest covers the four non-manifest files exactly. No raw response bytes are present because every candidate failed before a response was retained.
