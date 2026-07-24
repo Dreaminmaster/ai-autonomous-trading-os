@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from atos.c6a_common_crawl_raw_cdxj_core import (
+    MAX_CDXJ_LINES_PER_BLOCK,
     RESULT_FAILED,
     RESULT_VERIFIED,
     STAGE,
@@ -100,6 +101,7 @@ def _query_one(
     cluster_context_lines = [row.raw_line for row in context]
     exact_rows: list[dict[str, Any]] = []
     block_rows: list[dict[str, Any]] = []
+
     for block_index, block in enumerate(selected):
         if block.length > int(inventory["max_cdx_block_bytes"]):
             raise ProbeError("CDX gzip block exceeds frozen maximum")
@@ -134,9 +136,9 @@ def _query_one(
         lines = [line for line in text.splitlines() if line]
         if not lines:
             raise ProbeError("selected CDX block is empty")
-        if len(lines) != block.record_count:
+        if len(lines) > MAX_CDXJ_LINES_PER_BLOCK:
             raise ProbeError(
-                "CDX block line count does not match cluster record count"
+                "selected CDX block exceeds 3000-line ZipNum bound"
             )
         first_key, first_timestamp, _ = parse_cdxj_line(lines[0])
         if (first_key, first_timestamp) != (
@@ -146,12 +148,14 @@ def _query_one(
             raise ProbeError(
                 "CDX block first row does not match cluster secondary index"
             )
+
         relative = (
             f"queries/{query_id}/block-{block_index:02d}.cdxj"
         )
         path = output / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(decompressed)
+
         block_exact = 0
         for line in lines:
             urlkey, timestamp, payload = parse_cdxj_line(line)
@@ -207,22 +211,24 @@ def _query_one(
                 raise ProbeError(
                     "exact CDX row count exceeds frozen maximum"
                 )
+
         block_rows.append(
             {
                 "cluster_line": block.raw_line,
                 "shard": block.shard,
                 "offset": block.offset,
                 "length": block.length,
+                "block_ordinal": block.block_ordinal,
                 "decompressed_path": relative,
                 "decompressed_size": len(decompressed),
                 "decompressed_sha256": hashlib.sha256(
                     decompressed
                 ).hexdigest(),
-                "record_count": block.record_count,
                 "line_count": len(lines),
                 "exact_row_count": block_exact,
             }
         )
+
     query = {
         "schema_version": 1,
         "stage": STAGE,
@@ -329,6 +335,8 @@ def run_probe(
         "hit_query_count": len(hit_queries),
         "queries": queries,
         "errors": errors,
+        "cluster_fifth_field_semantics": "OPAQUE_BLOCK_ORDINAL",
+        "max_cdxj_lines_per_block": MAX_CDXJ_LINES_PER_BLOCK,
         "direct_okx_access_authorized": False,
         "warc_retrieval_authorized": False,
         "article_expansion_authorized": False,

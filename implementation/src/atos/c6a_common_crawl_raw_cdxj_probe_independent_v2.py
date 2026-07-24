@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from atos.c6a_common_crawl_raw_cdxj_probe_independent import (
+from atos.c6a_common_crawl_raw_cdxj_probe_independent_v3 import (
     review_probe as review_retained_evidence,
 )
 

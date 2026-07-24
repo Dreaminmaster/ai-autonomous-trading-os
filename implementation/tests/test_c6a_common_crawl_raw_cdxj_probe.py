@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from atos.c6a_common_crawl_raw_cdxj_core import (
+    MAX_CDXJ_LINES_PER_BLOCK,
     ProbeError,
     _load_inventory,
     exact_okx_surt,
@@ -18,7 +19,7 @@ from atos.c6a_common_crawl_raw_cdxj_probe import (
     run_probe,
     select_cluster_blocks,
 )
-from atos.c6a_common_crawl_raw_cdxj_probe_independent import (
+from atos.c6a_common_crawl_raw_cdxj_probe_independent_v3 import (
     review_probe,
 )
 from atos.c6a_common_crawl_raw_cdxj_transport import (
@@ -104,12 +105,15 @@ def _build_objects(
 
         shard = bytearray()
         cluster_lines: list[str] = []
-        for key, timestamp, compressed in blocks:
+        for block_ordinal, (key, timestamp, compressed) in enumerate(
+            blocks,
+            start=409_780,
+        ):
             offset = len(shard)
             shard.extend(compressed)
             cluster_lines.append(
                 f"{key} {timestamp}\tcdx-00000.gz\t{offset}\t"
-                f"{len(compressed)}\t1\n"
+                f"{len(compressed)}\t{block_ordinal}\n"
             )
         cluster_url = (
             f"{DATA}/cc-index/collections/{crawl}/indexes/cluster.idx"
@@ -132,10 +136,11 @@ def test_narrow_surt_and_line_parsers() -> None:
         )
     block = parse_cluster_line(
         "com,okx)/help/category/announcements 20240418010101"
-        "\tcdx-00042.gz\t123\t456\t3000"
+        "\tcdx-00042.gz\t123\t456\t409787"
     )
     assert block.shard == "cdx-00042.gz"
     assert block.offset == 123
+    assert block.block_ordinal == 409787
     key, timestamp, payload = parse_cdxj_line(
         "com,okx)/help/category/announcements 20240418010101 "
         '{"url":"https://www.okx.com/help/category/announcements",'
@@ -153,7 +158,7 @@ def test_remote_binary_search_returns_bounded_context(
     for index in range(2000):
         lines.append(
             f"com,example)/{index:05d} 20240101000000"
-            f"\tcdx-00000.gz\t{index * 100}\t100\t1\n"
+            f"\tcdx-00000.gz\t{index * 100}\t100\t{500000 + index}\n"
         )
     url = (
         f"{DATA}/cc-index/collections/CC-MAIN-2024-18/"
@@ -188,6 +193,7 @@ def test_remote_binary_search_returns_bounded_context(
         4,
     )
     assert selected[-1].first_urlkey == "com,example)/01000"
+    assert selected[-1].block_ordinal == 501000
     assert "com,example)/01001" in boundary
 
 
@@ -206,6 +212,16 @@ def test_full_offline_probe_and_independent_review_pass(
     assert result["status"] == "PASS"
     assert result["completed_query_count"] == 23
     assert result["hit_query_count"] == 23
+    assert result["cluster_fifth_field_semantics"] == (
+        "OPAQUE_BLOCK_ORDINAL"
+    )
+    assert result["max_cdxj_lines_per_block"] == (
+        MAX_CDXJ_LINES_PER_BLOCK
+    )
+    first_block = result["queries"][0]["selected_blocks"][0]
+    assert first_block["block_ordinal"] >= 409780
+    assert first_block["line_count"] == 1
+    assert "record_count" not in first_block
     review = review_probe(tmp_path)
     assert review["status"] == "PASS", review["errors"]
     assert review["probe_status_recomputed"] == "PASS"
@@ -348,5 +364,46 @@ def test_independent_review_recomputes_cluster_selection(
         or "selection proof" in error
         or "selected block sequence" in error
         or "upper boundary" in error
+        for error in review["errors"]
+    )
+
+
+def test_independent_review_rejects_block_ordinal_tamper(
+    tmp_path: Path,
+) -> None:
+    inventory = _load_inventory(INVENTORY)
+    result = run_probe(
+        INVENTORY,
+        tmp_path,
+        transport=MemoryRangeTransport(_build_objects(inventory)),
+        sleeper=lambda _: None,
+        validate_environment=False,
+    )
+    assert result["status"] == "PASS"
+    result_path = tmp_path / "probe_result.json"
+    payload = json.loads(result_path.read_text())
+    query = payload["queries"][0]
+    query["selected_blocks"][0]["block_ordinal"] += 1
+    result_path.write_text(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    query_path = tmp_path / f"queries/{query['query_id']}/query.json"
+    query_path.write_text(
+        json.dumps(
+            query,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    review = review_probe(tmp_path)
+    assert review["status"] == "FAIL"
+    assert any(
+        "cluster/block locator mismatch" in error
         for error in review["errors"]
     )

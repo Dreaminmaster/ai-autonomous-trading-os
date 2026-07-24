@@ -13,6 +13,7 @@ STAGE = "C6A_COMMON_CRAWL_RAW_CDXJ_ACCESS_PROBE"
 RESULT_VERIFIED = "RAW_CDXJ_ACCESS_PATH_VERIFIED"
 RESULT_FAILED = "RAW_CDXJ_ACCESS_PATH_EXECUTION_FAILED"
 DATA_HOST = "data.commoncrawl.org"
+MAX_CDXJ_LINES_PER_BLOCK = 3000
 CRAWL_RE = re.compile(r"CC-MAIN-\d{4}-\d{2}\Z")
 CDX_SHARD_RE = re.compile(r"cdx-\d{5}\.gz\Z")
 TIMESTAMP_RE = re.compile(r"\d{14}\Z")
@@ -164,7 +165,7 @@ class ClusterBlock:
     shard: str
     offset: int
     length: int
-    record_count: int
+    block_ordinal: int
     raw_line: str
 
     @property
@@ -235,7 +236,7 @@ def parse_cluster_line(line: str) -> ClusterBlock:
     urlkey, timestamp = key_timestamp
     shard = fields[1]
     try:
-        offset, length, count = map(int, fields[2:])
+        offset, length, block_ordinal = map(int, fields[2:])
     except ValueError as exc:
         raise ProbeError("cluster line numeric field invalid") from exc
     if (
@@ -244,7 +245,7 @@ def parse_cluster_line(line: str) -> ClusterBlock:
         or CDX_SHARD_RE.fullmatch(shard) is None
         or offset < 0
         or length <= 0
-        or count <= 0
+        or block_ordinal <= 0
     ):
         raise ProbeError("cluster line value outside frozen contract")
     return ClusterBlock(
@@ -253,7 +254,7 @@ def parse_cluster_line(line: str) -> ClusterBlock:
         shard,
         offset,
         length,
-        count,
+        block_ordinal,
         line.rstrip("\r\n"),
     )
 
