@@ -1,0 +1,1 @@
+Primary closeout: `C6A_EXECUTION_VENUE_PREFLIGHT_ATTEMPT_1_CLOSEOUT_V1.md`. Supporting machine-readable digests and narrow review notes are colocated in this directory. The primary closeout controls if any supporting note is ambiguous.
