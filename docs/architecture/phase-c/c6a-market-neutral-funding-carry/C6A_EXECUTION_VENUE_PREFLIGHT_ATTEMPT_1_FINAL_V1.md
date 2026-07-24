@@ -1,0 +1,1 @@
+Final state: evidence package integrity verified; execution contract violated; transport failure confirmed; scope decision rejected; no new execution authorized; source-authority gate remains not passed; live remains forbidden.
