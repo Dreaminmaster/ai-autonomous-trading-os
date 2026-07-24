@@ -1,9 +1,9 @@
 """Physically separate reviewer for the bounded C6A GLOBAL scope probe.
 
 No production probe, scope, transport, parser, gate, or package code is
-imported.  Candidate identity, safety headers, retained bytes, redirect targets,
-GLOBAL page evidence, profile replication, and the final probe verdict are
-recomputed from the artifact directory.
+imported. Candidate identity, safety headers, retained bytes, redirect targets,
+GLOBAL page evidence, execution failures, profile replication, and the final
+probe verdict are recomputed from the artifact directory.
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 
 SCOPE_FAILURE = "FAIL_SOURCE_AUTHORITY_SCOPE_DRIFT"
+EXECUTION_FAILURE = "FAIL_SOURCE_SCOPE_PROBE_EXECUTION"
 PROBE_STAGE = "C6A_GLOBAL_SOURCE_SCOPE_PROBE"
 PROBE_URL = "https://www.okx.com/help/section/announcements-latest-announcements/page/1"
 _BROWSER_UA = (
@@ -116,6 +117,21 @@ def _safe_file(root: Path, relative: Any) -> Path | None:
     return path
 
 
+def _load_object(path: Path, errors: list[str]) -> dict[str, Any]:
+    if not path.is_file():
+        errors.append(f"{path.name} missing")
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        errors.append(f"{path.name} unreadable: {exc}")
+        return {}
+    if not isinstance(value, dict):
+        errors.append(f"{path.name} root is not an object")
+        return {}
+    return value
+
+
 def _recompute_scope(final_url: str, raw: bytes) -> tuple[bool, list[str]]:
     diagnostics: list[str] = []
     if not _global_target(final_url):
@@ -136,37 +152,27 @@ def _recompute_scope(final_url: str, raw: bytes) -> tuple[bool, list[str]]:
     return not diagnostics, diagnostics
 
 
+def _early_failure(errors: list[str]) -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "stage": f"{PROBE_STAGE}_INDEPENDENT_REVIEW",
+        "status": "FAIL",
+        "probe_status_recomputed": "ERROR",
+        "probe_result_recomputed": EXECUTION_FAILURE,
+        "errors": errors,
+        "implementation_authorized": False,
+        "economic_data_access_authorized": False,
+        "third_full_capture_authorized": False,
+        "live_state": "LIVE_FORBIDDEN",
+    }
+
+
 def review_probe(root: Path) -> dict[str, Any]:
     errors: list[str] = []
-    path = root / "probe_result.json"
-    if not path.is_file():
-        return {
-            "schema_version": 1,
-            "stage": f"{PROBE_STAGE}_INDEPENDENT_REVIEW",
-            "status": "FAIL",
-            "probe_status_recomputed": "FAIL",
-            "probe_result_recomputed": SCOPE_FAILURE,
-            "errors": ["probe_result.json missing"],
-            "implementation_authorized": False,
-            "economic_data_access_authorized": False,
-            "third_full_capture_authorized": False,
-            "live_state": "LIVE_FORBIDDEN",
-        }
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        return {
-            "schema_version": 1,
-            "stage": f"{PROBE_STAGE}_INDEPENDENT_REVIEW",
-            "status": "FAIL",
-            "probe_status_recomputed": "FAIL",
-            "probe_result_recomputed": SCOPE_FAILURE,
-            "errors": [f"probe result unreadable: {exc}"],
-            "implementation_authorized": False,
-            "economic_data_access_authorized": False,
-            "third_full_capture_authorized": False,
-            "live_state": "LIVE_FORBIDDEN",
-        }
+    payload = _load_object(root / "probe_result.json", errors)
+    if not payload:
+        return _early_failure(errors)
+    progress = _load_object(root / "probe_progress.json", errors)
 
     if payload.get("stage") != PROBE_STAGE or payload.get("probe_url") != PROBE_URL:
         errors.append("probe identity or URL drift")
@@ -188,7 +194,20 @@ def review_probe(root: Path) -> dict[str, Any]:
     if set(observed_ids) != set(expected) or len(observed_ids) != len(expected):
         errors.append("candidate identity coverage mismatch")
 
+    if progress:
+        if progress.get("stage") != f"{PROBE_STAGE}_PROGRESS":
+            errors.append("probe progress stage drift")
+        if progress.get("state") != "COMPLETE":
+            errors.append("probe progress is not complete")
+        if progress.get("probe_url") != PROBE_URL:
+            errors.append("probe progress URL drift")
+        if progress.get("candidate_results") != rows:
+            errors.append("probe progress/result candidate mismatch")
+        if progress.get("recorded_candidate_count") != len(rows):
+            errors.append("probe progress candidate count mismatch")
+
     recomputed_rows: list[dict[str, Any]] = []
+    execution_failure_count = 0
     for index, row in enumerate(rows):
         if not isinstance(row, Mapping):
             errors.append(f"candidate row {index} is not an object")
@@ -221,16 +240,31 @@ def review_probe(root: Path) -> dict[str, Any]:
 
         raw_path = _safe_file(root, row.get("raw_path"))
         if raw_path is None:
+            execution_failure_count += 1
+            if row.get("execution_status") != "FAIL":
+                errors.append(f"candidate {candidate_id} missing response evidence but not marked execution FAIL")
+            if row.get("scope_status") != "NOT_EVALUATED":
+                errors.append(f"candidate {candidate_id} missing response evidence but scope was evaluated")
+            if row.get("failure_code") != EXECUTION_FAILURE:
+                errors.append(f"candidate {candidate_id} missing response evidence but lacks execution failure code")
+            if row.get("final_url") not in (None, ""):
+                errors.append(f"candidate {candidate_id} execution failure unexpectedly has final URL")
+            if not isinstance(row.get("execution_error"), str) or not row.get("execution_error", "").strip():
+                errors.append(f"candidate {candidate_id} execution failure lacks error detail")
             recomputed_rows.append(
                 {
                     "candidate_id": candidate_id,
                     "profile_id": contract["profile_id"],
                     "replicate": contract["replicate"],
-                    "scope_status": "FAIL",
-                    "final_url": row.get("final_url"),
+                    "execution_status": "FAIL",
+                    "scope_status": "NOT_EVALUATED",
+                    "final_url": None,
                 }
             )
             continue
+
+        if row.get("execution_status") != "COMPLETE":
+            errors.append(f"candidate {candidate_id} retained response but execution is not COMPLETE")
         raw = raw_path.read_bytes()
         if row.get("raw_size") != len(raw) or row.get("raw_sha256") != hashlib.sha256(raw).hexdigest():
             errors.append(f"candidate {candidate_id} raw size/hash mismatch")
@@ -247,6 +281,7 @@ def review_probe(root: Path) -> dict[str, Any]:
                 "candidate_id": candidate_id,
                 "profile_id": contract["profile_id"],
                 "replicate": contract["replicate"],
+                "execution_status": "COMPLETE",
                 "scope_status": recomputed_status,
                 "final_url": row.get("final_url"),
                 "diagnostics": diagnostics,
@@ -259,24 +294,37 @@ def review_probe(root: Path) -> dict[str, Any]:
         if (
             len(selected) == 2
             and {row["replicate"] for row in selected} == {"A", "B"}
+            and all(row["execution_status"] == "COMPLETE" for row in selected)
             and all(row["scope_status"] == "PASS" for row in selected)
             and len({row["final_url"] for row in selected}) == 1
         ):
             passing_profiles.append(profile_id)
 
-    probe_status = "PASS" if passing_profiles else "FAIL"
-    probe_result = "PASS" if passing_profiles else SCOPE_FAILURE
+    if execution_failure_count:
+        probe_status = "ERROR"
+        probe_result = EXECUTION_FAILURE
+    elif passing_profiles:
+        probe_status = "PASS"
+        probe_result = "PASS"
+    else:
+        probe_status = "FAIL"
+        probe_result = SCOPE_FAILURE
     if payload.get("status") != probe_status or payload.get("result") != probe_result:
         errors.append("production/reviewer probe verdict mismatch")
     if payload.get("reproducible_passing_profiles") != passing_profiles:
         errors.append("production/reviewer passing-profile mismatch")
+    if payload.get("failed_candidate_count") != execution_failure_count:
+        errors.append("production/reviewer failed-candidate count mismatch")
+    if payload.get("completed_candidate_count") != len(rows) - execution_failure_count:
+        errors.append("production/reviewer completed-candidate count mismatch")
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "stage": f"{PROBE_STAGE}_INDEPENDENT_REVIEW",
         "status": "PASS" if not errors else "FAIL",
         "probe_status_recomputed": probe_status,
         "probe_result_recomputed": probe_result,
+        "execution_failure_count": execution_failure_count,
         "reproducible_passing_profiles": passing_profiles,
         "candidate_results_recomputed": recomputed_rows,
         "errors": errors,
