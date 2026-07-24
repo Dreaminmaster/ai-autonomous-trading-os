@@ -20,6 +20,7 @@ from atos.c7a_contract import (
     ONE_SIDE_COSTS,
     C7AError,
     aligned_mark_returns,
+    assert_synthetic_only,
     finite,
     funding_daily_sums,
     validate_scored_decision,
@@ -119,7 +120,9 @@ def compute_decision(
     decision_time: Any,
     mark_rows: Mapping[str, Sequence[Mapping[str, Any]]],
     funding_rows: Mapping[str, Sequence[Mapping[str, Any]]],
+    execution_metadata: Mapping[str, Any],
 ) -> C7ADecision:
+    assert_synthetic_only(execution_metadata)
     decision = validate_scored_decision(decision_time)
     if set(mark_rows) != set(INSTRUMENTS) or set(funding_rows) != set(
         INSTRUMENTS
