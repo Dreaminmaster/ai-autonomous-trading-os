@@ -38,7 +38,22 @@ def config() -> dict:
     )
 
 
-def mark_rows(*, beta_to_base: float = 1.0) -> dict[str, list[dict[str, object]]]:
+def synthetic_metadata() -> dict[str, object]:
+    return {
+        "stage": "C7A",
+        "source_kind": "SYNTHETIC",
+        "contains_real_market_rows": False,
+        "network_access": False,
+        "economic_run": False,
+        "paper_state": "PAPER_CLOSED",
+        "shadow_state": "SHADOW_CLOSED",
+        "live_state": "LIVE_FORBIDDEN",
+    }
+
+
+def mark_rows(
+    *, beta_to_base: float = 1.0
+) -> dict[str, list[dict[str, object]]]:
     start = FIRST_SCORED_DECISION - timedelta(hours=673)
     base_returns = [
         0.0002 * math.sin(index / 13) + 0.0001 * math.cos(index / 7)
@@ -52,12 +67,12 @@ def mark_rows(*, beta_to_base: float = 1.0) -> dict[str, list[dict[str, object]]
     times = [start + timedelta(hours=index) for index in range(673)]
     return {
         INSTRUMENTS[0]: [
-            {"timestamp": time.isoformat(), "close": close}
-            for time, close in zip(times, btc, strict=True)
+            {"timestamp": current.isoformat(), "close": close}
+            for current, close in zip(times, btc, strict=True)
         ],
         INSTRUMENTS[1]: [
-            {"timestamp": time.isoformat(), "close": close}
-            for time, close in zip(times, eth, strict=True)
+            {"timestamp": current.isoformat(), "close": close}
+            for current, close in zip(times, eth, strict=True)
         ],
     }
 
@@ -80,29 +95,14 @@ def funding_rows(
 
 def test_config_and_synthetic_boundary() -> None:
     validate_config(config())
-    assert_synthetic_only(
-        {
-            "stage": "C7A",
-            "source_kind": "SYNTHETIC",
-            "contains_real_market_rows": False,
-            "network_access": False,
-            "economic_run": False,
-            "paper_state": "PAPER_CLOSED",
-            "shadow_state": "SHADOW_CLOSED",
-            "live_state": "LIVE_FORBIDDEN",
-        }
-    )
+    assert_synthetic_only(synthetic_metadata())
     with pytest.raises(C7AError, match="synthetic-only"):
         assert_synthetic_only(
             {
-                "stage": "C7A",
+                **synthetic_metadata(),
                 "source_kind": "OKX",
                 "contains_real_market_rows": True,
                 "network_access": True,
-                "economic_run": False,
-                "paper_state": "PAPER_CLOSED",
-                "shadow_state": "SHADOW_CLOSED",
-                "live_state": "LIVE_FORBIDDEN",
             }
         )
 
@@ -137,6 +137,7 @@ def test_eligible_decision_is_beta_neutral_and_carry_positive() -> None:
         decision_time=FIRST_SCORED_DECISION,
         mark_rows=mark_rows(beta_to_base=1.0),
         funding_rows=funding_rows(btc_daily=0.0004, eth_daily=0.00005),
+        execution_metadata=synthetic_metadata(),
     )
     assert decision.eligible is True
     assert decision.high_funding_instrument == INSTRUMENTS[0]
@@ -145,9 +146,9 @@ def test_eligible_decision_is_beta_neutral_and_carry_positive() -> None:
     assert decision.r_squared == pytest.approx(1.0)
     assert decision.long_weight == pytest.approx(0.25)
     assert decision.short_weight == pytest.approx(0.25)
-    assert sum(abs(value) for value in decision.target_weights.values()) == pytest.approx(
-        0.5
-    )
+    assert sum(
+        abs(value) for value in decision.target_weights.values()
+    ) == pytest.approx(0.5)
     assert decision.projected_carry_28d > 0.00225
     assert decision.positive_daily_spreads == 28
 
@@ -157,6 +158,7 @@ def test_low_carry_decision_holds_cash() -> None:
         decision_time=FIRST_SCORED_DECISION,
         mark_rows=mark_rows(),
         funding_rows=funding_rows(btc_daily=0.00008, eth_daily=0.00005),
+        execution_metadata=synthetic_metadata(),
     )
     assert decision.eligible is False
     assert decision.reason == "PROJECTED_CARRY_BELOW_MINIMUM"
@@ -173,6 +175,7 @@ def test_missing_funding_day_fails_closed() -> None:
             decision_time=FIRST_SCORED_DECISION,
             mark_rows=mark_rows(),
             funding_rows=funding,
+            execution_metadata=synthetic_metadata(),
         )
 
 
@@ -202,13 +205,16 @@ def test_cost_turnover_and_hourly_accounting() -> None:
     assert result["ending_equity"] == pytest.approx(999.475)
 
 
-def test_physically_separate_review_detects_tamper() -> None:
-    marks = mark_rows()
+def retained_evidence(
+    *, beta_to_base: float = 1.0
+) -> tuple[dict[str, object], dict[str, object]]:
+    marks = mark_rows(beta_to_base=beta_to_base)
     funding = funding_rows(btc_daily=0.0004, eth_daily=0.00005)
     decision = compute_decision(
         decision_time=FIRST_SCORED_DECISION,
         mark_rows=marks,
         funding_rows=funding,
+        execution_metadata=synthetic_metadata(),
     )
     retained_returns = {
         instrument: list(
@@ -230,13 +236,44 @@ def test_physically_separate_review_detects_tamper() -> None:
         )
         for instrument in INSTRUMENTS
     }
-    evidence = {
+    return decision.as_dict(), {
         "decision": decision.as_dict(),
         "mark_returns": retained_returns,
         "funding_daily_sums": retained_daily,
+        "execution_metadata": synthetic_metadata(),
     }
+
+
+def test_physically_separate_review_detects_tamper() -> None:
+    _decision, evidence = retained_evidence()
     assert review_decision_evidence(evidence)["status"] == "PASS"
     evidence["decision"]["projected_carry_28d"] = 999.0
     review = review_decision_evidence(evidence)
     assert review["status"] == "FAIL"
     assert "decision mismatch: projected_carry_28d" in review["errors"]
+
+
+def test_independent_review_matches_beta_rejection_and_funding_sums() -> None:
+    decision, evidence = retained_evidence(beta_to_base=2.5)
+    assert decision["reason"] == "BETA_OUT_OF_RANGE"
+    assert review_decision_evidence(evidence)["status"] == "PASS"
+    evidence["decision"]["funding_sums_28d"][INSTRUMENTS[0]] += 1.0
+    review = review_decision_evidence(evidence)
+    assert review["status"] == "FAIL"
+    assert (
+        f"decision funding-sum mismatch: {INSTRUMENTS[0]}" in review["errors"]
+    )
+
+
+def test_compute_decision_rejects_real_data_metadata() -> None:
+    with pytest.raises(C7AError, match="synthetic-only"):
+        compute_decision(
+            decision_time=FIRST_SCORED_DECISION,
+            mark_rows=mark_rows(),
+            funding_rows=funding_rows(btc_daily=0.0004, eth_daily=0.00005),
+            execution_metadata={
+                **synthetic_metadata(),
+                "source_kind": "OKX",
+                "contains_real_market_rows": True,
+            },
+        )
