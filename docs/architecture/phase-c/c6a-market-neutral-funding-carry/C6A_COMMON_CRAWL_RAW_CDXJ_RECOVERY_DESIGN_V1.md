@@ -2,11 +2,13 @@
 
 ## Decision
 
-Common Crawl probe attempt 1 is closed without rerun. Its retained evidence showed that all 23 requests to the public CDX query service failed at the HTTP layer, including one `502`, so neither a positive archive hit nor verified insufficient coverage was established.
+Common Crawl public-query probe attempt 1 is closed without rerun. Its retained evidence showed that all 23 requests to the public CDX query service failed at the HTTP layer, including one `502`, so neither a positive archive hit nor verified insufficient coverage was established.
 
 The next admissible internet-first implementation is a bounded raw-index access path against `data.commoncrawl.org`. It reads the same Common Crawl CDXJ index from its published ZipNum files instead of calling the rate-limited query service.
 
-This change implements and tests that path only. It does not authorize network execution.
+Raw CDXJ execution attempt 1 subsequently exposed and retained a deterministic parser defect: the fifth tab-separated `cluster.idx` field was incorrectly treated as the decompressed CDXJ row count. Real retained blocks contained exactly 3,000 rows while that field contained large ordinal-like values. The corrected design treats it only as an opaque positive block ordinal and derives line count exclusively from independently decompressed bytes.
+
+This change implements and tests that corrected path only. It does not authorize network execution.
 
 ## Scope
 
@@ -25,7 +27,7 @@ It does not retrieve WARC records, page bodies, article lists, market data, acco
 
 ## Raw ZipNum access method
 
-Common Crawl documents that the CDXJ index is a sorted text index compressed into independently addressable gzip blocks, with `cluster.idx` acting as a secondary index. Each cluster line records the first CDXJ key in a block and the block's shard, byte offset, byte length, and record count.
+Common Crawl documents that the CDXJ index is a sorted text index compressed into independently addressable gzip blocks of up to 3,000 lines, with `cluster.idx` acting as a secondary index. Each retained cluster line records the first CDXJ key and timestamp for a block, the shard, byte offset, byte length, and a fifth positive integer retained as an opaque block ordinal.
 
 For each exact frozen URL, the implementation:
 
@@ -34,11 +36,12 @@ For each exact frozen URL, the implementation:
 3. retains a contiguous cluster context that proves the predecessor, selected block sequence, and upper boundary;
 4. retrieves no more than four exact gzip blocks;
 5. binds each selected compressed byte range to the retained decompressed CDXJ block;
-6. requires the decompressed block's first CDXJ row and line count to equal its cluster-index identity;
-7. retains only exact URL-key, exact official URL, HTTP `200` rows with valid WARC locators in the same frozen crawl;
-8. stops before fetching any WARC bytes.
+6. requires each decompressed block to be non-empty, contain no more than 3,000 CDXJ rows, and begin with the exact key/timestamp identity declared by its cluster line;
+7. records the observed decompressed line count independently from the opaque block ordinal;
+8. retains only exact URL-key, exact official URL, HTTP `200` rows with valid WARC locators in the same frozen crawl;
+9. stops before fetching any WARC bytes.
 
-A successfully executed no-hit is a valid raw-index finding. A transport, range, object-identity, gzip, boundary, parse, or integrity failure is an execution failure and cannot be reported as a no-hit.
+A successfully executed no-hit is a valid raw-index finding. A transport, range, object-identity, gzip, boundary, parse, line-bound, or integrity failure is an execution failure and cannot be reported as a no-hit.
 
 ## Network and resource boundary
 
@@ -55,6 +58,7 @@ Frozen limits include:
 - at most 32 cluster range requests per target/crawl query;
 - at most four CDX gzip blocks per query;
 - at most 2 MiB compressed and 16 MiB decompressed per CDX block;
+- from 1 through 3,000 non-empty CDXJ rows per decompressed block;
 - at most 32 exact rows per query;
 - at least 0.5 seconds between uncached requests.
 
@@ -62,7 +66,7 @@ All unique responses are retained with URL, range, `Content-Range`, object size,
 
 ## Independent review
 
-The reviewer imports no producer, HTTP, binary-search, block-selection, or gzip execution code. From retained files it independently recomputes:
+The corrected reviewer imports no producer, HTTP client, remote search, producer block-selection, or probe execution code. It independently treats the fifth cluster field as an opaque positive block ordinal and recomputes from retained files:
 
 - the seven-target and 23-query matrix;
 - the narrow SURT key for every target;
@@ -70,7 +74,8 @@ The reviewer imports no producer, HTTP, binary-search, block-selection, or gzip 
 - the contiguous retained cluster context;
 - the predecessor, selected block sequence, and upper boundary;
 - each compressed-range-to-decompressed-block binding;
-- cluster first-row and record-count binding;
+- exact block-ordinal metadata binding without using the ordinal as row count;
+- the observed 1-to-3,000 line bound and cluster first-row identity;
 - every exact CDXJ hit and WARC locator;
 - producer counts, completed/failed query partition, hit inventory, status, and result;
 - all safety flags.
@@ -83,7 +88,7 @@ No third-party executable package, crawler, saved webpage, or dataset is added.
 
 Research and format references:
 
-1. **Common Crawl CDXJ Index documentation and data bucket** — primary authority for the published index, ZipNum block organization, CDXJ fields, and HTTP byte-range retrieval.
+1. **Common Crawl CDXJ Index documentation and data bucket** — primary authority for the published index, ZipNum block organization, CDXJ fields, 3,000-line block bound, and HTTP byte-range retrieval.
 2. **Ilya Kreymer / pywb ZipNum work** — acknowledged by Common Crawl as the origin of the index/query approach. Used as a format reference only; no pywb code is copied or executed.
 3. **Common Crawl `whirlwind-python`**, Apache-2.0 — methodological reference showing the distinction between single-page CDXJ lookup and bulk URL Index analysis. No code copied.
 4. **Internet Archive `surt` Python package**, AGPL-3.0 — explicitly not imported or copied. The project implements only a narrow, independently written transform for seven frozen ASCII OKX URLs and does not claim to be a general SURT implementation.
@@ -103,8 +108,8 @@ At least one frozen query did not complete under the protocol. The retained pack
 
 ## Safety state
 
-- network execution in this implementation PR: `NOT_AUTHORIZED`
-- rerun of Common Crawl attempt 1: `NOT_AUTHORIZED`
+- network execution in this remediation PR: `NOT_AUTHORIZED`
+- rerun of raw CDXJ attempt 1: `NOT_AUTHORIZED`
 - direct OKX access: `NOT_AUTHORIZED`
 - WARC retrieval: `NOT_AUTHORIZED`
 - article discovery/expansion: `NOT_AUTHORIZED`
@@ -115,4 +120,4 @@ At least one frozen query did not complete under the protocol. The retained pack
 - shadow: `SHADOW_CLOSED`
 - live: `LIVE_FORBIDDEN`
 
-`RAW_CDXJ_RECOVERY_IMPLEMENTED_NOT_AUTHORIZED` / `WARC_RETRIEVAL_NOT_AUTHORIZED` / `LIVE_FORBIDDEN`
+`RAW_CDXJ_CLUSTER_FIELD_REMEDIATED_NOT_AUTHORIZED` / `WARC_RETRIEVAL_NOT_AUTHORIZED` / `LIVE_FORBIDDEN`
