@@ -118,6 +118,7 @@ def review_decision_evidence(evidence: Mapping[str, Any]) -> dict[str, Any]:
             "reason": "FUNDING_TIE",
             "high_funding_instrument": None,
             "low_funding_instrument": None,
+            "funding_sums_28d": sums,
             "beta": None,
             "r_squared": None,
             "long_weight": 0.0,
@@ -138,51 +139,57 @@ def review_decision_evidence(evidence: Mapping[str, Any]) -> dict[str, Any]:
                 "decision_recomputed": None,
             }
         _alpha, beta, r_squared = regression
-        long_weight = (
-            MAXIMUM_GROSS_NOTIONAL / (1.0 + beta) if beta > -1 else 0.0
-        )
-        short_weight = (
-            MAXIMUM_GROSS_NOTIONAL * beta / (1.0 + beta)
-            if beta > -1
-            else 0.0
-        )
-        projected = short_weight * sums[high] - long_weight * sums[low]
-        positive_days = sum(
-            short_weight * high_rate - long_weight * low_rate > 0
-            for high_rate, low_rate in zip(
-                funding_daily[high], funding_daily[low], strict=True
-            )
-        )
         beta_valid = MINIMUM_BETA <= beta <= MAXIMUM_BETA
         r2_valid = r_squared >= MINIMUM_R_SQUARED
-        eligible = bool(
-            beta_valid
-            and r2_valid
-            and sums[high] > 0
-            and projected > MINIMUM_PROJECTED_CARRY_28D
-            and positive_days >= MINIMUM_POSITIVE_DAYS
-        )
         if not beta_valid:
+            long_weight = 0.0
+            short_weight = 0.0
+            projected = 0.0
+            positive_days = 0
+            eligible = False
             reason = "BETA_OUT_OF_RANGE"
         elif not r2_valid:
+            long_weight = 0.0
+            short_weight = 0.0
+            projected = 0.0
+            positive_days = 0
+            eligible = False
             reason = "R_SQUARED_BELOW_MINIMUM"
-        elif sums[high] <= 0:
-            reason = "HIGH_FUNDING_NOT_POSITIVE"
-        elif projected <= MINIMUM_PROJECTED_CARRY_28D:
-            reason = "PROJECTED_CARRY_BELOW_MINIMUM"
-        elif positive_days < MINIMUM_POSITIVE_DAYS:
-            reason = "POSITIVE_DAILY_SPREAD_COUNT_BELOW_MINIMUM"
         else:
-            reason = "ELIGIBLE"
+            long_target = MAXIMUM_GROSS_NOTIONAL / (1.0 + beta)
+            short_target = MAXIMUM_GROSS_NOTIONAL * beta / (1.0 + beta)
+            projected = short_target * sums[high] - long_target * sums[low]
+            positive_days = sum(
+                short_target * high_rate - long_target * low_rate > 0
+                for high_rate, low_rate in zip(
+                    funding_daily[high], funding_daily[low], strict=True
+                )
+            )
+            eligible = bool(
+                sums[high] > 0
+                and projected > MINIMUM_PROJECTED_CARRY_28D
+                and positive_days >= MINIMUM_POSITIVE_DAYS
+            )
+            if sums[high] <= 0:
+                reason = "HIGH_FUNDING_NOT_POSITIVE"
+            elif projected <= MINIMUM_PROJECTED_CARRY_28D:
+                reason = "PROJECTED_CARRY_BELOW_MINIMUM"
+            elif positive_days < MINIMUM_POSITIVE_DAYS:
+                reason = "POSITIVE_DAILY_SPREAD_COUNT_BELOW_MINIMUM"
+            else:
+                reason = "ELIGIBLE"
+            long_weight = long_target if eligible else 0.0
+            short_weight = short_target if eligible else 0.0
         recomputed = {
             "eligible": eligible,
             "reason": reason,
             "high_funding_instrument": high,
             "low_funding_instrument": low,
+            "funding_sums_28d": sums,
             "beta": beta,
             "r_squared": r_squared,
-            "long_weight": long_weight if eligible else 0.0,
-            "short_weight": short_weight if eligible else 0.0,
+            "long_weight": long_weight,
+            "short_weight": short_weight,
             "projected_carry_28d": projected,
             "positive_daily_spreads": positive_days,
             "target_weights": (
@@ -191,6 +198,26 @@ def review_decision_evidence(evidence: Mapping[str, Any]) -> dict[str, Any]:
                 else {instrument: 0.0 for instrument in INSTRUMENTS}
             ),
         }
+
+    observed_sums = decision.get("funding_sums_28d")
+    if not isinstance(observed_sums, Mapping) or set(observed_sums) != set(
+        INSTRUMENTS
+    ):
+        errors.append("decision funding-sum set mismatch")
+    else:
+        for instrument in INSTRUMENTS:
+            try:
+                if not math.isclose(
+                    float(observed_sums[instrument]),
+                    float(recomputed["funding_sums_28d"][instrument]),
+                    rel_tol=1e-12,
+                    abs_tol=1e-12,
+                ):
+                    errors.append(
+                        f"decision funding-sum mismatch: {instrument}"
+                    )
+            except (TypeError, ValueError):
+                errors.append(f"decision funding-sum mismatch: {instrument}")
 
     for key in (
         "eligible",
