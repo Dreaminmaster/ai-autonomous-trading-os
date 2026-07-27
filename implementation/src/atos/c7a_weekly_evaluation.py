@@ -122,17 +122,27 @@ def aggregate_candidate_weekly(
         receipts = finite(row.get("gross_funding_receipts"), "funding receipts")
         payments = finite(row.get("gross_funding_payments"), "funding payments")
         relative = finite(row.get("relative_price_pnl"), "relative-price PnL")
+        negative_relative = finite(
+            row.get("negative_relative_price_pnl"),
+            "negative relative-price PnL",
+        )
+        traded_notional = finite(row.get("traded_notional"), "traded notional")
         cost = finite(row.get("trading_cost"), "trading cost")
         turnover = finite(row.get("turnover"), "turnover")
         btc_return = finite(row.get("btc_mark_return"), "BTC weekly return")
-        if min(start, end) <= 0 or min(receipts, payments, cost, turnover) < 0:
+        if min(start, end) <= 0 or min(
+            receipts, payments, traded_notional, cost, turnover
+        ) < 0:
             raise C7AError("invalid C7A weekly accounting value")
+        if negative_relative > 0 or negative_relative > min(relative, 0.0) + 1e-9:
+            raise C7AError("invalid C7A negative relative-price decomposition")
         if previous is not None:
             _close(start, previous, f"equity chain week {index}")
         _close(funding, receipts - payments, f"funding week {index}")
+        _close(turnover, traded_notional / start, f"turnover week {index}")
         _close(
             cost,
-            start * turnover * ONE_SIDE_COSTS[cost_label],
+            traded_notional * ONE_SIDE_COSTS[cost_label],
             f"trading cost week {index}",
         )
         _close(end, start + funding + relative - cost, f"weekly accounting week {index}")
@@ -140,31 +150,49 @@ def aggregate_candidate_weekly(
         orientation = row.get("orientation")
         if not isinstance(is_active, bool):
             raise C7AError("C7A active state must be boolean")
-        if is_active != (orientation in ACTIVE_ORIENTATIONS):
+        if is_active and orientation not in ACTIVE_ORIENTATIONS:
             raise C7AError("C7A active/orientation mismatch")
+        if not is_active and orientation != "CASH":
+            raise C7AError("C7A inactive orientation must be CASH")
         if row.get("missing_decision") is not False:
             raise C7AError("C7A missing-decision evidence must be false")
         if row.get("unaccounted_funding_settlements") != 0:
             raise C7AError("C7A unaccounted funding settlements must be zero")
+        path = row.get("equity_path")
+        if (
+            not isinstance(path, Sequence)
+            or isinstance(path, (str, bytes))
+            or len(path) != 169
+        ):
+            raise C7AError("C7A weekly equity path must contain exactly 169 values")
+        path_values = [finite(value, "weekly equity path") for value in path]
+        if any(value <= 0 for value in path_values):
+            raise C7AError("C7A weekly equity path must remain positive")
+        _close(path_values[0], start, f"equity path start week {index}")
+        _close(path_values[-1], end, f"equity path end week {index}")
         if not curve:
-            curve.append(start)
+            curve.extend(path_values)
             carry_equity = start
+        else:
+            _close(curve[-1], path_values[0], f"equity path chain week {index}")
+            curve.extend(path_values[1:])
         weekly_return = end / start - 1.0
         returns.append(weekly_return)
         weekly_pnl.append(end - start)
         btc_returns.append(btc_return)
-        curve.append(end)
         funding_total += funding
         receipts_total += receipts
         costs_total += cost
         turnover_total += turnover
         active.append(is_active)
         orientations.append(str(orientation))
-        carry_equity *= 1.0 + (funding + min(relative, 0.0) - cost) / start
+        carry_equity *= 1.0 + (funding + negative_relative - cost) / start
         if carry_equity <= 0 or not math.isfinite(carry_equity):
             raise C7AError("invalid C7A carry-only stress equity")
         previous = end
 
+    weekly_starts = [finite(row.get("starting_equity"), "starting equity") for row in rows]
+    weekly_ends = [finite(row.get("ending_equity"), "ending equity") for row in rows]
     active_count = sum(active)
     active_orientations = [v for v in orientations if v in ACTIVE_ORIENTATIONS]
     orientation_share = (
@@ -173,20 +201,21 @@ def aggregate_candidate_weekly(
         else None
     )
     result = {
+        "schema_version": 1,
         "stage": "C7A",
         "status": "PASS",
         "cost_label": cost_label,
         "decision_times": list(times),
-        "first_half_net_return": curve[13] / curve[0] - 1.0,
-        "second_half_net_return": curve[-1] / curve[13] - 1.0,
-        "aggregate_net_return": curve[-1] / curve[0] - 1.0,
+        "first_half_net_return": weekly_ends[12] / weekly_starts[0] - 1.0,
+        "second_half_net_return": weekly_ends[-1] / weekly_starts[13] - 1.0,
+        "aggregate_net_return": weekly_ends[-1] / weekly_starts[0] - 1.0,
         "maximum_drawdown": _drawdown(curve),
         "strategy_beta_to_btc": _beta(returns, btc_returns),
         "aggregate_funding_pnl": funding_total,
         "gross_funding_receipts_to_costs": (
             receipts_total / costs_total if costs_total > 0 else None
         ),
-        "carry_only_stress_return": carry_equity / curve[0] - 1.0,
+        "carry_only_stress_return": carry_equity / weekly_starts[0] - 1.0,
         "active_weeks": active_count,
         "first_half_active_weeks": sum(active[:13]),
         "second_half_active_weeks": sum(active[13:]),
@@ -215,6 +244,12 @@ def aggregate_comparator_weekly(
     metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
     assert_synthetic_only(metadata)
+    if comparator_id not in {
+        "cash",
+        "always_on_funding_rank",
+        "equal_notional_funding_rank",
+    }:
+        raise C7AError("unknown C7A comparator")
     if len(rows) != 26:
         raise C7AError("C7A comparator requires exactly 26 rows")
     times = tuple(t.isoformat().replace("+00:00", "Z") for t in scored_decision_times())
@@ -230,12 +265,27 @@ def aggregate_comparator_weekly(
             raise C7AError("C7A comparator equity must remain positive")
         if previous is not None:
             _close(start, previous, "comparator equity chain")
+        path = row.get("equity_path")
+        if (
+            not isinstance(path, Sequence)
+            or isinstance(path, (str, bytes))
+            or len(path) != 169
+        ):
+            raise C7AError("C7A comparator equity path must contain 169 values")
+        path_values = [finite(value, "comparator equity path") for value in path]
+        if any(value <= 0 for value in path_values):
+            raise C7AError("C7A comparator equity path must remain positive")
+        _close(path_values[0], start, "comparator equity path start")
+        _close(path_values[-1], end, "comparator equity path end")
         if not curve:
-            curve.append(start)
-        curve.append(end)
+            curve.extend(path_values)
+        else:
+            _close(curve[-1], path_values[0], "comparator equity path chain")
+            curve.extend(path_values[1:])
         returns.append(end / start - 1.0)
         previous = end
     result = {
+        "schema_version": 1,
         "stage": "C7A",
         "status": "PASS",
         "comparator_id": comparator_id,
@@ -266,6 +316,8 @@ def decide_c7a(
         stress_2_0x.get("cost_label"),
     ) != COST_LABELS:
         raise C7AError("C7A aggregate cost-label mismatch")
+    if always_on.get("comparator_id") != "always_on_funding_rank":
+        raise C7AError("C7A always-on comparator identity mismatch")
     if len(
         {
             tuple(v.get("decision_times", ()))
@@ -313,6 +365,7 @@ def decide_c7a(
     }
     failed = [name for name, passed in checks.items() if not passed]
     return {
+        "schema_version": 1,
         "stage": "C7A",
         "status": "PASS",
         "decision": "SELECTED" if not failed else "REJECTED",
