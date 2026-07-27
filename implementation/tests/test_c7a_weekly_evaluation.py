@@ -172,3 +172,43 @@ def test_frozen_gate_rejects_orientation_concentration() -> None:
     )
     assert decision["decision"] == "REJECTED"
     assert "orientation_concentration" in decision["failed_gates"]
+
+
+def test_candidate_aggregation_rejects_frozen_cost_tamper() -> None:
+    rows = candidate_rows("1.0x", 0.003, 0.0015)
+    rows[2]["trading_cost"] *= 2
+    with pytest.raises(C7AError, match="trading cost"):
+        aggregate_candidate_weekly(
+            rows, cost_label="1.0x", metadata=SYNTHETIC_METADATA
+        )
+
+
+def test_hourly_equity_path_controls_drawdown() -> None:
+    rows = candidate_rows("1.0x", 0.003, 0.0015)
+    rows[4]["equity_path"][80] = rows[4]["starting_equity"] * 0.8
+    aggregate = aggregate_candidate_weekly(
+        rows, cost_label="1.0x", metadata=SYNTHETIC_METADATA
+    )
+    assert aggregate["maximum_drawdown"] >= 0.2
+
+
+def test_inactive_row_requires_cash_orientation() -> None:
+    rows = candidate_rows("1.0x", 0.003, 0.0015)
+    rows[0]["active"] = False
+    with pytest.raises(C7AError, match="inactive orientation"):
+        aggregate_candidate_weekly(
+            rows, cost_label="1.0x", metadata=SYNTHETIC_METADATA
+        )
+
+
+def test_gate_rejects_wrong_always_on_identity() -> None:
+    evidence = build_evidence()
+    wrong = copy.deepcopy(evidence["always_on_aggregate"])
+    wrong["comparator_id"] = "equal_notional_funding_rank"
+    with pytest.raises(C7AError, match="always-on comparator identity"):
+        decide_c7a(
+            expected=evidence["candidate_aggregates"]["1.0x"],
+            stress_1_5x=evidence["candidate_aggregates"]["1.5x"],
+            stress_2_0x=evidence["candidate_aggregates"]["2.0x"],
+            always_on=wrong,
+        )
