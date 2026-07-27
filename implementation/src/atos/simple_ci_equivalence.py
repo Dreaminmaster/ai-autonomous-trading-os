@@ -49,7 +49,9 @@ def _normalise_run(value: Any) -> str:
     return "\n".join(line.strip() for line in value.strip().splitlines() if line.strip())
 
 
-def _named_step_run(workflow: dict[str, Any], job_name: str, step_name: str) -> str:
+def _named_step(
+    workflow: dict[str, Any], job_name: str, step_name: str
+) -> dict[str, Any]:
     jobs = workflow.get("jobs")
     if not isinstance(jobs, dict):
         raise SimpleCIEquivalenceError("workflow jobs mapping missing")
@@ -59,12 +61,20 @@ def _named_step_run(workflow: dict[str, Any], job_name: str, step_name: str) -> 
     steps = job.get("steps")
     if not isinstance(steps, list):
         raise SimpleCIEquivalenceError(f"workflow steps missing: {job_name}")
-    matches = [step for step in steps if isinstance(step, dict) and step.get("name") == step_name]
+    matches = [
+        step
+        for step in steps
+        if isinstance(step, dict) and step.get("name") == step_name
+    ]
     if len(matches) != 1:
         raise SimpleCIEquivalenceError(
             f"expected one {job_name}/{step_name} step, found {len(matches)}"
         )
-    run = _normalise_run(matches[0].get("run"))
+    return matches[0]
+
+
+def _named_step_run(workflow: dict[str, Any], job_name: str, step_name: str) -> str:
+    run = _normalise_run(_named_step(workflow, job_name, step_name).get("run"))
     if not run:
         raise SimpleCIEquivalenceError(f"run command missing: {job_name}/{step_name}")
     return run
@@ -86,9 +96,9 @@ def verify_same_run_ci_equivalence(
 
     The Freqtrade Validation ``atos-tests`` job runs full pytest on the exact
     checked-out commit and uploads a manifest bound to the same workflow run.
-    This function verifies that this command is a strict logging superset of the
-    repository's simple CI pytest command, removing the need for a brittle
-    cross-workflow GitHub API lookup.
+    This function proves that the ATOS command is a logging/verbosity superset
+    of the repository's simple CI test selection, while also pinning the simple
+    CI wrapper that preserves pytest's exit status and enforces failure.
     """
     if not isinstance(head_sha, str) or len(head_sha) < 7:
         raise SimpleCIEquivalenceError(f"invalid head_sha: {head_sha!r}")
@@ -111,11 +121,22 @@ def verify_same_run_ci_equivalence(
         raise SimpleCIEquivalenceError("validation workflow name drift")
 
     ci_install = _named_step_run(ci, "test", "Install")
-    ci_tests = _named_step_run(ci, "test", "Tests")
-    atos_tests = _named_step_run(validation, "atos-tests", "Run pytest")
+    ci_test_step = _named_step(ci, "test", "Tests")
+    ci_tests = _normalise_run(ci_test_step.get("run"))
+    ci_enforce_step = _named_step(ci, "test", "Enforce test result")
+    ci_enforce = _normalise_run(ci_enforce_step.get("run"))
+    atos_test_step = _named_step(validation, "atos-tests", "Run pytest")
+    atos_tests = _normalise_run(atos_test_step.get("run"))
 
     expected_install = "cd implementation\npython -m pip install -e '.[dev]'"
-    expected_ci_tests = "cd implementation\npython -m pytest"
+    expected_ci_tests = (
+        "cd implementation\n"
+        "set +e\n"
+        "python -m pytest 2>&1 | tee pytest.log\n"
+        "status=${PIPESTATUS[0]}\n"
+        'echo "exit_code=${status}" >> "$GITHUB_OUTPUT"\n'
+        'exit "$status"'
+    )
     expected_atos_tests = (
         "cd implementation\n"
         "set -o pipefail; python -m pytest -v --tb=long 2>&1 | tee pytest.log"
@@ -124,8 +145,18 @@ def verify_same_run_ci_equivalence(
         raise SimpleCIEquivalenceError("simple CI install contract drift")
     if ci_tests != expected_ci_tests:
         raise SimpleCIEquivalenceError("simple CI test contract drift")
+    if ci_test_step.get("id") != "tests":
+        raise SimpleCIEquivalenceError("simple CI test step id drift")
+    if ci_test_step.get("continue-on-error") is not True:
+        raise SimpleCIEquivalenceError("simple CI test capture contract drift")
+    if ci_enforce_step.get("if") != "steps.tests.outcome == 'failure'":
+        raise SimpleCIEquivalenceError("simple CI failure-enforcement condition drift")
+    if ci_enforce != "exit 1":
+        raise SimpleCIEquivalenceError("simple CI failure-enforcement command drift")
     if atos_tests != expected_atos_tests:
         raise SimpleCIEquivalenceError("same-run ATOS pytest contract drift")
+    if atos_test_step.get("continue-on-error") not in (None, False):
+        raise SimpleCIEquivalenceError("same-run ATOS pytest may not continue on error")
 
     expected_manifest = {
         "schema_version": 1,
@@ -156,6 +187,7 @@ def verify_same_run_ci_equivalence(
         "conclusion": "success",
         "verified": True,
         "verification_mode": "same_run_atos_superset",
+        "ci_failure_enforcement_verified": True,
         "evidence_workflow_path": EXPECTED_VALIDATION_WORKFLOW_PATH,
         "source_job": "atos-tests",
         "ci_contract_sha256": hashlib.sha256(ci_raw).hexdigest(),
