@@ -25,6 +25,13 @@ SYNTHETIC_METADATA = {
 }
 
 
+def equity_path(starting: float, ending: float) -> list[float]:
+    return [
+        starting + (ending - starting) * index / 168
+        for index in range(169)
+    ]
+
+
 def candidate_rows(label: str, base_return: float, cost_rate: float) -> list[dict]:
     rows: list[dict] = []
     equity = 1000.0
@@ -35,7 +42,8 @@ def candidate_rows(label: str, base_return: float, cost_rate: float) -> list[dic
         receipts = starting * 0.0045
         payments = starting * 0.0005
         funding = receipts - payments
-        cost = starting * 0.05 * cost_rate
+        traded_notional = starting * 0.05
+        cost = traded_notional * cost_rate
         relative = ending - starting - funding + cost
         rows.append(
             {
@@ -47,6 +55,8 @@ def candidate_rows(label: str, base_return: float, cost_rate: float) -> list[dic
                 "gross_funding_receipts": receipts,
                 "gross_funding_payments": payments,
                 "relative_price_pnl": relative,
+                "negative_relative_price_pnl": min(relative, 0.0),
+                "traded_notional": traded_notional,
                 "trading_cost": cost,
                 "turnover": 0.05,
                 "btc_mark_return": 0.02 if index % 2 == 0 else -0.02,
@@ -58,6 +68,7 @@ def candidate_rows(label: str, base_return: float, cost_rate: float) -> list[dic
                 ),
                 "missing_decision": False,
                 "unaccounted_funding_settlements": 0,
+                "equity_path": equity_path(starting, ending),
             }
         )
         equity = ending
@@ -76,6 +87,7 @@ def comparator_rows() -> list[dict]:
                 "decision_time": (START + timedelta(days=7 * index)).isoformat(),
                 "starting_equity": starting,
                 "ending_equity": ending,
+                "equity_path": equity_path(starting, ending),
             }
         )
         equity = ending
@@ -129,9 +141,7 @@ def test_candidate_aggregation_rejects_accounting_tamper() -> None:
     rows[7]["ending_equity"] += 1.0
     with pytest.raises(C7AError, match="weekly accounting"):
         aggregate_candidate_weekly(
-            rows,
-            cost_label="1.0x",
-            metadata=SYNTHETIC_METADATA,
+            rows, cost_label="1.0x", metadata=SYNTHETIC_METADATA
         )
 
 
@@ -152,9 +162,7 @@ def test_frozen_gate_rejects_orientation_concentration() -> None:
     for row in concentrated:
         row["orientation"] = "LONG_BTC_SHORT_ETH"
     aggregate = aggregate_candidate_weekly(
-        concentrated,
-        cost_label="1.0x",
-        metadata=SYNTHETIC_METADATA,
+        concentrated, cost_label="1.0x", metadata=SYNTHETIC_METADATA
     )
     decision = decide_c7a(
         expected=aggregate,
