@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 
 from atos.c7a_contract import (
     C7AError,
+    ONE_SIDE_COSTS,
     assert_synthetic_only,
     finite,
     scored_decision_times,
@@ -62,8 +63,13 @@ def _statistics(values: Sequence[float]) -> dict[str, float]:
     sample_std = math.sqrt(m2 / 25)
     raw = mean / sample_std
     variance = m2 / 26
-    skewness = (sum(v**3 for v in centered) / 26) / variance**1.5
-    kurtosis = (sum(v**4 for v in centered) / 26) / variance**2
+    population_skew = (sum(v**3 for v in centered) / 26) / variance**1.5
+    skewness = math.sqrt(26 * 25) / 24 * population_skew
+    population_kurtosis = (sum(v**4 for v in centered) / 26) / variance**2
+    kurtosis = (
+        ((26**2 - 1) * population_kurtosis - 3 * 25**2) / (24 * 23)
+        + 3.0
+    )
     radicand = 1.0 - skewness * raw + ((kurtosis - 1.0) / 4.0) * raw * raw
     if not math.isfinite(radicand) or radicand <= 0:
         raise C7AError("invalid C7A PSR radicand")
@@ -124,6 +130,11 @@ def aggregate_candidate_weekly(
         if previous is not None:
             _close(start, previous, f"equity chain week {index}")
         _close(funding, receipts - payments, f"funding week {index}")
+        _close(
+            cost,
+            start * turnover * ONE_SIDE_COSTS[cost_label],
+            f"trading cost week {index}",
+        )
         _close(end, start + funding + relative - cost, f"weekly accounting week {index}")
         is_active = row.get("active")
         orientation = row.get("orientation")
