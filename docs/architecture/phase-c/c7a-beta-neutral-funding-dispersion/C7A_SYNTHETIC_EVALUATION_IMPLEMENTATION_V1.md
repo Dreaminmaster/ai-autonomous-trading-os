@@ -10,31 +10,33 @@ It authorizes no real OKX data, network access, partial prospective performance,
 
 The producer accepts exactly 26 weekly accounting rows on the frozen C7A decision grid for each cost label: `1.0x`, `1.5x`, and `2.0x`.
 
-Every row must reconcile:
+Every candidate row must reconcile:
 
 - starting and ending equity;
 - net funding PnL against gross funding receipts and payments;
-- relative-price PnL;
-- trading costs;
-- one-way turnover;
-- active state and orientation;
+- total and negative-only relative-price PnL;
+- traded notional, one-way turnover, and the exact frozen one-side cost rate;
+- a 169-point positive hourly equity path whose first and final values match the weekly boundaries;
+- active state and one of the two frozen orientations, or `CASH` when inactive;
 - BTC weekly mark return;
 - zero missing decisions and zero unaccounted funding settlements.
+
+Comparator rows use the same 26-week decision grid and 169-point weekly equity-path contract. Comparator identities are restricted to the three preregistered non-selectable comparators.
 
 The aggregator derives:
 
 - first-half, second-half, and aggregate net return;
-- maximum drawdown;
+- maximum drawdown from the complete hourly equity path rather than weekly endpoints;
 - annualized weekly Sharpe;
-- weekly probabilistic Sharpe ratio;
+- bias-corrected weekly probabilistic Sharpe ratio;
 - weekly return beta to BTC;
 - funding receipts-to-cost ratio;
-- carry-only stress return;
+- carry-only stress return that removes positive relative-price PnL while retaining negative relative-price PnL and all costs;
 - active-week and orientation concentration;
-- annualized turnover;
+- annualized one-way turnover;
 - positive-week PnL concentration.
 
-The fixed C7A gate evaluator applies every preregistered economic, risk, attribution, activity, concentration, and comparator requirement without ranking or parameter search.
+The fixed C7A gate evaluator applies every preregistered economic, risk, attribution, activity, concentration, and comparator requirement without ranking or parameter search. It independently pins the required `AlwaysOnFundingRankComparator` identity.
 
 ## Synthetic boundary
 
