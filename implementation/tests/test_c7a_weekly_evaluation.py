@@ -35,7 +35,7 @@ def candidate_rows(label: str, base_return: float, cost_rate: float) -> list[dic
         receipts = starting * 0.0045
         payments = starting * 0.0005
         funding = receipts - payments
-        cost = starting * cost_rate
+        cost = starting * 0.05 * cost_rate
         relative = ending - starting - funding + cost
         rows.append(
             {
@@ -84,9 +84,9 @@ def comparator_rows() -> list[dict]:
 
 def build_evidence() -> dict:
     candidate = {
-        "1.0x": candidate_rows("1.0x", 0.003, 0.001),
-        "1.5x": candidate_rows("1.5x", 0.002, 0.0015),
-        "2.0x": candidate_rows("2.0x", 0.001, 0.002),
+        "1.0x": candidate_rows("1.0x", 0.003, 0.0015),
+        "1.5x": candidate_rows("1.5x", 0.002, 0.00225),
+        "2.0x": candidate_rows("2.0x", 0.001, 0.003),
     }
     aggregates = {
         label: aggregate_candidate_weekly(
@@ -125,7 +125,7 @@ def test_synthetic_selected_fixture() -> None:
 
 
 def test_candidate_aggregation_rejects_accounting_tamper() -> None:
-    rows = candidate_rows("1.0x", 0.003, 0.001)
+    rows = candidate_rows("1.0x", 0.003, 0.0015)
     rows[7]["ending_equity"] += 1.0
     with pytest.raises(C7AError, match="weekly accounting"):
         aggregate_candidate_weekly(
@@ -140,7 +140,7 @@ def test_candidate_aggregation_rejects_real_data_boundary() -> None:
     metadata["contains_real_market_rows"] = True
     with pytest.raises(C7AError, match="synthetic-only"):
         aggregate_candidate_weekly(
-            candidate_rows("1.0x", 0.003, 0.001),
+            candidate_rows("1.0x", 0.003, 0.0015),
             cost_label="1.0x",
             metadata=metadata,
         )
