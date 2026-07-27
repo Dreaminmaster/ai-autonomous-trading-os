@@ -22,9 +22,18 @@ jobs:
           cd implementation
           python -m pip install -e '.[dev]'
       - name: Tests
+        id: tests
+        continue-on-error: true
         run: |
           cd implementation
-          python -m pytest
+          set +e
+          python -m pytest 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          echo "exit_code=${status}" >> "$GITHUB_OUTPUT"
+          exit "$status"
+      - name: Enforce test result
+        if: steps.tests.outcome == 'failure'
+        run: exit 1
 """
 
 VALIDATION = """name: Freqtrade Validation
@@ -86,6 +95,7 @@ def test_valid_same_run_superset_passes(tmp_path):
     assert result["verification_mode"] == "same_run_atos_superset"
     assert result["head_sha"] == HEAD
     assert result["merge_commit_verified"] is True
+    assert result["ci_failure_enforcement_verified"] is True
     assert len(result["ci_contract_sha256"]) == 64
 
 
@@ -132,9 +142,28 @@ def test_manifest_binding_is_fail_closed(tmp_path, manifest, message):
 
 
 def test_ci_test_selection_drift_is_rejected(tmp_path):
-    narrowed = CI.replace("python -m pytest", "python -m pytest tests/test_one.py")
+    narrowed = CI.replace(
+        "python -m pytest 2>&1", "python -m pytest tests/test_one.py 2>&1"
+    )
     with pytest.raises(SimpleCIEquivalenceError, match="test contract drift"):
         _verify(tmp_path, ci=narrowed)
+
+
+def test_ci_failure_enforcement_drift_is_rejected(tmp_path):
+    weakened = CI.replace(
+        "if: steps.tests.outcome == 'failure'",
+        "if: steps.tests.outcome == 'cancelled'",
+    )
+    with pytest.raises(
+        SimpleCIEquivalenceError, match="failure-enforcement condition drift"
+    ):
+        _verify(tmp_path, ci=weakened)
+
+
+def test_ci_continue_on_error_capture_drift_is_rejected(tmp_path):
+    weakened = CI.replace("continue-on-error: true", "continue-on-error: false")
+    with pytest.raises(SimpleCIEquivalenceError, match="test capture contract drift"):
+        _verify(tmp_path, ci=weakened)
 
 
 def test_atos_test_selection_drift_is_rejected(tmp_path):
@@ -144,6 +173,15 @@ def test_atos_test_selection_drift_is_rejected(tmp_path):
     )
     with pytest.raises(SimpleCIEquivalenceError, match="ATOS pytest contract drift"):
         _verify(tmp_path, validation=narrowed)
+
+
+def test_atos_continue_on_error_is_rejected(tmp_path):
+    weakened = VALIDATION.replace(
+        "- name: Run pytest\n        run:",
+        "- name: Run pytest\n        continue-on-error: true\n        run:",
+    )
+    with pytest.raises(SimpleCIEquivalenceError, match="may not continue on error"):
+        _verify(tmp_path, validation=weakened)
 
 
 def test_invalid_pr_number_is_rejected(tmp_path):
