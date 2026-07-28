@@ -140,6 +140,7 @@ def test_h1_h5_evidence_package_is_immutable_independent_and_classified(
         evaluation_checkout_binding=_binding(),
         evaluated_at=datetime(2026, 7, 29, tzinfo=UTC),
     )
+    assert final["status"] == "FAIL"
     assert final["classification"] == "ECONOMIC_FAIL"
     assert final["independent_recompute_passed"] is True
     assert final["shadow_eligible"] is False

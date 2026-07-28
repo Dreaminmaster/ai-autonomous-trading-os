@@ -269,10 +269,11 @@ def build_h1_h5_evidence_package(
         final_classification = "IMPLEMENTATION_FAILURE"
     else:
         final_classification = pooled["overall_economic_verdict"]
+    final_pass = final_classification == "ECONOMIC_PASS"
     final = {
         "schema_version": 1,
         "stage": "C7A_H1_H5_FINAL_CLASSIFICATION",
-        "status": "PASS" if independent_pass else "FAIL",
+        "status": "PASS" if final_pass else "FAIL",
         "classification": final_classification,
         "authoritative_run_id": authoritative_run_id,
         "implementation_sha": implementation_sha,
