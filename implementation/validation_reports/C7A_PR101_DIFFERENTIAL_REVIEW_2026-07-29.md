@@ -1,0 +1,173 @@
+# C7A PR #101 Differential Security Review
+
+## Review identity
+
+- Repository: `Dreaminmaster/ai-autonomous-trading-os`
+- Pull request: `#101` — `C7A: add durable historical capture orchestration`
+- Base SHA: `8527b068e4329d8a6a36318a9058b351a1cdc9fc`
+- Original reviewed head: `e4e982daec22cbc607287d9e4c53486b19f2af25`
+- Corrected code head: `195bbc71fa6e405263bc87aab8913c4da3bfe7fa`
+- Review date: `2026-07-29`
+- Scope: the complete base-to-head diff, its direct callers, C7A source-data
+  contracts, tests, and the existing CI/Freqtrade Validation safety checks.
+
+This report binds the code findings to the corrected code head above. A later
+report-only commit may become the pull-request head without changing the reviewed
+runtime or test code.
+
+## Executive summary
+
+The original pull-request head had three material custody and fail-closed defects.
+It could finalize an evidence package without the required normalized series, it
+could accept a multi-year funding interval containing only one settlement per
+instrument, and its advertised no-overwrite writer had a check-then-replace race.
+The corrected code head closes all three defects and adds adversarial regression
+tests for incomplete normalized custody and missing funding settlements.
+
+No account endpoint, authentication, order submission, Paper side effect, or Live
+trading path is introduced. The implementation remains a public-data capture
+boundary and does not calculate or claim economic results.
+
+## Change and trust-boundary analysis
+
+The base-to-corrected-head change adds one production module and its tests, plus a
+portable improvement to the existing secret scan. The production data flow is:
+
+1. Construct an allowlisted public OKX request or a declared official-download
+   request.
+2. Fetch bytes with bounded size and timeout controls.
+3. Reject cross-origin redirects and any redirect that changes the API path or
+   query semantics.
+4. Persist the raw object and request/final-URL provenance before normalization.
+5. Strictly parse, deduplicate, order, and bound normalized mark or funding rows.
+6. Atomically retain immutable normalized series.
+7. Finalize only a complete two-instrument mark/funding package and recursively
+   hash every retained file into a SHA-256 manifest.
+
+The principal untrusted inputs are HTTP response metadata, downloaded bytes,
+CSV/JSON fields, timestamps, instrument identifiers, request identifiers, URLs,
+and caller-supplied capture plans. Filesystem destinations and finalization state
+are security boundaries because overwriting or path escape would invalidate
+custody evidence.
+
+## Findings
+
+### F-01 — Incomplete normalized evidence could be finalized (high)
+
+Original behavior: `CapturePackage.finalize` required only one raw record. A
+package with no normalized mark or funding series could receive a successful
+manifest. This contradicted the stage contract and allowed downstream code to
+mistake incomplete custody for a completed acquisition.
+
+Correction: finalization now validates the exact capture-plan schema and requires
+one mark and one funding series for each fixed instrument, all bound to the exact
+declared source intervals. Missing, duplicate, unsupported, or mis-bounded series
+fail closed.
+
+Regression coverage: `test_capture_package_is_no_overwrite_and_manifested` first
+proves that finalization fails without normalized series, then retains all four
+required series and verifies the complete manifest.
+
+### F-02 — Funding coverage holes were accepted (high)
+
+Original behavior: interval filtering proved only that retained settlements were
+inside the requested interval. A single settlement for an approximately
+thirty-month request was accepted, so missing downloads or truncated files could
+silently understate realized funding.
+
+Correction: normalized settlements must start at the requested funding boundary,
+remain strictly ordered and unique, and contain no internal or trailing gap above
+eight hours. Eight hours is the maximum supported OKX perpetual funding interval
+under the reviewed public mechanism; shorter one-, two-, and four-hour schedules
+remain valid.
+
+Regression coverage:
+
+- a complete 00:00/08:00/16:00 one-day fixture succeeds for both instruments;
+- a missing opening settlement fails;
+- a sixteen-hour internal gap fails;
+- the existing duplicate-across-files test remains active.
+
+### F-03 — No-overwrite persistence had a race (medium)
+
+Original behavior: the writer checked destination non-existence and later called
+`os.replace`. A competing creator between those operations could be silently
+overwritten.
+
+Correction: the writer fsyncs a same-directory temporary file, publishes it with
+an atomic hard link that fails if the destination exists, removes the temporary
+name, and fsyncs the parent directory. Package directories are created with mode
+`0700`; path containment and symlink-component checks remain enforced.
+
+### F-04 — Secret scan inspected generated bytecode (low)
+
+Original behavior: local validation scanned `__pycache__/*.pyc`, causing a false
+secret alert when compiled test bytecode contained a deliberately fake credential
+fixture. Generated binary files are not source custody evidence.
+
+Correction: the scanner uses text-only matching and excludes Python bytecode and
+`__pycache__`. The same scanner continues to cover source, tests, configuration,
+scripts, schemas, prompts, documentation, and recent Git history.
+
+## Adversarial checks performed
+
+- Reproduced successful finalization with one raw `{}` object and zero normalized
+  files on the original head.
+- Reproduced acceptance of one BTC and one ETH funding row for the entire frozen
+  source interval on the original head.
+- Checked request and final redirect URL provenance and exact API semantic
+  equality.
+- Checked pagination progress, cross-page duplicates, hourly mark completeness,
+  unconfirmed candles, instrument binding, numeric finiteness, and interval
+  filtering through implementation and tests.
+- Checked path traversal, symlink components, duplicate request IDs, immutable
+  destination publication, recursive manifest hashing, and finalization state.
+- Checked that tests exercise executable paths and failure modes rather than only
+  asserting declared constants.
+- Searched the repository for callers and confirmed that this new capture module
+  has no production integration caller yet; its blast radius is therefore the new
+  capture command surface and evidence files only.
+
+## Verification evidence
+
+Local verification on the corrected code head used Python `3.11`:
+
+- `python -m pytest -q`: `1217 passed, 7 skipped`.
+- `ruff check src/atos/c7a_historical_capture.py tests/test_c7a_historical_capture.py`:
+  passed.
+- `bash implementation/scripts/validate_no_secrets.sh`: passed.
+- `sh -n implementation/scripts/validate_no_secrets.sh`: passed.
+- `git diff --check`: passed.
+- CLI safety smoke checks for status, risk, cycle, review, and evaluation passed;
+  the cycle remained deterministically blocked and submitted no order.
+
+The original head was also independently verified against GitHub Actions run
+`30383886422` (CI #1839) and run `30383887104` (Freqtrade Validation #1190), both
+successful. Those runs do **not** validate the corrected code head. New exact-head
+CI and Freqtrade Validation runs are required before merge, and their run IDs and
+artifact digests must be recorded in the pull-request review trail.
+
+## Residual risks and out-of-scope work
+
+- This pull request captures mark prices and realized funding only. Frozen C7A
+  economics also require official one-hour trade candles for Monday-open execution;
+  the next adapter must capture and manifest those separately and must never
+  substitute mark closes for executable trade prices.
+- An eight-hour maximum-gap check detects material holes but cannot by itself prove
+  that every historical one-, two-, or four-hour settlement is present when OKX
+  changed cadence. The historical replay package must cross-check retained
+  settlement inventory/source metadata and fail as a data error if exact cadence
+  cannot be established.
+- No historical strategy replay, costs, comparator, independent recomputation, or
+  economic PASS/FAIL is part of this reviewed change. No such result is claimed.
+- Any future Shadow implementation remains blocked until engineering and economic
+  validation pass. Private account access, orders, Paper balance mutation, and
+  Live trading remain forbidden.
+
+## Review disposition
+
+The original head is not acceptable because of F-01 through F-03. The corrected
+code head is acceptable for merge only after both existing GitHub workflows pass
+on the exact final pull-request head and their logs/artifacts are inspected. This
+is a code-custody approval for the capture layer, not an economic approval of the
+strategy.
