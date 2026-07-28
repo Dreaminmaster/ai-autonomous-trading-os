@@ -1,31 +1,39 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
-from decimal import Decimal
+import zipfile
 from datetime import UTC, datetime
+from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 
 from atos.c7a_okx_public_data import (
+    FUNDING_ARCHIVE_COLUMNS,
     C7APublicDataError,
     PublicRequest,
+    build_historical_funding_manifest_requests,
     build_mark_price_request,
     build_recent_funding_request,
+    build_trade_candle_request,
     fetch_raw,
     historical_download_request,
     historical_execution_metadata,
     next_older_mark_request,
     normalize_funding_api_payload,
+    normalize_funding_download,
     normalize_funding_download_csv,
+    normalize_historical_funding_manifest,
     normalize_mark_price_payload,
+    normalize_trade_candle_payload,
     parse_json_object,
     select_exact_mark_interval,
+    select_exact_trade_interval,
     select_funding_interval,
     validate_public_request,
 )
-
 
 BTC = "BTC-USDT-SWAP"
 ETH = "ETH-USDT-SWAP"
@@ -34,9 +42,26 @@ T0 = 1_704_067_200_000  # 2024-01-01T00:00:00Z
 
 def _mark_row(ts: int, close: str = "100") -> list[str]:
     close_value = Decimal(close)
-    high = max(Decimal("101"), close_value + Decimal("1"))
-    low = min(Decimal("98"), close_value - Decimal("1"))
+    high = max(Decimal(101), close_value + Decimal(1))
+    low = min(Decimal(98), close_value - Decimal(1))
     return [str(ts), "99", format(high, "f"), format(low, "f"), close, "1"]
+
+
+def _trade_row(ts: int, close: str = "100") -> list[str]:
+    close_value = Decimal(close)
+    high = max(Decimal(101), close_value + Decimal(1))
+    low = min(Decimal(98), close_value - Decimal(1))
+    return [
+        str(ts),
+        "99",
+        format(high, "f"),
+        format(low, "f"),
+        close,
+        "10",
+        "0.1",
+        "1000",
+        "1",
+    ]
 
 
 def _funding_row(ts: int, rate: str, instrument: str = BTC) -> dict[str, str]:
@@ -63,6 +88,19 @@ def test_mark_request_is_exact_public_contract() -> None:
     validate_public_request(request)
 
 
+def test_trade_request_is_exact_public_contract() -> None:
+    request = build_trade_candle_request(ETH, after_ms=T0)
+    parsed = urlparse(request.url)
+    assert parsed.path == "/api/v5/market/history-candles"
+    assert parse_qs(parsed.query) == {
+        "after": [str(T0)],
+        "bar": ["1H"],
+        "instId": [ETH],
+        "limit": ["300"],
+    }
+    validate_public_request(request)
+
+
 def test_recent_funding_request_is_labeled_recent_and_bounded() -> None:
     request = build_recent_funding_request(ETH, before_ms=T0, host="us.okx.com")
     query = parse_qs(urlparse(request.url).query)
@@ -71,11 +109,42 @@ def test_recent_funding_request_is_labeled_recent_and_bounded() -> None:
     validate_public_request(request)
 
 
+def test_historical_funding_manifest_requests_are_public_and_chunked() -> None:
+    requests = build_historical_funding_manifest_requests(
+        BTC,
+        start_inclusive="2023-12-04T00:00:00Z",
+        end_exclusive="2026-06-29T00:00:00Z",
+    )
+    assert len(requests) == 2
+    assert all(
+        request.source_family == "OKX_HISTORICAL_DATA_API" for request in requests
+    )
+    assert all(
+        urlparse(request.url).netloc == "openapi.okx.com" for request in requests
+    )
+    first = parse_qs(urlparse(requests[0].url).query)
+    second = parse_qs(urlparse(requests[1].url).query)
+    assert first["module"] == ["3"]
+    assert first["instType"] == ["SWAP"]
+    assert first["instFamilyList"] == ["BTC-USDT"]
+    assert first["dateAggrType"] == ["monthly"]
+    assert datetime.fromtimestamp(int(first["begin"][0]) / 1000, tz=UTC) == datetime(
+        2023, 12, 1, tzinfo=UTC
+    )
+    assert datetime.fromtimestamp(int(second["begin"][0]) / 1000, tz=UTC) == datetime(
+        2025, 7, 1, tzinfo=UTC
+    )
+    for request in requests:
+        validate_public_request(request)
+
+
 def test_pagination_may_not_mix_before_and_after() -> None:
     with pytest.raises(C7APublicDataError, match="after or before"):
         build_mark_price_request(BTC, after_ms=T0, before_ms=T0 + 1)
     with pytest.raises(C7APublicDataError, match="after or before"):
         build_recent_funding_request(BTC, after_ms=T0, before_ms=T0 + 1)
+    with pytest.raises(C7APublicDataError, match="after or before"):
+        build_trade_candle_request(BTC, after_ms=T0, before_ms=T0 + 1)
 
 
 @pytest.mark.parametrize(
@@ -171,6 +240,40 @@ def test_mark_payload_normalizes_reverse_order_to_ascending() -> None:
     assert rows[1]["close"] == "101"
 
 
+def test_trade_payload_normalizes_completed_exact_hour_rows() -> None:
+    rows = normalize_trade_candle_payload(
+        {
+            "code": "0",
+            "data": [
+                _trade_row(T0 + 3_600_000, "101"),
+                _trade_row(T0, "100"),
+            ],
+        },
+        instrument=ETH,
+    )
+    assert [row["timestamp"] for row in rows] == [
+        "2024-01-01T00:00:00Z",
+        "2024-01-01T01:00:00Z",
+    ]
+    assert rows[0]["open"] == "99"
+    assert rows[0]["volume_quote"] == "1000"
+
+
+@pytest.mark.parametrize(
+    "offset,value,message",
+    [
+        (8, "0", "unconfirmed"),
+        (0, str(T0 + 1), "exact hour"),
+        (5, "-1", "non-negative"),
+    ],
+)
+def test_bad_trade_candle_is_rejected(offset: int, value: str, message: str) -> None:
+    row = _trade_row(T0)
+    row[offset] = value
+    with pytest.raises(C7APublicDataError, match=message):
+        normalize_trade_candle_payload({"code": "0", "data": [row]}, instrument=BTC)
+
+
 @pytest.mark.parametrize(
     "mutator,message",
     [
@@ -233,7 +336,7 @@ def test_funding_csv_requires_explicit_reviewed_schema() -> None:
         "\ufeffinstrument,funding_timestamp,settled_rate\n"
         f"{BTC},{T0},0.00010\n"
         f"{BTC},{T0 + 8 * 3_600_000},-0.00020\n"
-    ).encode("utf-8")
+    ).encode()
     rows = normalize_funding_download_csv(
         raw,
         instrument=BTC,
@@ -246,7 +349,7 @@ def test_funding_csv_requires_explicit_reviewed_schema() -> None:
     assert rows[0]["realized_rate"] == "0.0001"
     assert rows[1]["realized_rate"] == "-0.0002"
 
-    with pytest.raises(C7APublicDataError, match="columns missing"):
+    with pytest.raises(C7APublicDataError, match="reviewed schema"):
         normalize_funding_download_csv(
             raw,
             instrument=BTC,
@@ -255,6 +358,101 @@ def test_funding_csv_requires_explicit_reviewed_schema() -> None:
                 "funding_time": "funding_timestamp",
                 "realized_rate": "unknown",
             },
+        )
+
+    with pytest.raises(C7APublicDataError, match="reviewed schema"):
+        normalize_funding_download_csv(
+            raw.replace(b"settled_rate", b"settled_rate,unexpected"),
+            instrument=BTC,
+            column_map={
+                "instrument": "instrument",
+                "funding_time": "funding_timestamp",
+                "realized_rate": "settled_rate",
+            },
+        )
+
+
+def test_official_funding_zip_is_parsed_without_extracting(tmp_path) -> None:
+    csv_raw = (
+        "instrument_name,funding_time,funding_rate\n"
+        f"{BTC},{T0},0.00010\n"
+        f"{BTC},{T0 + 8 * 3_600_000},-0.00020\n"
+    ).encode()
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("BTC-USDT-SWAP-fundingrates-2024-01.csv", csv_raw)
+    rows = normalize_funding_download(
+        stream.getvalue(), instrument=BTC, column_map=FUNDING_ARCHIVE_COLUMNS
+    )
+    assert [row["realized_rate"] for row in rows] == ["0.0001", "-0.0002"]
+    assert not tuple(tmp_path.iterdir())
+
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("../escape.csv", csv_raw)
+    with pytest.raises(C7APublicDataError, match="unsafe"):
+        normalize_funding_download(
+            stream.getvalue(), instrument=BTC, column_map=FUNDING_ARCHIVE_COLUMNS
+        )
+
+
+def test_historical_funding_manifest_requires_exact_month_coverage() -> None:
+    payload = {
+        "code": "0",
+        "msg": "",
+        "data": [
+            {
+                "ts": str(T0),
+                "dateAggrType": "monthly",
+                "totalSizeMB": "1",
+                "details": [
+                    {
+                        "instId": BTC,
+                        "instFamily": "BTC-USDT",
+                        "instType": "SWAP",
+                        "dateRangeStart": str(T0),
+                        "dateRangeEnd": str(1_709_251_200_000),
+                        "groupSizeMB": "1",
+                        "groupDetails": [
+                            {
+                                "dateTs": str(T0 - 8 * 3_600_000),
+                                "filename": "BTC-USDT-SWAP-fundingrates-2024-01.zip",
+                                "sizeMB": "1",
+                                "url": "https://static.okx.com/cdn/okex/traderecords/"
+                                "swaprates/monthly/202401/"
+                                "BTC-USDT-SWAP-fundingrates-2024-01.zip",
+                            },
+                            {
+                                "dateTs": "1706716800000",
+                                "filename": "BTC-USDT-SWAP-fundingrates-2024-02.zip",
+                                "sizeMB": "1",
+                                "url": "https://static.okx.com/cdn/okex/traderecords/"
+                                "swaprates/monthly/202402/"
+                                "BTC-USDT-SWAP-fundingrates-2024-02.zip",
+                            },
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    archives = normalize_historical_funding_manifest(
+        payload,
+        instrument=BTC,
+        start_inclusive="2024-01-01T00:00:00Z",
+        end_exclusive="2024-03-01T00:00:00Z",
+    )
+    assert [item["request_id"] for item in archives] == [
+        "funding-BTC-USDT-SWAP-2024-01",
+        "funding-BTC-USDT-SWAP-2024-02",
+    ]
+    payload["data"][0]["details"][0]["groupDetails"].pop()
+    with pytest.raises(C7APublicDataError, match="coverage is incomplete"):
+        normalize_historical_funding_manifest(
+            payload,
+            instrument=BTC,
+            start_inclusive="2024-01-01T00:00:00Z",
+            end_exclusive="2024-03-01T00:00:00Z",
         )
 
 
@@ -298,6 +496,39 @@ def test_exact_mark_selection_requires_every_hour_and_canonical_close() -> None:
             instrument=BTC,
             start_inclusive="2024-01-01T00:00:00Z",
             end_exclusive="2024-01-01T03:00:00Z",
+        )
+
+
+def test_exact_trade_selection_requires_every_hour_and_preserves_execution_open() -> (
+    None
+):
+    rows = normalize_trade_candle_payload(
+        {
+            "code": "0",
+            "data": [
+                _trade_row(T0 + 3_600_000, "101"),
+                _trade_row(T0, "100"),
+            ],
+        },
+        instrument=BTC,
+    )
+    selected = select_exact_trade_interval(
+        rows,
+        instrument=BTC,
+        start_inclusive="2024-01-01T00:00:00Z",
+        end_exclusive="2024-01-01T02:00:00Z",
+    )
+    assert selected == (
+        {"timestamp": "2024-01-01T00:00:00Z", "open": "99", "close": "100"},
+        {"timestamp": "2024-01-01T01:00:00Z", "open": "99", "close": "101"},
+    )
+
+    with pytest.raises(C7APublicDataError, match="missing exact trade hour"):
+        select_exact_trade_interval(
+            rows[1:],
+            instrument=BTC,
+            start_inclusive="2024-01-01T00:00:00Z",
+            end_exclusive="2024-01-01T02:00:00Z",
         )
 
 

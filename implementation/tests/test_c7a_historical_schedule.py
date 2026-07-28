@@ -5,8 +5,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from atos.c7a_historical_schedule import (
-    C7AHistoricalScheduleError,
     HISTORICAL_WINDOWS,
+    C7AHistoricalScheduleError,
     HistoricalWindow,
     assert_official_public_metadata,
     decision_times,
@@ -14,7 +14,6 @@ from atos.c7a_historical_schedule import (
     validate_historical_windows,
     window_by_id,
 )
-
 
 PUBLIC_METADATA = {
     "stage": "C7A_HISTORICAL_VALIDATION",
@@ -46,7 +45,10 @@ def test_five_fixed_windows_are_contiguous_non_overlapping_and_26_weeks() -> Non
         assert all(value.hour == 0 and value.minute == 0 for value in values)
         assert values[-1] + timedelta(days=7) == window.end_exclusive
         if index:
-            assert window.first_scored_decision == HISTORICAL_WINDOWS[index - 1].end_exclusive
+            assert (
+                window.first_scored_decision
+                == HISTORICAL_WINDOWS[index - 1].end_exclusive
+            )
 
 
 def test_required_source_bounds_include_exact_first_lookbacks() -> None:
@@ -55,6 +57,8 @@ def test_required_source_bounds_include_exact_first_lookbacks() -> None:
         "window_id": "H1",
         "funding_start_inclusive": "2023-12-04T00:00:00Z",
         "mark_start_inclusive": "2023-12-03T23:00:00Z",
+        "trade_start_inclusive": "2023-12-04T00:00:00Z",
+        "trade_end_exclusive": "2024-07-01T01:00:00Z",
         "scored_start_inclusive": "2024-01-01T00:00:00Z",
         "scored_end_exclusive": "2024-07-01T00:00:00Z",
     }

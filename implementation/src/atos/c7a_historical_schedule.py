@@ -4,11 +4,13 @@ This module authorizes no account access, private API, order submission, paper s
 effect, or live execution. It only defines deterministic historical replay windows
 and validates metadata for unauthenticated official OKX public data.
 """
+
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Mapping
+from typing import Any
 
 
 class C7AHistoricalScheduleError(RuntimeError):
@@ -81,7 +83,7 @@ def _utc(value: Any, label: str) -> datetime:
         parsed = value
     elif isinstance(value, str) and value.strip():
         try:
-            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value.strip())
         except ValueError as exc:
             raise C7AHistoricalScheduleError(f"invalid {label}: {value!r}") from exc
     else:
@@ -126,6 +128,10 @@ def required_source_bounds(window: HistoricalWindow | str) -> dict[str, str]:
         "mark_start_inclusive": _iso(
             selected.first_scored_decision - INITIAL_MARK_LOOKBACK
         ),
+        "trade_start_inclusive": _iso(
+            selected.first_scored_decision - FUNDING_LOOKBACK
+        ),
+        "trade_end_exclusive": _iso(selected.end_exclusive + timedelta(hours=1)),
         "scored_start_inclusive": _iso(selected.first_scored_decision),
         "scored_end_exclusive": _iso(selected.end_exclusive),
     }
@@ -146,7 +152,10 @@ def validate_historical_windows() -> None:
         raise C7AHistoricalScheduleError("historical window identity drift")
     previous_end: datetime | None = None
     for window in HISTORICAL_WINDOWS:
-        if window.first_scored_decision.tzinfo is None or window.end_exclusive.tzinfo is None:
+        if (
+            window.first_scored_decision.tzinfo is None
+            or window.end_exclusive.tzinfo is None
+        ):
             raise C7AHistoricalScheduleError("historical window timestamps require UTC")
         if window.first_scored_decision >= window.end_exclusive:
             raise C7AHistoricalScheduleError("historical window must be positive")
