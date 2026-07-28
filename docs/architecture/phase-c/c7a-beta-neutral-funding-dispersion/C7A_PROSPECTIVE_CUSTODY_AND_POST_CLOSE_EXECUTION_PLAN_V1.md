@@ -1,177 +1,115 @@
-# C7A prospective custody and post-close execution plan V1
+# C7A immediate validation and prospective confirmation policy V2
 
-## 1. Status and authority
+## 1. Correction and authority
 
-- stage: `C7A`
-- current state: `SYNTHETIC_IMPLEMENTATION_COMPLETE`
-- implementation merge SHA: `aaa8f231fdb523f68743dbe6a0d0f6a87deb7a8a`
-- real C7A data: `NOT_AUTHORIZED`
-- network collection: `NOT_AUTHORIZED`
-- partial prospective performance: `FORBIDDEN`
-- economic run: `NOT_AUTHORIZED`
-- C7B: `CLOSED`
-- paper: `PAPER_CLOSED`
-- shadow: `SHADOW_CLOSED`
-- live: `LIVE_FORBIDDEN`
+The waiting-only interpretation previously recorded in this file is superseded.
 
-This document is planning-only. It does not authorize a workflow, downloader, real market row, economic calculation, account access, order, paper execution, shadow execution, or live execution.
+It was incorrect to convert one prospective holdout interval into a project-wide prohibition on real public data, historical economic replay, read-only shadow observation, or further strategy development. That interpretation did not come from the product owner and conflicts with the project objective of reaching real, cost-adjusted, falsifiable evidence efficiently.
 
-## 2. Why no real-data custody occurs during the scored interval
+Current authority:
 
-The C7A contract froze a prospective economic interval before any result existed. To preserve that boundary, the repository, CI, artifacts, prompts, reviewers, and local project work must not retain or inspect real C7A rows or partial performance before the scored interval closes.
+- immediate historical validation with official public OKX data: `AUTHORIZED`;
+- immediate implementation of public-data acquisition and normalization: `AUTHORIZED`;
+- read-only shadow observation after the historical pipeline passes: `AUTHORIZED`;
+- parallel strategy research and system development: `AUTHORIZED`;
+- private/account APIs: `FORBIDDEN` unless separately designed and approved;
+- order submission and live capital: `LIVE_FORBIDDEN`.
 
-Therefore:
+## 2. What remains frozen
 
-- no continuous collector is created now;
-- no scheduled GitHub Actions workflow is created now;
-- no local background collector is created now;
-- no dashboard, interim report, alert, preview, or partial metric is created now;
-- no real C7A data is committed, uploaded as an artifact, or copied into project discussions.
+The merged C7A candidate semantics remain unchanged:
 
-The authoritative dataset will be retrieved after the interval closes from the already frozen official public surfaces. Because the dates, instruments, transformations, candidate, costs, comparators, and gates are preregistered, post-close retrieval does not reopen parameter selection.
+- candidate: `C7ABetaNeutralFundingDispersion`;
+- instruments: `BTC-USDT-SWAP` and `ETH-USDT-SWAP`;
+- 28-day funding and mark-return lookback;
+- fixed beta/R-squared, projected-carry, activity, cost, risk, comparator, and concentration gates;
+- producer/reviewer separation and complete evidence manifest;
+- no parameter search after inspecting a scored window.
 
-## 3. Frozen time boundary
+The interval from `2026-08-24T00:00:00Z` through `2027-02-22T00:00:00Z` remains a valuable prospective confirmation window. It is an additional holdout, not a blocker on current work and not the sole admissible source of evidence.
 
-The future authorization must fail closed unless the trusted UTC clock is at or after:
+## 3. Immediate historical validation
 
-`2027-02-22T00:00:00Z`
+Before downloading scored rows, the following five non-overlapping 26-week decision windows are fixed:
 
-The retained C7A interval is exactly:
+| Window | First scored decision | End exclusive |
+| --- | --- | --- |
+| `H1` | `2024-01-01T00:00:00Z` | `2024-07-01T00:00:00Z` |
+| `H2` | `2024-07-01T00:00:00Z` | `2024-12-30T00:00:00Z` |
+| `H3` | `2024-12-30T00:00:00Z` | `2025-06-30T00:00:00Z` |
+| `H4` | `2025-06-30T00:00:00Z` | `2025-12-29T00:00:00Z` |
+| `H5` | `2025-12-29T00:00:00Z` | `2026-06-29T00:00:00Z` |
 
-- mark-price seed close: `2026-07-26T23:00:00Z`;
-- funding and trade-candle start: `2026-07-27T00:00:00Z`;
-- first scored decision: `2026-08-24T00:00:00Z`;
-- scored end exclusive and C7B start: `2027-02-22T00:00:00Z`.
+Each window must contain exactly 26 Monday 00:00 UTC decisions. Its required source interval includes the complete 28-day funding lookback, 673 hourly mark closes for the first decision, and the full scored accounting interval.
 
-No timestamp at or after `2027-02-22T00:00:00Z` may be retained, summarized, hashed into C7A economic evidence, or used to repair C7A. Overshoot rows must be deleted before any research read and their count recorded.
+The historical run must:
 
-## 4. Future exact-SHA authorization sequence
+- use the already merged candidate and gate semantics without threshold changes;
+- retrieve only official public OKX data;
+- retain raw responses, normalized rows, source URLs without credentials, timestamps, hashes, and pagination provenance;
+- fail closed on missing, duplicate, unordered, contradictory, non-finite, unconfirmed, or out-of-range rows;
+- run the three fixed cost levels and all three preregistered comparators;
+- produce per-window and pooled results without selecting the best window;
+- independently recompute all aggregates and gates;
+- distinguish data failure, implementation failure, and economic rejection;
+- forbid retuning and rerunning the same historical windows after economic inspection.
 
-After the scored interval has closed, work must proceed through separate reviewed changes rather than an open-ended workflow.
+Historical evidence is immediately decision-useful. A clear failure can reject or redesign the thesis now. A robust pass can justify read-only shadow progression now. The future prospective window remains an independent confirmation rather than an excuse to wait.
 
-### 4.1 Implementation freeze
+## 4. Public data authority
 
-A future implementation PR may add only the missing real-data acquisition, normalization, full-period simulation orchestration, final evidence packaging, and independent recomputation wiring.
+Permitted sources are limited to official unauthenticated OKX surfaces:
 
-It must:
-
-- reuse the merged frozen C7A contract and synthetic calculation semantics unchanged;
-- contain no threshold, lookback, estimator, asset, cost, gate, comparator, or accounting alteration;
-- fail closed on missing, duplicate, ambiguous, contradictory, non-finite, unordered, or out-of-bound data;
-- expose no paper, shadow, private API, account, order, or live path;
-- pass ordinary CI and every directly applicable validation before merge.
-
-The merged implementation SHA must then be recorded exactly. A later authorization must identify that exact SHA and its validated PR merge ref.
-
-### 4.2 One temporary authoritative workflow
-
-Only after the implementation is merged and independently reviewed may a separate authorization PR add one temporary workflow for one authoritative capture and one economic run.
-
-The workflow must:
-
-- refuse to start before `2027-02-22T00:00:00Z`;
-- checkout the exact authorized implementation SHA;
-- verify a clean tree and frozen configuration hash;
-- download only the permitted public C7A inputs;
-- reject authenticated endpoints and all private/account surfaces;
-- remove and record all C7B overshoot before research read;
-- execute the candidate once at the three frozen cost levels;
-- execute the three non-selectable comparators once;
-- run the physically separate independent recomputation;
-- create one complete immutable evidence package and SHA-256 manifest;
-- upload the final package as the workflow artifact.
-
-The authorization is consumed when the authoritative runner begins. No automatic retry, matrix rerun, alternate source, or second economic attempt is allowed.
-
-### 4.3 Evidence freeze and workflow removal
-
-A final closeout PR must independently verify the artifact, record exact provenance and hashes, state `SELECTED` or `REJECTED`, and immediately delete the temporary workflow.
-
-No result is authoritative merely because a workflow completed. Authority requires:
-
-- exact authorized SHA;
-- complete raw and normalized source evidence;
-- exact retained interval;
-- complete manifest verification;
-- producer and independent reviewer agreement;
-- unchanged frozen gate evaluation;
-- durable closeout merged to `main`.
-
-## 5. Permitted future public sources
-
-Future acquisition remains limited to the already frozen official surfaces:
-
-- OKX downloadable historical-data files;
+- OKX downloadable historical market-data files;
 - `GET /api/v5/market/history-candles`;
 - `GET /api/v5/market/history-mark-price-candles`;
 - `GET /api/v5/public/funding-rate-history`.
 
-`GET /api/v5/public/instruments` remains excluded from C7A historical economic selection. Current instrument metadata may be considered only after an economic PASS and only in a separately preregistered execution-readiness gate.
+The acquisition implementation must reject:
 
-No undocumented endpoint, proxy, credential, cookie, routing workaround, external exchange, backward metadata projection, interpolation, or weaker substitute is permitted.
+- API keys, passphrases, cookies, account headers, or authenticated endpoints;
+- private/account/trade/order endpoints;
+- undocumented mirrors, proxies, alternate exchanges, interpolation, or silent substitution;
+- current instrument metadata projected backward as historical authority.
 
-## 6. Failure taxonomy
+## 5. Immediate read-only shadow path
 
-A future attempt must distinguish process failure from an economic result.
+After the historical acquisition, accounting, and independent-review pipeline passes its engineering gates, C7A may enter read-only shadow observation immediately.
 
-### 6.1 Pre-start failure
+Shadow means:
 
-Examples:
+- consume public market and funding data;
+- generate and retain hypothetical decisions and accounting;
+- send no order and call no private API;
+- preserve deterministic risk and evidence boundaries;
+- report performance and operational defects on a fixed cadence;
+- remain unable to transition to live automatically.
 
-- clock is before the scored close;
-- implementation SHA or configuration hash does not match;
-- authorization identity is incomplete;
-- workspace or workflow state is not clean.
+Paper or live execution requires a separate exact-SHA design and explicit product-owner approval. Nothing in this policy authorizes real orders.
 
-Result: `NOT_STARTED`. Authorization is not consumed unless the authoritative runner began.
+## 6. Parallel progress
 
-### 6.2 Capture or data-authority failure
+C7A must not monopolize or freeze the project. While C7A historical and shadow evidence accumulates, the project may continue:
 
-Examples:
+- evaluating other fixed strategy candidates;
+- improving shared data quality and walk-forward tooling;
+- strengthening paper/shadow runtime safety;
+- reducing execution cost and operational fragility;
+- building the review and strategy-evolution loop.
 
-- permitted public source cannot be reached;
-- full interval cannot be retrieved;
-- funding settlements are incomplete or ambiguous;
-- candles are missing or contradictory;
-- C7B overshoot cannot be safely removed.
+Work is prioritized by how much it reduces the distance to a stable, auditable, cost-adjusted positive-expectancy system—not by how many stages or documents it creates.
 
-Result: `PRE_ECONOMIC_FAIL`. No economic conclusion and no selected policy.
+## 7. Current consequence
 
-### 6.3 Execution or evidence failure
+The repository is not in a waiting state.
 
-Examples:
+The next work is immediate:
 
-- producer crashes after reading valid data;
-- independent recomputation cannot complete;
-- manifest or retained evidence is incomplete;
-- producer and reviewer disagree.
+1. implement the fixed historical schedule and public-data boundary;
+2. implement official OKX acquisition and normalization;
+3. run the five preregistered historical windows once;
+4. independently review the complete evidence;
+5. decide whether C7A is rejected, revised under a new candidate identity, or advanced to read-only shadow;
+6. continue parallel strategy and system work regardless of the 2027 confirmation window.
 
-Result: `EXECUTION_OR_INTEGRITY_FAIL`. No economic conclusion and no selected policy.
-
-### 6.4 Completed economic result
-
-Only a complete, independently verified package may produce:
-
-- `SELECTED`, when every unchanged gate passes; or
-- `REJECTED`, when one or more unchanged gates fail.
-
-A failed gate cannot authorize retuning and rerunning C7A.
-
-## 7. Custody and disclosure rules
-
-Until the final closeout is merged:
-
-- raw source bytes, normalized rows, decisions, aggregates, and reviewer outputs remain inside the single authoritative artifact;
-- no partial chart, metric, summary, ranking, or result is copied into a PR description or discussion;
-- logs must avoid printing economic values beyond what is necessary to diagnose a process failure;
-- the artifact manifest must cover every retained file recursively;
-- any downloaded overshoot must be excluded from research inputs and separately counted;
-- no C7B data may survive in the retained C7A package.
-
-## 8. Current project consequence
-
-The synthetic C7A calculation, gate evaluation, independent review, and evidence-package framework are complete. There is no useful real-data action before the scored interval closes.
-
-The repository should now remain in a waiting state for C7A economic execution while unrelated maintenance may continue only if it does not expose real C7A rows, alter the frozen thesis, or open paper, shadow, private API, or live behavior.
-
-`C7A_POST_CLOSE_PLAN_ONLY` / `NO_REAL_DATA_BEFORE_2027_02_22` / `NO_PARTIAL_PERFORMANCE` / `ONE_FUTURE_AUTHORITATIVE_RUN` / `C7B_CLOSED` / `PAPER_CLOSED` / `SHADOW_CLOSED` / `LIVE_FORBIDDEN`
+`C7A_IMMEDIATE_VALIDATION_AUTHORIZED` / `HISTORICAL_PUBLIC_DATA_ALLOWED` / `SHADOW_READ_ONLY_ALLOWED_AFTER_ENGINEERING_PASS` / `PROSPECTIVE_CONFIRMATION_NON_BLOCKING` / `PRIVATE_API_FORBIDDEN` / `LIVE_FORBIDDEN`
