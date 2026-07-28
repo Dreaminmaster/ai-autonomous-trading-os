@@ -12,10 +12,12 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 from urllib.parse import parse_qsl, urlparse
 from urllib.request import Request, urlopen
 
@@ -25,9 +27,10 @@ from atos.c7a_historical_schedule import (
     required_source_bounds,
 )
 from atos.c7a_okx_public_data import (
-    C7APublicDataError,
+    HOUR_MS,
     HTTP_TIMEOUT_SECONDS,
     MAX_RAW_BYTES,
+    C7APublicDataError,
     PublicRequest,
     build_mark_price_request,
     historical_download_request,
@@ -44,6 +47,16 @@ API_FAMILIES = frozenset(
     {
         "OKX_HISTORY_MARK_PRICE_CANDLES_API",
         "OKX_FUNDING_RATE_HISTORY_API",
+    }
+)
+MAX_FUNDING_SETTLEMENT_GAP_MS = 8 * HOUR_MS
+CAPTURE_PLAN_KEYS = frozenset(
+    {
+        "window_ids",
+        "instruments",
+        "funding_start_inclusive",
+        "mark_start_inclusive",
+        "scored_end_exclusive",
     }
 )
 
@@ -96,12 +109,97 @@ def _timestamp_ms(value: Any) -> int:
     if not isinstance(value, str) or not value:
         raise C7AHistoricalCaptureError("normalized timestamp must be an ISO-8601 string")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
     except ValueError as exc:
         raise C7AHistoricalCaptureError(f"invalid normalized timestamp: {value!r}") from exc
     if parsed.tzinfo is None:
         raise C7AHistoricalCaptureError("normalized timestamp must be timezone-aware")
     return int(parsed.timestamp() * 1000)
+
+
+def _iso_ms(value: int) -> str:
+    return datetime.fromtimestamp(value / 1000, tz=UTC).isoformat().replace(
+        "+00:00", "Z"
+    )
+
+
+def _canonical_interval(start_inclusive: str, end_exclusive: str) -> tuple[str, str]:
+    start_ms = _timestamp_ms(start_inclusive)
+    end_ms = _timestamp_ms(end_exclusive)
+    if start_ms >= end_ms:
+        raise C7AHistoricalCaptureError("capture interval must be positive")
+    return _iso_ms(start_ms), _iso_ms(end_ms)
+
+
+def _validated_capture_plan(capture_plan: Mapping[str, Any]) -> dict[str, Any]:
+    if set(capture_plan) != CAPTURE_PLAN_KEYS:
+        raise C7AHistoricalCaptureError("capture plan key set is incomplete or drifted")
+    window_ids = capture_plan.get("window_ids")
+    if (
+        not isinstance(window_ids, list)
+        or not window_ids
+        or any(not isinstance(item, str) or not SAFE_ID.fullmatch(item) for item in window_ids)
+        or len(window_ids) != len(set(window_ids))
+    ):
+        raise C7AHistoricalCaptureError("capture plan window IDs are invalid")
+    if capture_plan.get("instruments") != list(INSTRUMENTS):
+        raise C7AHistoricalCaptureError("capture plan instrument set or order drifted")
+    funding_start, end = _canonical_interval(
+        str(capture_plan.get("funding_start_inclusive", "")),
+        str(capture_plan.get("scored_end_exclusive", "")),
+    )
+    mark_start, mark_end = _canonical_interval(
+        str(capture_plan.get("mark_start_inclusive", "")),
+        str(capture_plan.get("scored_end_exclusive", "")),
+    )
+    if mark_end != end:
+        raise C7AHistoricalCaptureError("capture plan end boundaries do not match")
+    return {
+        "window_ids": list(window_ids),
+        "instruments": list(INSTRUMENTS),
+        "funding_start_inclusive": funding_start,
+        "mark_start_inclusive": mark_start,
+        "scored_end_exclusive": end,
+    }
+
+
+def _assert_complete_funding_interval(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    instrument: str,
+    start_inclusive: str,
+    end_exclusive: str,
+) -> None:
+    start_ms = _timestamp_ms(start_inclusive)
+    end_ms = _timestamp_ms(end_exclusive)
+    times = tuple(_timestamp_ms(row.get("funding_time")) for row in rows)
+    if not times or times != tuple(sorted(times)) or len(times) != len(set(times)):
+        raise C7AHistoricalCaptureError(
+            f"funding settlements are empty, duplicate, or unordered: {instrument}"
+        )
+    if times[0] != start_ms:
+        raise C7AHistoricalCaptureError(
+            f"funding settlement coverage does not start at the requested boundary: {instrument}"
+        )
+    gaps = (
+        *(right - left for left, right in pairwise(times)),
+        end_ms - times[-1],
+    )
+    if any(gap < 0 or gap > MAX_FUNDING_SETTLEMENT_GAP_MS for gap in gaps):
+        raise C7AHistoricalCaptureError(
+            f"funding settlement coverage gap exceeds eight hours: {instrument}"
+        )
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _api_semantics(url: str) -> tuple[str, tuple[tuple[str, str], ...]]:
@@ -206,9 +304,11 @@ class CapturePackage:
             raise C7AHistoricalCaptureError(
                 f"capture package already exists: {self.root}"
             )
-        self.root.mkdir(parents=True, exist_ok=False)
+        self.root.mkdir(parents=True, exist_ok=False, mode=0o700)
+        _fsync_directory(self.root.parent)
         self._records: list[CaptureRecord] = []
         self._request_ids: set[str] = set()
+        self._normalized_series: dict[tuple[str, str], tuple[str, str]] = {}
         self._finalized = False
 
     def _assert_open(self) -> None:
@@ -236,7 +336,14 @@ class CapturePackage:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            raise C7AHistoricalCaptureError(
+                f"capture file already exists: {relative}"
+            ) from exc
+        temporary.unlink()
+        _fsync_directory(path.parent)
 
     def write_json(self, relative: str, payload: Any) -> None:
         data = (
@@ -249,6 +356,30 @@ class CapturePackage:
             + "\n"
         ).encode("utf-8")
         self._write_bytes(relative, data)
+
+    def retain_normalized_series(
+        self,
+        *,
+        series_type: str,
+        instrument: str,
+        start_inclusive: str,
+        end_exclusive: str,
+        rows: Sequence[Mapping[str, Any]],
+    ) -> None:
+        self._assert_open()
+        key = (series_type, instrument)
+        if series_type not in {"marks", "funding"} or instrument not in INSTRUMENTS:
+            raise C7AHistoricalCaptureError("unsupported normalized series identity")
+        if key in self._normalized_series:
+            raise C7AHistoricalCaptureError("normalized series is already retained")
+        if not rows:
+            raise C7AHistoricalCaptureError("normalized series contains no rows")
+        bounds = _canonical_interval(start_inclusive, end_exclusive)
+        self.write_json(
+            f"normalized/{series_type}/{instrument}.json",
+            list(rows),
+        )
+        self._normalized_series[key] = bounds
 
     def retain_raw(self, raw: bytes, record: CaptureRecord) -> CaptureRecord:
         self._assert_open()
@@ -308,11 +439,32 @@ class CapturePackage:
             raise C7AHistoricalCaptureError("implementation SHA must be exact")
         if not self._records:
             raise C7AHistoricalCaptureError("capture package contains no raw objects")
+        plan = _validated_capture_plan(capture_plan)
+        expected_series = {
+            ("marks", instrument): (
+                plan["mark_start_inclusive"],
+                plan["scored_end_exclusive"],
+            )
+            for instrument in INSTRUMENTS
+        }
+        expected_series.update(
+            {
+                ("funding", instrument): (
+                    plan["funding_start_inclusive"],
+                    plan["scored_end_exclusive"],
+                )
+                for instrument in INSTRUMENTS
+            }
+        )
+        if self._normalized_series != expected_series:
+            raise C7AHistoricalCaptureError(
+                "capture package normalized series are incomplete or bound to the wrong interval"
+            )
         index = {
             "schema_version": 1,
             "stage": "C7A_HISTORICAL_CAPTURE",
             "implementation_sha": implementation_sha,
-            "capture_plan": dict(capture_plan),
+            "capture_plan": plan,
             "records": [record.to_dict() for record in self._records],
             "authenticated": False,
             "contains_account_data": False,
@@ -447,9 +599,12 @@ def capture_mark_range(
         )
     except C7APublicDataError as exc:
         raise C7AHistoricalCaptureError(str(exc)) from exc
-    package.write_json(
-        f"normalized/marks/{instrument}.json",
-        list(selected),
+    package.retain_normalized_series(
+        series_type="marks",
+        instrument=instrument,
+        start_inclusive=start_inclusive,
+        end_exclusive=end_exclusive,
+        rows=selected,
     )
     return selected
 
@@ -515,9 +670,18 @@ def capture_funding_downloads(
             )
         except C7APublicDataError as exc:
             raise C7AHistoricalCaptureError(str(exc)) from exc
-        package.write_json(
-            f"normalized/funding/{instrument}.json",
-            list(selected),
+        _assert_complete_funding_interval(
+            selected,
+            instrument=instrument,
+            start_inclusive=start_inclusive,
+            end_exclusive=end_exclusive,
+        )
+        package.retain_normalized_series(
+            series_type="funding",
+            instrument=instrument,
+            start_inclusive=start_inclusive,
+            end_exclusive=end_exclusive,
+            rows=selected,
         )
         result[instrument] = selected
     return result

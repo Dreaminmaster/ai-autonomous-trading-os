@@ -120,12 +120,40 @@ def test_capture_package_is_no_overwrite_and_manifested(tmp_path) -> None:
     with pytest.raises(C7AHistoricalCaptureError, match="inside package"):
         package.write_json("../escape.json", {})
 
+    capture_plan = {
+        "window_ids": ["TEST"],
+        "instruments": [BTC, ETH],
+        "funding_start_inclusive": "2024-01-01T00:00:00Z",
+        "mark_start_inclusive": "2023-12-31T23:00:00Z",
+        "scored_end_exclusive": "2024-01-02T00:00:00Z",
+    }
+    with pytest.raises(C7AHistoricalCaptureError, match="normalized series"):
+        package.finalize(
+            implementation_sha=EXACT_SHA,
+            capture_plan=capture_plan,
+        )
+
+    for instrument in (BTC, ETH):
+        package.retain_normalized_series(
+            series_type="marks",
+            instrument=instrument,
+            start_inclusive=capture_plan["mark_start_inclusive"],
+            end_exclusive=capture_plan["scored_end_exclusive"],
+            rows=({"timestamp": "2023-12-31T23:00:00Z", "close": "1"},),
+        )
+        package.retain_normalized_series(
+            series_type="funding",
+            instrument=instrument,
+            start_inclusive=capture_plan["funding_start_inclusive"],
+            end_exclusive=capture_plan["scored_end_exclusive"],
+            rows=({"funding_time": "2024-01-01T00:00:00Z", "realized_rate": "0"},),
+        )
     manifest = package.finalize(
         implementation_sha=EXACT_SHA,
-        capture_plan={"window_ids": ["H1"]},
+        capture_plan=capture_plan,
     )
     assert manifest["stage"] == "C7A_HISTORICAL_CAPTURE_PACKAGE"
-    assert manifest["file_count"] == 2
+    assert manifest["file_count"] == 6
     assert (tmp_path / "capture" / "capture_index.json").is_file()
     assert (tmp_path / "capture" / "manifest.json").is_file()
     with pytest.raises(C7AHistoricalCaptureError, match="finalized"):
@@ -242,8 +270,18 @@ def test_funding_download_capture_requires_both_instruments_and_exact_interval(
         ),
     ]
     raw_by_id = {
-        "btc-funding-h1": f"inst,ts,rate\n{BTC},{T0},0.0001\n".encode(),
-        "eth-funding-h1": f"inst,ts,rate\n{ETH},{T0},-0.0002\n".encode(),
+        "btc-funding-h1": (
+            "inst,ts,rate\n"
+            f"{BTC},{T0},0.0001\n"
+            f"{BTC},{T0 + 8 * HOUR},0.0002\n"
+            f"{BTC},{T0 + 16 * HOUR},0.0003\n"
+        ).encode(),
+        "eth-funding-h1": (
+            "inst,ts,rate\n"
+            f"{ETH},{T0},-0.0002\n"
+            f"{ETH},{T0 + 8 * HOUR},-0.0001\n"
+            f"{ETH},{T0 + 16 * HOUR},0\n"
+        ).encode(),
     }
 
     def fetch_object(request):
@@ -259,7 +297,54 @@ def test_funding_download_capture_requires_both_instruments_and_exact_interval(
     )
     assert result[BTC][0]["realized_rate"] == "0.0001"
     assert result[ETH][0]["realized_rate"] == "-0.0002"
+    assert len(result[BTC]) == len(result[ETH]) == 3
     assert len(package.records) == 2
+
+
+@pytest.mark.parametrize(
+    "offsets,message",
+    [
+        ((8, 16), "does not start at the requested boundary"),
+        ((0, 16), "gap exceeds eight hours"),
+    ],
+)
+def test_funding_download_capture_rejects_missing_settlement_gap(
+    tmp_path, offsets, message: str
+) -> None:
+    package = CapturePackage(tmp_path / "funding-gap")
+    specs = [
+        FundingDownloadSpec(
+            request_id=f"{instrument.split('-', 1)[0].lower()}-gap",
+            instrument=instrument,
+            url=f"https://static.okx.com/cdn/history/{instrument}.csv",
+            column_map={
+                "instrument": "inst",
+                "funding_time": "ts",
+                "realized_rate": "rate",
+            },
+        )
+        for instrument in (BTC, ETH)
+    ]
+
+    def fetch_object(request):
+        instrument = BTC if request.request_id == "btc-gap" else ETH
+        raw = (
+            "inst,ts,rate\n"
+            + "".join(
+                f"{instrument},{T0 + offset * HOUR},0.0001\n"
+                for offset in offsets
+            )
+        ).encode()
+        return raw, _record(request, raw)
+
+    with pytest.raises(C7AHistoricalCaptureError, match=message):
+        capture_funding_downloads(
+            package,
+            specs=specs,
+            start_inclusive="2024-01-01T00:00:00Z",
+            end_exclusive="2024-01-02T00:00:00Z",
+            fetch_object=fetch_object,
+        )
 
 
 def test_funding_download_capture_rejects_duplicate_settlement_across_files(
