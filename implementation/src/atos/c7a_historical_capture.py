@@ -6,12 +6,14 @@ URLs, rejects API redirect drift, paginates mark history with strict progress
 checks, and emits a recursive SHA-256 manifest. It has no account, order, paper,
 shadow side-effect, or live path.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import os
 import re
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -27,17 +29,23 @@ from atos.c7a_historical_schedule import (
     required_source_bounds,
 )
 from atos.c7a_okx_public_data import (
+    FUNDING_ARCHIVE_COLUMNS,
     HOUR_MS,
     HTTP_TIMEOUT_SECONDS,
     MAX_RAW_BYTES,
     C7APublicDataError,
     PublicRequest,
+    build_historical_funding_manifest_requests,
     build_mark_price_request,
+    build_trade_candle_request,
     historical_download_request,
-    normalize_funding_download_csv,
+    normalize_funding_download,
+    normalize_historical_funding_manifest,
     normalize_mark_price_payload,
+    normalize_trade_candle_payload,
     parse_json_object,
     select_exact_mark_interval,
+    select_exact_trade_interval,
     select_funding_interval,
     validate_public_request,
 )
@@ -45,8 +53,10 @@ from atos.c7a_okx_public_data import (
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$")
 API_FAMILIES = frozenset(
     {
+        "OKX_HISTORY_CANDLES_API",
         "OKX_HISTORY_MARK_PRICE_CANDLES_API",
         "OKX_FUNDING_RATE_HISTORY_API",
+        "OKX_HISTORICAL_DATA_API",
     }
 )
 MAX_FUNDING_SETTLEMENT_GAP_MS = 8 * HOUR_MS
@@ -56,6 +66,8 @@ CAPTURE_PLAN_KEYS = frozenset(
         "instruments",
         "funding_start_inclusive",
         "mark_start_inclusive",
+        "trade_start_inclusive",
+        "trade_end_exclusive",
         "scored_end_exclusive",
     }
 )
@@ -107,19 +119,23 @@ def _iso(value: datetime) -> str:
 
 def _timestamp_ms(value: Any) -> int:
     if not isinstance(value, str) or not value:
-        raise C7AHistoricalCaptureError("normalized timestamp must be an ISO-8601 string")
+        raise C7AHistoricalCaptureError(
+            "normalized timestamp must be an ISO-8601 string"
+        )
     try:
         parsed = datetime.fromisoformat(value)
     except ValueError as exc:
-        raise C7AHistoricalCaptureError(f"invalid normalized timestamp: {value!r}") from exc
+        raise C7AHistoricalCaptureError(
+            f"invalid normalized timestamp: {value!r}"
+        ) from exc
     if parsed.tzinfo is None:
         raise C7AHistoricalCaptureError("normalized timestamp must be timezone-aware")
     return int(parsed.timestamp() * 1000)
 
 
 def _iso_ms(value: int) -> str:
-    return datetime.fromtimestamp(value / 1000, tz=UTC).isoformat().replace(
-        "+00:00", "Z"
+    return (
+        datetime.fromtimestamp(value / 1000, tz=UTC).isoformat().replace("+00:00", "Z")
     )
 
 
@@ -138,7 +154,10 @@ def _validated_capture_plan(capture_plan: Mapping[str, Any]) -> dict[str, Any]:
     if (
         not isinstance(window_ids, list)
         or not window_ids
-        or any(not isinstance(item, str) or not SAFE_ID.fullmatch(item) for item in window_ids)
+        or any(
+            not isinstance(item, str) or not SAFE_ID.fullmatch(item)
+            for item in window_ids
+        )
         or len(window_ids) != len(set(window_ids))
     ):
         raise C7AHistoricalCaptureError("capture plan window IDs are invalid")
@@ -152,13 +171,19 @@ def _validated_capture_plan(capture_plan: Mapping[str, Any]) -> dict[str, Any]:
         str(capture_plan.get("mark_start_inclusive", "")),
         str(capture_plan.get("scored_end_exclusive", "")),
     )
-    if mark_end != end:
+    trade_start, trade_end = _canonical_interval(
+        str(capture_plan.get("trade_start_inclusive", "")),
+        str(capture_plan.get("trade_end_exclusive", "")),
+    )
+    if mark_end != end or _timestamp_ms(trade_end) != _timestamp_ms(end) + HOUR_MS:
         raise C7AHistoricalCaptureError("capture plan end boundaries do not match")
     return {
         "window_ids": list(window_ids),
         "instruments": list(INSTRUMENTS),
         "funding_start_inclusive": funding_start,
         "mark_start_inclusive": mark_start,
+        "trade_start_inclusive": trade_start,
+        "trade_end_exclusive": trade_end,
         "scored_end_exclusive": end,
     }
 
@@ -236,7 +261,9 @@ def fetch_raw_strict(
     response = None
     try:
         response = opener(http_request, timeout=HTTP_TIMEOUT_SECONDS)
-        final_url = str(response.geturl()) if hasattr(response, "geturl") else request.url
+        final_url = (
+            str(response.geturl()) if hasattr(response, "geturl") else request.url
+        )
         final_request = PublicRequest(
             request_id=request.request_id,
             source_family=request.source_family,
@@ -253,9 +280,12 @@ def fetch_raw_strict(
             )
         raw = response.read(MAX_RAW_BYTES + 1)
         status = int(getattr(response, "status", 200))
-        media_type = str(
-            response.headers.get("Content-Type", "application/octet-stream")
-        ).split(";", 1)[0].strip().lower()
+        media_type = (
+            str(response.headers.get("Content-Type", "application/octet-stream"))
+            .split(";", 1)[0]
+            .strip()
+            .lower()
+        )
     except C7AHistoricalCaptureError:
         raise
     except C7APublicDataError as exc:
@@ -368,7 +398,10 @@ class CapturePackage:
     ) -> None:
         self._assert_open()
         key = (series_type, instrument)
-        if series_type not in {"marks", "funding"} or instrument not in INSTRUMENTS:
+        if (
+            series_type not in {"marks", "trades", "funding"}
+            or instrument not in INSTRUMENTS
+        ):
             raise C7AHistoricalCaptureError("unsupported normalized series identity")
         if key in self._normalized_series:
             raise C7AHistoricalCaptureError("normalized series is already retained")
@@ -449,6 +482,15 @@ class CapturePackage:
         }
         expected_series.update(
             {
+                ("trades", instrument): (
+                    plan["trade_start_inclusive"],
+                    plan["trade_end_exclusive"],
+                )
+                for instrument in INSTRUMENTS
+            }
+        )
+        expected_series.update(
+            {
                 ("funding", instrument): (
                     plan["funding_start_inclusive"],
                     plan["scored_end_exclusive"],
@@ -474,8 +516,11 @@ class CapturePackage:
         }
         self.write_json("capture_index.json", index)
 
+        entries = sorted(self.root.rglob("*"))
+        if any(path.is_symlink() for path in entries):
+            raise C7AHistoricalCaptureError("capture package contains a symbolic link")
         files: list[dict[str, Any]] = []
-        for path in sorted(item for item in self.root.rglob("*") if item.is_file()):
+        for path in (item for item in entries if item.is_file()):
             relative = path.relative_to(self.root).as_posix()
             if relative == "manifest.json":
                 continue
@@ -524,6 +569,25 @@ def _retain_response(
 
 
 PageFetcher = Callable[[PublicRequest], tuple[bytes, CaptureRecord]]
+Sleeper = Callable[[float], None]
+
+
+def _validated_page_pause(value: float) -> float:
+    if isinstance(value, bool):
+        raise C7AHistoricalCaptureError(
+            "page pause must be a finite non-negative number"
+        )
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError) as exc:
+        raise C7AHistoricalCaptureError(
+            "page pause must be a finite non-negative number"
+        ) from exc
+    if not 0.0 <= seconds <= 5.0:
+        raise C7AHistoricalCaptureError(
+            "page pause must be between zero and five seconds"
+        )
+    return seconds
 
 
 def h1_h5_capture_plan() -> dict[str, Any]:
@@ -534,8 +598,88 @@ def h1_h5_capture_plan() -> dict[str, Any]:
         "instruments": list(INSTRUMENTS),
         "funding_start_inclusive": first["funding_start_inclusive"],
         "mark_start_inclusive": first["mark_start_inclusive"],
+        "trade_start_inclusive": first["trade_start_inclusive"],
+        "trade_end_exclusive": last["trade_end_exclusive"],
         "scored_end_exclusive": last["scored_end_exclusive"],
     }
+
+
+def capture_trade_range(
+    package: CapturePackage,
+    *,
+    instrument: str,
+    start_inclusive: str,
+    end_exclusive: str,
+    fetch_page: PageFetcher = fetch_raw_strict,
+    host: str = "www.okx.com",
+    max_pages: int = 1000,
+    page_pause_seconds: float = 0.11,
+    sleeper: Sleeper = time.sleep,
+) -> tuple[dict[str, Any], ...]:
+    """Capture complete hourly trade candles by paginating strictly backward."""
+    if instrument not in INSTRUMENTS:
+        raise C7AHistoricalCaptureError(f"unsupported instrument: {instrument!r}")
+    if type(max_pages) is not int or not 1 <= max_pages <= 10_000:
+        raise C7AHistoricalCaptureError("max_pages must be an integer from 1 to 10000")
+    pause = _validated_page_pause(page_pause_seconds)
+    start_ms = _timestamp_ms(start_inclusive)
+    end_ms = _timestamp_ms(end_exclusive)
+    if start_ms >= end_ms:
+        raise C7AHistoricalCaptureError("trade capture interval must be positive")
+
+    cursor = end_ms
+    combined: dict[str, dict[str, str]] = {}
+    pages = 0
+    while True:
+        if pages >= max_pages:
+            raise C7AHistoricalCaptureError("trade pagination exceeded max_pages")
+        if pages and pause:
+            sleeper(pause)
+        request = build_trade_candle_request(instrument, after_ms=cursor, host=host)
+        raw, record = fetch_page(request)
+        _retain_response(package, request, raw, record)
+        try:
+            payload = parse_json_object(raw)
+            rows = normalize_trade_candle_payload(payload, instrument=instrument)
+        except C7APublicDataError as exc:
+            raise C7AHistoricalCaptureError(str(exc)) from exc
+        if not rows:
+            raise C7AHistoricalCaptureError("trade pagination returned an empty page")
+        oldest = min(_timestamp_ms(row["timestamp"]) for row in rows)
+        newest = max(_timestamp_ms(row["timestamp"]) for row in rows)
+        if newest >= cursor or oldest >= cursor:
+            raise C7AHistoricalCaptureError(
+                "trade pagination did not move strictly older"
+            )
+        for row in rows:
+            timestamp = str(row["timestamp"])
+            if timestamp in combined:
+                raise C7AHistoricalCaptureError(
+                    f"duplicate trade timestamp across pages: {timestamp}"
+                )
+            combined[timestamp] = dict(row)
+        pages += 1
+        if oldest <= start_ms:
+            break
+        cursor = oldest
+
+    try:
+        selected = select_exact_trade_interval(
+            tuple(combined.values()),
+            instrument=instrument,
+            start_inclusive=start_inclusive,
+            end_exclusive=end_exclusive,
+        )
+    except C7APublicDataError as exc:
+        raise C7AHistoricalCaptureError(str(exc)) from exc
+    package.retain_normalized_series(
+        series_type="trades",
+        instrument=instrument,
+        start_inclusive=start_inclusive,
+        end_exclusive=end_exclusive,
+        rows=selected,
+    )
+    return selected
 
 
 def capture_mark_range(
@@ -547,12 +691,15 @@ def capture_mark_range(
     fetch_page: PageFetcher = fetch_raw_strict,
     host: str = "www.okx.com",
     max_pages: int = 1000,
+    page_pause_seconds: float = 0.25,
+    sleeper: Sleeper = time.sleep,
 ) -> tuple[dict[str, Any], ...]:
     """Capture complete hourly mark closes by paginating strictly backward."""
     if instrument not in INSTRUMENTS:
         raise C7AHistoricalCaptureError(f"unsupported instrument: {instrument!r}")
     if type(max_pages) is not int or not 1 <= max_pages <= 10_000:
         raise C7AHistoricalCaptureError("max_pages must be an integer from 1 to 10000")
+    pause = _validated_page_pause(page_pause_seconds)
     start_ms = _timestamp_ms(start_inclusive)
     end_ms = _timestamp_ms(end_exclusive)
     if start_ms >= end_ms:
@@ -564,6 +711,8 @@ def capture_mark_range(
     while True:
         if pages >= max_pages:
             raise C7AHistoricalCaptureError("mark pagination exceeded max_pages")
+        if pages and pause:
+            sleeper(pause)
         request = build_mark_price_request(instrument, after_ms=cursor, host=host)
         raw, record = fetch_page(request)
         _retain_response(package, request, raw, record)
@@ -577,7 +726,9 @@ def capture_mark_range(
         oldest = min(_timestamp_ms(row["timestamp"]) for row in rows)
         newest = max(_timestamp_ms(row["timestamp"]) for row in rows)
         if newest >= cursor or oldest >= cursor:
-            raise C7AHistoricalCaptureError("mark pagination did not move strictly older")
+            raise C7AHistoricalCaptureError(
+                "mark pagination did not move strictly older"
+            )
         for row in rows:
             timestamp = str(row["timestamp"])
             if timestamp in combined:
@@ -616,6 +767,8 @@ def capture_funding_downloads(
     start_inclusive: str,
     end_exclusive: str,
     fetch_object: PageFetcher = fetch_raw_strict,
+    download_pause_seconds: float = 0.11,
+    sleeper: Sleeper = time.sleep,
 ) -> dict[str, tuple[dict[str, Any], ...]]:
     """Capture reviewed official funding downloads and select the exact interval."""
     if not specs:
@@ -633,12 +786,15 @@ def capture_funding_downloads(
     rows_by_instrument: dict[str, dict[str, dict[str, str]]] = {
         instrument: {} for instrument in INSTRUMENTS
     }
-    for spec in specs:
+    pause = _validated_page_pause(download_pause_seconds)
+    for index, spec in enumerate(specs):
+        if index and pause:
+            sleeper(pause)
         request = spec.request()
         raw, record = fetch_object(request)
         _retain_response(package, request, raw, record)
         try:
-            rows = normalize_funding_download_csv(
+            rows = normalize_funding_download(
                 raw,
                 instrument=spec.instrument,
                 column_map=spec.column_map,
@@ -685,3 +841,65 @@ def capture_funding_downloads(
         )
         result[instrument] = selected
     return result
+
+
+def capture_historical_funding_range(
+    package: CapturePackage,
+    *,
+    start_inclusive: str,
+    end_exclusive: str,
+    fetch_manifest: PageFetcher = fetch_raw_strict,
+    fetch_object: PageFetcher = fetch_raw_strict,
+    host: str = "openapi.okx.com",
+    request_pause_seconds: float = 0.11,
+    sleeper: Sleeper = time.sleep,
+) -> dict[str, tuple[dict[str, Any], ...]]:
+    """Discover and capture the complete official monthly funding archive set."""
+    pause = _validated_page_pause(request_pause_seconds)
+    specs: list[FundingDownloadSpec] = []
+    manifest_count = 0
+    for instrument in INSTRUMENTS:
+        try:
+            requests = build_historical_funding_manifest_requests(
+                instrument,
+                start_inclusive=start_inclusive,
+                end_exclusive=end_exclusive,
+                host=host,
+            )
+        except C7APublicDataError as exc:
+            raise C7AHistoricalCaptureError(str(exc)) from exc
+        for request in requests:
+            if manifest_count and pause:
+                sleeper(pause)
+            raw, record = fetch_manifest(request)
+            _retain_response(package, request, raw, record)
+            try:
+                payload = parse_json_object(raw)
+                query = dict(parse_qsl(urlparse(request.url).query))
+                discovered = normalize_historical_funding_manifest(
+                    payload,
+                    instrument=instrument,
+                    start_inclusive=query["begin"],
+                    end_exclusive=str(int(query["end"]) + 1),
+                )
+            except (KeyError, ValueError, C7APublicDataError) as exc:
+                raise C7AHistoricalCaptureError(str(exc)) from exc
+            specs.extend(
+                FundingDownloadSpec(
+                    request_id=item["request_id"],
+                    instrument=item["instrument"],
+                    url=item["url"],
+                    column_map=FUNDING_ARCHIVE_COLUMNS,
+                )
+                for item in discovered
+            )
+            manifest_count += 1
+    return capture_funding_downloads(
+        package,
+        specs=tuple(specs),
+        start_inclusive=start_inclusive,
+        end_exclusive=end_exclusive,
+        fetch_object=fetch_object,
+        download_pause_seconds=pause,
+        sleeper=sleeper,
+    )

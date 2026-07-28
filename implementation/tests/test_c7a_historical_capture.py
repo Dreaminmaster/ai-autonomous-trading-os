@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import zipfile
 from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlparse, urlunparse
 
@@ -13,7 +15,9 @@ from atos.c7a_historical_capture import (
     CaptureRecord,
     FundingDownloadSpec,
     capture_funding_downloads,
+    capture_historical_funding_range,
     capture_mark_range,
+    capture_trade_range,
     fetch_raw_strict,
     h1_h5_capture_plan,
 )
@@ -31,6 +35,21 @@ def _mark_row(ts: int, close: str) -> list[str]:
     return [str(ts), str(value), str(value + 1), str(value - 1), close, "1"]
 
 
+def _trade_row(ts: int, close: str) -> list[str]:
+    value = int(close)
+    return [
+        str(ts),
+        str(value),
+        str(value + 1),
+        str(value - 1),
+        close,
+        "1",
+        "1",
+        close,
+        "1",
+    ]
+
+
 def _record(request, raw: bytes, *, final_url: str | None = None) -> CaptureRecord:
     return CaptureRecord(
         request_id=request.request_id,
@@ -39,9 +58,7 @@ def _record(request, raw: bytes, *, final_url: str | None = None) -> CaptureReco
         final_url=final_url or request.url,
         collected_at="2026-07-28T00:00:00Z",
         media_type=(
-            "application/json"
-            if request.source_family.endswith("_API")
-            else "text/csv"
+            "application/json" if request.source_family.endswith("_API") else "text/csv"
         ),
         size=len(raw),
         sha256=hashlib.sha256(raw).hexdigest(),
@@ -125,6 +142,8 @@ def test_capture_package_is_no_overwrite_and_manifested(tmp_path) -> None:
         "instruments": [BTC, ETH],
         "funding_start_inclusive": "2024-01-01T00:00:00Z",
         "mark_start_inclusive": "2023-12-31T23:00:00Z",
+        "trade_start_inclusive": "2024-01-01T00:00:00Z",
+        "trade_end_exclusive": "2024-01-02T01:00:00Z",
         "scored_end_exclusive": "2024-01-02T00:00:00Z",
     }
     with pytest.raises(C7AHistoricalCaptureError, match="normalized series"):
@@ -142,6 +161,13 @@ def test_capture_package_is_no_overwrite_and_manifested(tmp_path) -> None:
             rows=({"timestamp": "2023-12-31T23:00:00Z", "close": "1"},),
         )
         package.retain_normalized_series(
+            series_type="trades",
+            instrument=instrument,
+            start_inclusive=capture_plan["trade_start_inclusive"],
+            end_exclusive=capture_plan["trade_end_exclusive"],
+            rows=({"timestamp": "2024-01-01T00:00:00Z", "open": "1"},),
+        )
+        package.retain_normalized_series(
             series_type="funding",
             instrument=instrument,
             start_inclusive=capture_plan["funding_start_inclusive"],
@@ -153,7 +179,7 @@ def test_capture_package_is_no_overwrite_and_manifested(tmp_path) -> None:
         capture_plan=capture_plan,
     )
     assert manifest["stage"] == "C7A_HISTORICAL_CAPTURE_PACKAGE"
-    assert manifest["file_count"] == 6
+    assert manifest["file_count"] == 8
     assert (tmp_path / "capture" / "capture_index.json").is_file()
     assert (tmp_path / "capture" / "manifest.json").is_file()
     with pytest.raises(C7AHistoricalCaptureError, match="finalized"):
@@ -166,8 +192,46 @@ def test_h1_h5_capture_plan_is_exact_and_pooled() -> None:
         "instruments": [BTC, ETH],
         "funding_start_inclusive": "2023-12-04T00:00:00Z",
         "mark_start_inclusive": "2023-12-03T23:00:00Z",
+        "trade_start_inclusive": "2023-12-04T00:00:00Z",
+        "trade_end_exclusive": "2026-06-29T01:00:00Z",
         "scored_end_exclusive": "2026-06-29T00:00:00Z",
     }
+
+
+def test_trade_capture_paginates_strictly_backward_and_preserves_execution_open(
+    tmp_path,
+) -> None:
+    package = CapturePackage(tmp_path / "trades")
+    pages = {
+        T0 + 4 * HOUR: [
+            _trade_row(T0 + 3 * HOUR, "103"),
+            _trade_row(T0 + 2 * HOUR, "102"),
+        ],
+        T0 + 2 * HOUR: [
+            _trade_row(T0 + HOUR, "101"),
+            _trade_row(T0, "100"),
+        ],
+    }
+
+    def fetch_page(request):
+        cursor = int(parse_qs(urlparse(request.url).query)["after"][0])
+        raw = json.dumps({"code": "0", "msg": "", "data": pages[cursor]}).encode()
+        return raw, _record(request, raw)
+
+    pauses = []
+    selected = capture_trade_range(
+        package,
+        instrument=ETH,
+        start_inclusive="2024-01-01T00:00:00Z",
+        end_exclusive="2024-01-01T04:00:00Z",
+        fetch_page=fetch_page,
+        max_pages=2,
+        sleeper=pauses.append,
+    )
+    assert [row["open"] for row in selected] == ["100", "101", "102", "103"]
+    assert len(package.records) == 2
+    assert pauses == [0.11]
+    assert (tmp_path / "trades" / "normalized" / "trades" / f"{ETH}.json").is_file()
 
 
 def test_mark_capture_paginates_strictly_backward_and_selects_every_hour(
@@ -190,6 +254,7 @@ def test_mark_capture_paginates_strictly_backward_and_selects_every_hour(
         raw = json.dumps({"code": "0", "msg": "", "data": pages[cursor]}).encode()
         return raw, _record(request, raw)
 
+    pauses = []
     selected = capture_mark_range(
         package,
         instrument=BTC,
@@ -197,9 +262,11 @@ def test_mark_capture_paginates_strictly_backward_and_selects_every_hour(
         end_exclusive="2024-01-01T04:00:00Z",
         fetch_page=fetch_page,
         max_pages=2,
+        sleeper=pauses.append,
     )
     assert [row["close"] for row in selected] == ["100", "101", "102", "103"]
     assert len(package.records) == 2
+    assert pauses == [0.25]
     assert (tmp_path / "marks" / "normalized" / "marks" / f"{BTC}.json").is_file()
 
 
@@ -210,9 +277,7 @@ def test_mark_capture_rejects_no_progress_and_transport_provenance_drift(
 
     def no_progress(request):
         cursor = int(parse_qs(urlparse(request.url).query)["after"][0])
-        raw = json.dumps(
-            {"code": "0", "data": [_mark_row(cursor, "100")]}
-        ).encode()
+        raw = json.dumps({"code": "0", "data": [_mark_row(cursor, "100")]}).encode()
         return raw, _record(request, raw)
 
     with pytest.raises(C7AHistoricalCaptureError, match="strictly older"):
@@ -227,9 +292,7 @@ def test_mark_capture_rejects_no_progress_and_transport_provenance_drift(
     package2 = CapturePackage(tmp_path / "bad-provenance")
 
     def wrong_request(request):
-        raw = json.dumps(
-            {"code": "0", "data": [_mark_row(T0, "100")]}
-        ).encode()
+        raw = json.dumps({"code": "0", "data": [_mark_row(T0, "100")]}).encode()
         other = build_mark_price_request(ETH, after_ms=T0 + HOUR)
         return raw, _record(other, raw)
 
@@ -240,6 +303,18 @@ def test_mark_capture_rejects_no_progress_and_transport_provenance_drift(
             start_inclusive="2024-01-01T00:00:00Z",
             end_exclusive="2024-01-01T01:00:00Z",
             fetch_page=wrong_request,
+        )
+
+
+def test_paginated_capture_rejects_unsafe_pause_configuration(tmp_path) -> None:
+    package = CapturePackage(tmp_path / "bad-pause")
+    with pytest.raises(C7AHistoricalCaptureError, match="page pause"):
+        capture_trade_range(
+            package,
+            instrument=BTC,
+            start_inclusive="2024-01-01T00:00:00Z",
+            end_exclusive="2024-01-01T01:00:00Z",
+            page_pause_seconds=True,
         )
 
 
@@ -301,6 +376,94 @@ def test_funding_download_capture_requires_both_instruments_and_exact_interval(
     assert len(package.records) == 2
 
 
+def test_historical_funding_capture_discovers_retains_and_normalizes_zips(
+    tmp_path,
+) -> None:
+    package = CapturePackage(tmp_path / "funding-discovery")
+    months = ((T0 - 8 * HOUR, "2024-01"), (1_706_716_800_000, "2024-02"))
+
+    def archive_url(instrument: str, label: str) -> str:
+        return (
+            "https://static.okx.com/cdn/okex/traderecords/swaprates/monthly/"
+            f"{label.replace('-', '')}/{instrument}-fundingrates-{label}.zip"
+        )
+
+    def fetch_manifest(request):
+        instrument = BTC if "BTC-USDT" in request.url else ETH
+        family = instrument.removesuffix("-SWAP")
+        raw = json.dumps(
+            {
+                "code": "0",
+                "msg": "",
+                "data": [
+                    {
+                        "ts": str(T0),
+                        "dateAggrType": "monthly",
+                        "totalSizeMB": "1",
+                        "details": [
+                            {
+                                "instId": instrument,
+                                "instFamily": family,
+                                "instType": "SWAP",
+                                "dateRangeStart": str(T0),
+                                "dateRangeEnd": "1709251200000",
+                                "groupSizeMB": "1",
+                                "groupDetails": [
+                                    {
+                                        "dateTs": str(stamp),
+                                        "filename": f"{instrument}-fundingrates-{label}.zip",
+                                        "sizeMB": "1",
+                                        "url": archive_url(instrument, label),
+                                    }
+                                    for stamp, label in months
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ).encode()
+        return raw, _record(request, raw)
+
+    def fetch_object(request):
+        instrument = BTC if request.request_id.startswith("funding-BTC") else ETH
+        label = (
+            request.request_id.rsplit("-", 2)[-2]
+            + "-"
+            + request.request_id.rsplit("-", 1)[-1]
+        )
+        month_start = {
+            "2024-01": T0,
+            "2024-02": 1_706_745_600_000,
+        }[label]
+        month_end = 1_706_745_600_000 if label == "2024-01" else 1_709_251_200_000
+        csv_raw = (
+            "instrument_name,funding_time,funding_rate\n"
+            + "".join(
+                f"{instrument},{stamp},0.0001\n"
+                for stamp in range(month_start, month_end, 8 * HOUR)
+            )
+        ).encode()
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(f"{instrument}-fundingrates-{label}.csv", csv_raw)
+        raw = stream.getvalue()
+        return raw, _record(request, raw)
+
+    pauses: list[float] = []
+    result = capture_historical_funding_range(
+        package,
+        start_inclusive="2024-01-01T00:00:00Z",
+        end_exclusive="2024-03-01T00:00:00Z",
+        fetch_manifest=fetch_manifest,
+        fetch_object=fetch_object,
+        sleeper=pauses.append,
+    )
+    assert len(result[BTC]) == len(result[ETH]) == 180
+    assert len(package.records) == 6
+    assert pauses == [0.11, 0.11, 0.11, 0.11]
+
+
 @pytest.mark.parametrize(
     "offsets,message",
     [
@@ -331,8 +494,7 @@ def test_funding_download_capture_rejects_missing_settlement_gap(
         raw = (
             "inst,ts,rate\n"
             + "".join(
-                f"{instrument},{T0 + offset * HOUR},0.0001\n"
-                for offset in offsets
+                f"{instrument},{T0 + offset * HOUR},0.0001\n" for offset in offsets
             )
         ).encode()
         return raw, _record(request, raw)
@@ -356,19 +518,31 @@ def test_funding_download_capture_rejects_duplicate_settlement_across_files(
             request_id="btc-a",
             instrument=BTC,
             url="https://static.okx.com/cdn/history/btc-a.csv",
-            column_map={"instrument": "inst", "funding_time": "ts", "realized_rate": "rate"},
+            column_map={
+                "instrument": "inst",
+                "funding_time": "ts",
+                "realized_rate": "rate",
+            },
         ),
         FundingDownloadSpec(
             request_id="btc-b",
             instrument=BTC,
             url="https://static.okx.com/cdn/history/btc-b.csv",
-            column_map={"instrument": "inst", "funding_time": "ts", "realized_rate": "rate"},
+            column_map={
+                "instrument": "inst",
+                "funding_time": "ts",
+                "realized_rate": "rate",
+            },
         ),
         FundingDownloadSpec(
             request_id="eth-a",
             instrument=ETH,
             url="https://static.okx.com/cdn/history/eth-a.csv",
-            column_map={"instrument": "inst", "funding_time": "ts", "realized_rate": "rate"},
+            column_map={
+                "instrument": "inst",
+                "funding_time": "ts",
+                "realized_rate": "rate",
+            },
         ),
     ]
 
