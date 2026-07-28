@@ -36,7 +36,12 @@ scan_pattern() {
         "$REPO_ROOT/prompts" \
         "$REPO_ROOT/docs"; do
         if [ -d "$scan_dir" ]; then
-            MATCHES=$(grep -rnE "$pattern" "$scan_dir" 2>/dev/null | grep -vE '(\.example\.|\.sample\.|\.schema\.json|README|\.git|validate_no_secrets)' || true)
+            MATCHES=$(grep -rnIE \
+                --exclude='*.pyc' \
+                --exclude-dir='__pycache__' \
+                "$pattern" "$scan_dir" 2>/dev/null \
+                | grep -vE '(\.example\.|\.sample\.|\.schema\.json|README|\.git|validate_no_secrets)' \
+                || true)
             if [ -n "$MATCHES" ]; then
                 echo "  POTENTIAL LEAK: $pattern"
                 echo "$MATCHES" | head -3
