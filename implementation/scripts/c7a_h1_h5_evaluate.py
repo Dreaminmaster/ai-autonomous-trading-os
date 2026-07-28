@@ -57,7 +57,7 @@ def cli() -> int:
     """Emit data, implementation, and economic outcomes as separate states."""
     try:
         return main()
-    except (C7AHistoricalEvidenceError, C7AHistoricalReplayError) as exc:
+    except C7AHistoricalEvidenceError as exc:
         print(
             json.dumps(
                 {
@@ -71,7 +71,7 @@ def cli() -> int:
             file=sys.stderr,
         )
         return 2
-    except C7AHistoricalRunGuardError as exc:
+    except (C7AHistoricalReplayError, C7AHistoricalRunGuardError) as exc:
         print(
             json.dumps(
                 {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from datetime import UTC, datetime, timedelta
 
@@ -16,7 +17,9 @@ from atos.c7a_historical_evidence import (
     C7AHistoricalEvidenceError,
     build_h1_h5_evidence_package,
 )
+from atos.c7a_historical_replay import C7AHistoricalReplayError
 from atos.c7a_okx_public_data import build_mark_price_request
+from scripts import c7a_h1_h5_evaluate
 
 BTC, ETH = INSTRUMENTS
 SHA = "b" * 40
@@ -183,3 +186,28 @@ def test_capture_symlink_fails_before_any_research_read(tmp_path) -> None:
             authoritative_run_id="symlink-must-fail",
             evaluation_checkout_binding=_binding(),
         )
+
+
+@pytest.mark.parametrize(
+    ("error", "classification", "return_code"),
+    (
+        (C7AHistoricalEvidenceError("capture hash mismatch"), "DATA_FAILURE", 2),
+        (
+            C7AHistoricalReplayError("reconciliation mismatch"),
+            "IMPLEMENTATION_FAILURE",
+            3,
+        ),
+    ),
+)
+def test_evaluation_cli_distinguishes_data_and_implementation_failures(
+    monkeypatch, capsys, error, classification, return_code
+) -> None:
+    def fail() -> int:
+        raise error
+
+    monkeypatch.setattr(c7a_h1_h5_evaluate, "main", fail)
+    assert c7a_h1_h5_evaluate.cli() == return_code
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["status"] == "FAIL"
+    assert payload["classification"] == classification
+    assert payload["live_state"] == "LIVE_FORBIDDEN"
