@@ -254,6 +254,7 @@ def test_mark_capture_paginates_strictly_backward_and_selects_every_hour(
         raw = json.dumps({"code": "0", "msg": "", "data": pages[cursor]}).encode()
         return raw, _record(request, raw)
 
+    pauses = []
     selected = capture_mark_range(
         package,
         instrument=BTC,
@@ -261,9 +262,11 @@ def test_mark_capture_paginates_strictly_backward_and_selects_every_hour(
         end_exclusive="2024-01-01T04:00:00Z",
         fetch_page=fetch_page,
         max_pages=2,
+        sleeper=pauses.append,
     )
     assert [row["close"] for row in selected] == ["100", "101", "102", "103"]
     assert len(package.records) == 2
+    assert pauses == [0.25]
     assert (tmp_path / "marks" / "normalized" / "marks" / f"{BTC}.json").is_file()
 
 

@@ -691,7 +691,7 @@ def capture_mark_range(
     fetch_page: PageFetcher = fetch_raw_strict,
     host: str = "www.okx.com",
     max_pages: int = 1000,
-    page_pause_seconds: float = 0.11,
+    page_pause_seconds: float = 0.25,
     sleeper: Sleeper = time.sleep,
 ) -> tuple[dict[str, Any], ...]:
     """Capture complete hourly mark closes by paginating strictly backward."""
