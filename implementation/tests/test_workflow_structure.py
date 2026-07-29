@@ -13,6 +13,13 @@ def test_yaml_parse(wf): assert wf is not None
 def test_workflow_dispatch_exists(wf):
     assert True in wf.get("on",{}) or "workflow_dispatch" in str(wf.get("on",{})) or wf.get("on") is None or "workflow_dispatch" in open(WORKFLOW_PATH).read()
 
+def test_completed_c7a_authoritative_run_cannot_be_dispatched_again(wf):
+    raw = open(WORKFLOW_PATH).read()
+    assert "c7a-h1-h5-authoritative" not in wf.get("jobs", {})
+    assert "c7a_h1_h5_authoritative" not in raw
+    assert "scripts/c7a_h1_h5_capture.py" not in raw
+    assert "scripts/c7a_h1_h5_evaluate.py" not in raw
+
 def test_atos_tests_job(wf):
     assert "atos-tests" in wf.get("jobs",{})
 
@@ -119,4 +126,3 @@ def test_validation_summary_upload():
     val = [u for u in uploads if u.get('with',{}).get('name')=='validation-summary']
     assert len(val)==1, f'validation-summary upload missing: found {len(val)}'
     assert val[0]['with']['if-no-files-found']=='error'
-
