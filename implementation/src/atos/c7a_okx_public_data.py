@@ -131,10 +131,16 @@ class RawObject:
         return asdict(self)
 
 
-def _exact_decimal(value: Any, label: str, *, positive: bool = False) -> str:
+def _exact_decimal(
+    value: Any,
+    label: str,
+    *,
+    positive: bool = False,
+    allow_exponent: bool = False,
+) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise C7APublicDataError(f"{label} must be a non-empty exact decimal string")
-    if "e" in value.lower():
+    if not allow_exponent and "e" in value.lower():
         raise C7APublicDataError(f"{label} must not use exponent notation")
     try:
         parsed = Decimal(value)
@@ -914,6 +920,7 @@ def _normalize_funding_records(
         realized = _exact_decimal(
             row.get("realizedRate"),
             f"funding row {index} realized rate",
+            allow_exponent=True,
         )
         if not math.isfinite(float(realized)):
             raise C7APublicDataError("non-finite normalized funding rate")
