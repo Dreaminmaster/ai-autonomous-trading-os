@@ -364,6 +364,25 @@ def test_funding_scientific_support_still_rejects_non_finite_values(
         )
 
 
+@pytest.mark.parametrize("unsafe_rate", ["1E+129", "1E-129", "0E-129"])
+def test_funding_scientific_support_rejects_format_expansion_dos(
+    unsafe_rate: str,
+) -> None:
+    with pytest.raises(C7APublicDataError, match="exponent exceeds canonical bounds"):
+        normalize_funding_api_payload(
+            {"code": "0", "data": [_funding_row(T0, unsafe_rate)]},
+            instrument=BTC,
+        )
+
+
+def test_exact_decimal_input_length_is_bounded() -> None:
+    with pytest.raises(C7APublicDataError, match="exact decimal text is too long"):
+        normalize_mark_price_payload(
+            {"code": "0", "data": [_mark_row(T0, "1" * 129)]},
+            instrument=BTC,
+        )
+
+
 def test_candle_values_still_reject_exponent_notation() -> None:
     with pytest.raises(C7APublicDataError, match="must not use exponent notation"):
         normalize_mark_price_payload(
