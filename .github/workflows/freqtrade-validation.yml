@@ -140,7 +140,7 @@ jobs:
           print('Pair format validated.')
           " 2>&1 | tee pair_format_check.log
       - name: Strategy Fix Round 1 (canonical)
-        timeout-minutes: 120
+        timeout-minutes: 180
         run: |
           cd implementation
           mkdir -p validation_reports
