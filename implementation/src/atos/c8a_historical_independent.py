@@ -316,6 +316,512 @@ def _expected_risk_close_time(stamp: datetime) -> datetime:
     return floor if floor == stamp else floor + HOUR
 
 
+def _iso(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _deep_match(expected: Any, observed: Any) -> bool:
+    """Compare a source-derived reference structure with retained evidence."""
+    if isinstance(expected, bool) or isinstance(observed, bool):
+        return expected is observed
+    if isinstance(expected, (int, float)):
+        try:
+            return _close(expected, observed)
+        except C8AHistoricalIndependentError:
+            return False
+    if isinstance(expected, Mapping):
+        return (
+            isinstance(observed, Mapping)
+            and set(expected) == set(observed)
+            and all(_deep_match(value, observed[key]) for key, value in expected.items())
+        )
+    if isinstance(expected, (list, tuple)):
+        return (
+            isinstance(observed, (list, tuple))
+            and len(expected) == len(observed)
+            and all(
+                _deep_match(left, right)
+                for left, right in zip(expected, observed, strict=True)
+            )
+        )
+    return expected == observed
+
+
+def _reference_post_cost_targets(
+    equity_before: float,
+    current_values: Mapping[str, float],
+    directions: Mapping[str, int],
+    fee_rate: float,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Solve the frozen post-cost target equation without production imports."""
+    weights = {
+        instrument: int(directions[instrument]) * TARGET_ABS_WEIGHT
+        for instrument in INSTRUMENTS
+    }
+
+    def residual(after: float) -> float:
+        traded = sum(
+            abs(weights[instrument] * after - current_values[instrument])
+            for instrument in INSTRUMENTS
+        )
+        return after + fee_rate * traded - equity_before
+
+    low, high = 0.0, equity_before
+    if residual(low) > 1e-12 or residual(high) < -1e-12:
+        raise C8AHistoricalIndependentError("reference rebalance root is not bracketed")
+    for _ in range(200):
+        middle = (low + high) / 2.0
+        value = residual(middle)
+        if abs(value) <= 1e-13:
+            low = high = middle
+            break
+        if value > 0:
+            high = middle
+        else:
+            low = middle
+    after = (low + high) / 2.0
+    targets = {
+        instrument: weights[instrument] * after for instrument in INSTRUMENTS
+    }
+    fees = {
+        instrument: fee_rate
+        * abs(targets[instrument] - current_values[instrument])
+        for instrument in INSTRUMENTS
+    }
+    return targets, fees
+
+
+def _reference_state_replay(
+    *,
+    policy: str,
+    cost_label: str,
+    signals: Sequence[Mapping[str, Any]],
+    marks: Mapping[str, Mapping[datetime, float]],
+    trades: Mapping[str, Mapping[datetime, float]],
+    funding: Mapping[str, Mapping[datetime, float]],
+    window_id: str,
+) -> dict[str, Any]:
+    """Rebuild the full ordered accounting path directly from retained sources.
+
+    This deliberately does not consume producer event values.  It closes the
+    gap where individually valid events could previously be paired with a
+    fabricated equity path, weekly return series, margin path, or drawdown.
+    """
+    if cost_label not in COST_RATES:
+        raise C8AHistoricalIndependentError("unknown reference cost label")
+    fee_rate = COST_RATES[cost_label]
+    window = window_by_id(window_id)
+    decisions = decision_times(window_id)
+    if len(signals) != len(decisions):
+        raise C8AHistoricalIndependentError("reference signal count drift")
+
+    states: dict[str, dict[str, Any]] = {
+        instrument: {
+            "quantity": 0.0,
+            "last_price": None,
+            "sleeve_equity": 0.5,
+            "locked_until": None,
+            "pending_breach": False,
+            "minimum_buffer": math.inf,
+        }
+        for instrument in INSTRUMENTS
+    }
+    components = {
+        instrument: {"price_pnl": 0.0, "funding_pnl": 0.0, "costs": 0.0}
+        for instrument in INSTRUMENTS
+    }
+    trade_events: list[dict[str, Any]] = []
+    price_events: list[dict[str, Any]] = []
+    funding_events: list[dict[str, Any]] = []
+    risk_events: list[dict[str, Any]] = []
+    hourly_equity: list[dict[str, Any]] = []
+    weekly_returns: list[float] = []
+    weekly_contributions: list[float] = []
+    weekly_equity: list[dict[str, Any]] = []
+    complete_equity_path = [1.0]
+    turnover_ratios: list[float] = []
+    requested_directions: list[dict[str, int]] = []
+    executed_directions: list[dict[str, int]] = []
+    prior_requested = {instrument: 0 for instrument in INSTRUMENTS}
+    reversals = 0
+    accounted_funding: set[tuple[str, datetime]] = set()
+    funding_by_open: dict[str, dict[datetime, list[tuple[datetime, float]]]] = {
+        instrument: {} for instrument in INSTRUMENTS
+    }
+    for instrument in INSTRUMENTS:
+        for stamp, rate in funding[instrument].items():
+            bucket = stamp.replace(minute=0, second=0, microsecond=0)
+            if bucket != stamp:
+                bucket += HOUR
+            funding_by_open[instrument].setdefault(bucket, []).append((stamp, rate))
+
+    def total_equity() -> float:
+        value = sum(float(states[item]["sleeve_equity"]) for item in INSTRUMENTS)
+        if not math.isfinite(value) or value <= 0:
+            raise C8AHistoricalIndependentError("reference equity became invalid")
+        return value
+
+    def append_equity() -> None:
+        complete_equity_path.append(total_equity())
+
+    def accrue_to_open(stamp: datetime) -> None:
+        for instrument in INSTRUMENTS:
+            state = states[instrument]
+            quantity = float(state["quantity"])
+            opening = trades[instrument][stamp]
+            last_price = state["last_price"]
+            if quantity and last_price is not None:
+                pnl = quantity * (opening - float(last_price))
+                state["sleeve_equity"] = float(state["sleeve_equity"]) + pnl
+                components[instrument]["price_pnl"] += pnl
+                price_events.append(
+                    {
+                        "timestamp": _iso(stamp),
+                        "instrument": instrument,
+                        "destination_kind": "TRADE_OPEN",
+                        "quantity": quantity,
+                        "from_price": float(last_price),
+                        "to_price": opening,
+                        "price_pnl": pnl,
+                    }
+                )
+            state["last_price"] = opening
+        append_equity()
+
+    def check_buffer(instrument: str, stamp: datetime, mark: float) -> None:
+        state = states[instrument]
+        quantity = float(state["quantity"])
+        if not quantity:
+            return
+        buffer = float(state["sleeve_equity"]) / abs(quantity * mark)
+        state["minimum_buffer"] = min(float(state["minimum_buffer"]), buffer)
+        if buffer < MINIMUM_SLEEVE_BUFFER and not state["pending_breach"]:
+            state["pending_breach"] = True
+            risk_events.append(
+                {
+                    "breach_timestamp": _iso(stamp),
+                    "instrument": instrument,
+                    "buffer": buffer,
+                }
+            )
+
+    def apply_funding(instrument: str, stamp: datetime, rate: float) -> None:
+        key = (instrument, stamp)
+        if key in accounted_funding:
+            raise C8AHistoricalIndependentError("reference funding duplicated")
+        predecessor_stamp = (stamp - HOUR).replace(
+            minute=0, second=0, microsecond=0
+        )
+        predecessor = marks[instrument][predecessor_stamp]
+        state = states[instrument]
+        quantity = float(state["quantity"])
+        signed_notional = quantity * predecessor
+        pnl = -signed_notional * rate
+        state["sleeve_equity"] = float(state["sleeve_equity"]) + pnl
+        components[instrument]["funding_pnl"] += pnl
+        accounted_funding.add(key)
+        funding_events.append(
+            {
+                "timestamp": _iso(stamp),
+                "instrument": instrument,
+                "rate": rate,
+                "predecessor_mark_timestamp": _iso(predecessor_stamp),
+                "predecessor_mark_close_time": _iso(predecessor_stamp + HOUR),
+                "predecessor_mark": predecessor,
+                "quantity": quantity,
+                "signed_mark_notional": signed_notional,
+                "funding_pnl": pnl,
+                "buffer_after": (
+                    float(state["sleeve_equity"]) / abs(signed_notional)
+                    if signed_notional
+                    else None
+                ),
+            }
+        )
+        check_buffer(instrument, stamp, predecessor)
+        append_equity()
+
+    def close_for_risk(instrument: str, stamp: datetime) -> None:
+        state = states[instrument]
+        quantity = float(state["quantity"])
+        if not quantity:
+            state["pending_breach"] = False
+            return
+        equity_before = total_equity()
+        value = quantity * trades[instrument][stamp]
+        fee = fee_rate * abs(value)
+        state["sleeve_equity"] = float(state["sleeve_equity"]) - fee
+        components[instrument]["costs"] += fee
+        turnover_ratios.append(abs(value) / equity_before)
+        state["quantity"] = 0.0
+        state["last_price"] = trades[instrument][stamp]
+        state["pending_breach"] = False
+        future = [decision for decision in decisions if decision > stamp]
+        state["locked_until"] = future[0] if future else window.end_exclusive
+        trade_events.append(
+            {
+                "timestamp": _iso(stamp),
+                "instrument": instrument,
+                "kind": "RISK_CLOSE",
+                "execution_price": trades[instrument][stamp],
+                "equity_before": equity_before,
+                "old_quantity": quantity,
+                "target_quantity": 0.0,
+                "old_signed_notional": value,
+                "target_signed_notional": 0.0,
+                "one_way_notional": abs(value),
+                "cost": fee,
+            }
+        )
+        append_equity()
+
+    for instrument in INSTRUMENTS:
+        rate = funding[instrument].get(window.first_scored_decision)
+        if rate is not None:
+            apply_funding(instrument, window.first_scored_decision, rate)
+
+    for week_index, (decision, signal) in enumerate(
+        zip(decisions, signals, strict=True)
+    ):
+        week_start_equity = total_equity()
+        if policy == "candidate":
+            requested = {
+                instrument: int(signal["directions"][instrument])
+                for instrument in INSTRUMENTS
+            }
+        elif policy == "cash":
+            requested = {instrument: 0 for instrument in INSTRUMENTS}
+        elif policy == "always_long_perpetual":
+            requested = {instrument: 1 for instrument in INSTRUMENTS}
+        else:
+            raise C8AHistoricalIndependentError("unknown reference policy")
+        requested_directions.append(dict(requested))
+        for instrument in INSTRUMENTS:
+            if (
+                requested[instrument]
+                and prior_requested[instrument]
+                and requested[instrument] == -prior_requested[instrument]
+            ):
+                reversals += 1
+            prior_requested[instrument] = requested[instrument]
+        actual = dict(requested)
+        for instrument in INSTRUMENTS:
+            locked = states[instrument]["locked_until"]
+            if locked is not None and decision < locked:
+                actual[instrument] = 0
+            elif locked is not None and decision >= locked:
+                states[instrument]["locked_until"] = None
+        executed_directions.append(dict(actual))
+
+        accrue_to_open(decision)
+        equity_before = total_equity()
+        current = {
+            instrument: float(states[instrument]["quantity"])
+            * trades[instrument][decision]
+            for instrument in INSTRUMENTS
+        }
+        targets, fees = _reference_post_cost_targets(
+            equity_before, current, actual, fee_rate
+        )
+        for instrument in INSTRUMENTS:
+            opening = trades[instrument][decision]
+            traded = abs(targets[instrument] - current[instrument])
+            states[instrument]["sleeve_equity"] = (
+                float(states[instrument]["sleeve_equity"]) - fees[instrument]
+            )
+            components[instrument]["costs"] += fees[instrument]
+            states[instrument]["quantity"] = targets[instrument] / opening
+            states[instrument]["last_price"] = opening
+            turnover_ratios.append(traded / equity_before)
+            trade_events.append(
+                {
+                    "timestamp": _iso(decision),
+                    "instrument": instrument,
+                    "kind": "SCHEDULED_REBALANCE",
+                    "execution_price": opening,
+                    "equity_before": equity_before,
+                    "old_quantity": current[instrument] / opening,
+                    "target_quantity": targets[instrument] / opening,
+                    "requested_direction": requested[instrument],
+                    "executed_direction": actual[instrument],
+                    "old_signed_notional": current[instrument],
+                    "target_signed_notional": targets[instrument],
+                    "one_way_notional": traded,
+                    "cost": fees[instrument],
+                }
+            )
+        append_equity()
+
+        week_end = decision + timedelta(days=7)
+        current_hour = decision
+        while current_hour < week_end:
+            next_hour = current_hour + HOUR
+            for instrument in INSTRUMENTS:
+                for stamp, rate in funding_by_open[instrument].get(next_hour, []):
+                    if current_hour < stamp < next_hour:
+                        apply_funding(instrument, stamp, rate)
+            for instrument in INSTRUMENTS:
+                state = states[instrument]
+                mark = marks[instrument][current_hour]
+                quantity = float(state["quantity"])
+                last_price = state["last_price"]
+                if quantity and last_price is not None:
+                    pnl = quantity * (mark - float(last_price))
+                    state["sleeve_equity"] = float(state["sleeve_equity"]) + pnl
+                    components[instrument]["price_pnl"] += pnl
+                    price_events.append(
+                        {
+                            "timestamp": _iso(next_hour),
+                            "source_timestamp": _iso(current_hour),
+                            "instrument": instrument,
+                            "destination_kind": "MARK_CLOSE",
+                            "quantity": quantity,
+                            "from_price": float(last_price),
+                            "to_price": mark,
+                            "price_pnl": pnl,
+                        }
+                    )
+                state["last_price"] = mark
+                check_buffer(instrument, next_hour, mark)
+            append_equity()
+            hourly_equity.append(
+                {
+                    "timestamp": _iso(next_hour),
+                    "source_timestamp": _iso(current_hour),
+                    "equity": total_equity(),
+                    "sleeves": {
+                        instrument: {
+                            "equity": float(states[instrument]["sleeve_equity"]),
+                            "quantity": float(states[instrument]["quantity"]),
+                            "mark_price": marks[instrument][current_hour],
+                            "signed_mark_notional": float(
+                                states[instrument]["quantity"]
+                            )
+                            * marks[instrument][current_hour],
+                            "buffer": (
+                                float(states[instrument]["sleeve_equity"])
+                                / abs(
+                                    float(states[instrument]["quantity"])
+                                    * marks[instrument][current_hour]
+                                )
+                                if float(states[instrument]["quantity"])
+                                else None
+                            ),
+                        }
+                        for instrument in INSTRUMENTS
+                    },
+                }
+            )
+            for instrument in INSTRUMENTS:
+                for stamp, rate in funding_by_open[instrument].get(next_hour, []):
+                    if stamp == next_hour:
+                        apply_funding(instrument, stamp, rate)
+            accrue_to_open(next_hour)
+            for instrument in INSTRUMENTS:
+                if states[instrument]["pending_breach"]:
+                    close_for_risk(instrument, next_hour)
+            current_hour = next_hour
+
+        if week_index == len(decisions) - 1:
+            for instrument in INSTRUMENTS:
+                state = states[instrument]
+                quantity = float(state["quantity"])
+                value = quantity * trades[instrument][week_end]
+                if quantity:
+                    equity_before = total_equity()
+                    fee = fee_rate * abs(value)
+                    state["sleeve_equity"] = float(state["sleeve_equity"]) - fee
+                    components[instrument]["costs"] += fee
+                    turnover_ratios.append(abs(value) / equity_before)
+                    trade_events.append(
+                        {
+                            "timestamp": _iso(week_end),
+                            "instrument": instrument,
+                            "kind": "TERMINAL_CLOSE",
+                            "execution_price": trades[instrument][week_end],
+                            "equity_before": equity_before,
+                            "old_quantity": quantity,
+                            "target_quantity": 0.0,
+                            "old_signed_notional": value,
+                            "target_signed_notional": 0.0,
+                            "one_way_notional": abs(value),
+                            "cost": fee,
+                        }
+                    )
+                    state["quantity"] = 0.0
+                    state["last_price"] = trades[instrument][week_end]
+                    append_equity()
+        week_end_equity = total_equity()
+        weekly_returns.append(week_end_equity / week_start_equity - 1.0)
+        weekly_contributions.append(week_end_equity - week_start_equity)
+        weekly_equity.append(
+            {
+                "decision_time": _iso(decision),
+                "end_exclusive": _iso(week_end),
+                "start_equity": week_start_equity,
+                "end_equity": week_end_equity,
+                "weekly_return": weekly_returns[-1],
+            }
+        )
+
+    expected_funding = {
+        (instrument, stamp)
+        for instrument in INSTRUMENTS
+        for stamp in funding[instrument]
+        if window.first_scored_decision <= stamp <= window.end_exclusive
+    }
+    if accounted_funding != expected_funding:
+        raise C8AHistoricalIndependentError("reference funding coverage drift")
+    final_equity = total_equity()
+    price_pnl = sum(item["price_pnl"] for item in components.values())
+    funding_pnl = sum(item["funding_pnl"] for item in components.values())
+    costs = sum(item["costs"] for item in components.values())
+    minimum_buffer = min(
+        float(states[instrument]["minimum_buffer"]) for instrument in INSTRUMENTS
+    )
+    return {
+        "initial_equity": 1.0,
+        "final_equity": final_equity,
+        "net_return": final_equity - 1.0,
+        "gross_price_pnl": price_pnl,
+        "funding_pnl": funding_pnl,
+        "costs": costs,
+        "one_way_turnover_ratio": sum(turnover_ratios),
+        "maximum_drawdown": _drawdown(complete_equity_path),
+        "minimum_sleeve_buffer": minimum_buffer
+        if math.isfinite(minimum_buffer)
+        else None,
+        "margin_buffer_breach_count": len(risk_events),
+        "weekly_returns": weekly_returns,
+        "weekly_contributions": weekly_contributions,
+        "weekly_equity": weekly_equity,
+        "instrument_contributions": {
+            instrument: components[instrument]["price_pnl"]
+            + components[instrument]["funding_pnl"]
+            - components[instrument]["costs"]
+            for instrument in INSTRUMENTS
+        },
+        "requested_directions": requested_directions,
+        "executed_directions": executed_directions,
+        "long_direction_count": sum(
+            value > 0 for item in requested_directions for value in item.values()
+        ),
+        "short_direction_count": sum(
+            value < 0 for item in requested_directions for value in item.values()
+        ),
+        "flat_direction_count": sum(
+            value == 0 for item in requested_directions for value in item.values()
+        ),
+        "reversal_count": reversals,
+        "trade_events": trade_events,
+        "price_events": price_events,
+        "funding_events": funding_events,
+        "risk_events": risk_events,
+        "hourly_equity": hourly_equity,
+        "complete_equity_path": complete_equity_path,
+    }
+
+
 def _review_replay(
     replay: Mapping[str, Any],
     *,
@@ -597,6 +1103,22 @@ def _review_replay(
         )
         for instrument in INSTRUMENTS
     )
+    try:
+        reference_state = _reference_state_replay(
+            policy=policy,
+            cost_label=str(label),
+            signals=signals,
+            marks=marks,
+            trades=trades,
+            funding=funding,
+            window_id=window_id,
+        )
+        checks["source_ordered_state_recompute"] = all(
+            _deep_match(expected, replay.get(field))
+            for field, expected in reference_state.items()
+        )
+    except (KeyError, TypeError, C8AHistoricalIndependentError):
+        checks["source_ordered_state_recompute"] = False
     return {"status": "PASS" if all(checks.values()) else "FAIL", "checks": checks}
 
 

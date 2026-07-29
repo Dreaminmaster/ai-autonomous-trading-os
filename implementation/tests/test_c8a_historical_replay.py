@@ -34,9 +34,12 @@ def _hour_rows(
 
 
 def _fixture(
-    *, btc_slope: float = 0.001, eth_slope: float = -0.001
+    *,
+    window_id: str = "H1",
+    btc_slope: float = 0.001,
+    eth_slope: float = -0.001,
 ) -> tuple[dict, dict, dict]:
-    window = window_by_id("H1")
+    window = window_by_id(window_id)
     start = window.first_scored_decision - timedelta(hours=SIGNAL_CLOSE_COUNT + 1)
     slopes = {INSTRUMENTS[0]: btc_slope, INSTRUMENTS[1]: eth_slope}
     marks = {
@@ -299,6 +302,23 @@ def test_reference_recompute_detects_an_omitted_price_transition() -> None:
     )
 
 
+def test_reference_recompute_rejects_a_fabricated_equity_path_and_drawdown() -> None:
+    marks, trades, funding = _fixture()
+    producer = evaluate_historical_window(
+        window_id="H1", mark_rows=marks, trade_rows=trades, funding_rows=funding
+    )
+    replay = producer["replays"]["candidate"]["1.0x"]
+    replay["complete_equity_path"] = [1.0] * len(replay["complete_equity_path"])
+    replay["maximum_drawdown"] = 0.0
+    review = review_historical_window(
+        producer, mark_rows=marks, trade_rows=trades, funding_rows=funding
+    )
+    candidate = review["replay_reviews"]["candidate:1.0x"]
+    assert review["status"] == "FAIL"
+    assert candidate["checks"]["drawdown_recompute"] is True
+    assert candidate["checks"]["source_ordered_state_recompute"] is False
+
+
 def test_reference_recomputes_pooled_gates_and_final_verdict() -> None:
     marks, trades, funding = _fixture()
     window = evaluate_historical_window(
@@ -310,6 +330,33 @@ def test_reference_recomputes_pooled_gates_and_final_verdict() -> None:
     assert review["status"] == "PASS"
     assert review["reference_final_verdict"] == producer["overall_economic_verdict"]
     assert review["imports_production_replay"] is False
+
+
+def test_each_frozen_h1_h5_grid_completes_source_ordered_independent_review() -> None:
+    windows = {}
+    for window_id in ("H1", "H2", "H3", "H4", "H5"):
+        marks, trades, funding = _fixture(window_id=window_id)
+        producer = evaluate_historical_window(
+            window_id=window_id,
+            mark_rows=marks,
+            trade_rows=trades,
+            funding_rows=funding,
+        )
+        independent = review_historical_window(
+            producer, mark_rows=marks, trade_rows=trades, funding_rows=funding
+        )
+        assert producer["decision_count"] == 26
+        assert independent["status"] == "PASS"
+        assert all(
+            value["checks"]["source_ordered_state_recompute"] is True
+            for value in independent["replay_reviews"].values()
+        )
+        windows[window_id] = producer
+    summary = summarize_h1_h5(windows)
+    pooled = review_pooled_summary(summary, windows)
+    assert sum(window["decision_count"] for window in windows.values()) == 130
+    assert pooled["status"] == "PASS"
+    assert pooled["reference_final_verdict"] == summary["overall_economic_verdict"]
 
 
 def test_all_decision_times_are_frozen_mondays() -> None:
