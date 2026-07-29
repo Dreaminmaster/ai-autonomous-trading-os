@@ -60,7 +60,7 @@ The five independent windows are fixed:
 | `H4` | `2025-06-30T00:00:00Z` | `2025-12-29T00:00:00Z` | `26` |
 | `H5` | `2025-12-29T00:00:00Z` | `2026-06-29T00:00:00Z` | `26` |
 
-Required warm-up begins at `2023-12-25T00:00:00Z`. Every window starts from independent normalized equity `1.0`, cash collateral, and no position. No position, equity, signal, fee, funding cash flow, or risk state crosses between windows.
+Required raw mark-candle warm-up begins at `2023-12-24T22:00:00Z`. OKX candle `ts` is the candle opening time: the 169 source rows from `t - 170 hours` through `t - 2 hours` close from `t - 169 hours` through `t - 1 hour`. This pre-data correction supersedes the earlier prose boundary and prevents treating the candle stamped `t - 1 hour`, which closes at `t`, as decision-time information. Trade and funding custody begins at `2024-01-01T00:00:00Z`. Every window starts from independent normalized equity `1.0`, cash collateral, and no position. No position, equity, signal, fee, funding cash flow, or risk state crosses between windows.
 
 H1–H5 must be captured and evaluated together exactly once after implementation is frozen. Best-window selection, partial-window publication before the final classification, and rerunning after economic inspection are forbidden.
 
@@ -124,7 +124,7 @@ A decision occurs every Monday at `00:00:00Z`.
 
 At decision time `t`, the latest permissible mark candle must have closed strictly before `t`. The candle whose close occurs exactly at `t` is not usable. The latest signal endpoint is therefore the close at `t - 1 hour`.
 
-For instrument `i`, retain exactly the `169` consecutive hourly mark closes whose close times run from `t - 7 days - 1 hour` through `t - 1 hour`, inclusive. Define:
+For instrument `i`, retain exactly the `169` consecutive hourly mark closes whose close times run from `t - 7 days - 1 hour` through `t - 1 hour`, inclusive. In retained OKX source-row identity, those candles have opening timestamps from `t - 170 hours` through `t - 2 hours`; source `ts` is never mislabeled as close time. Define:
 
 ```text
 momentum_7d_i(t)

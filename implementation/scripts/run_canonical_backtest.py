@@ -18,8 +18,12 @@ import time
 import zipfile
 from pathlib import Path
 
-from atos.lookahead_parser import parse_lookahead_result
+from atos.freqtrade_timeout_policy import (
+    BACKTEST_TIMEOUT_SECONDS,
+    LOOKAHEAD_TIMEOUT_SECONDS,
+)
 from atos.lookahead_decision import decide_lookahead
+from atos.lookahead_parser import parse_lookahead_result
 
 IMPL_DIR = Path(__file__).resolve().parents[1]
 os.chdir(IMPL_DIR)
@@ -76,7 +80,7 @@ result = subprocess.run([
     "--cache", "none",
     "--export", "trades",
     "--pairs", "BTC/USDT",
-], capture_output=True, text=True, timeout=900, env=env)
+], capture_output=True, text=True, timeout=BACKTEST_TIMEOUT_SECONDS, env=env)
 
 elapsed = time.time() - t0
 log_path.write_text(result.stdout + "\n" + result.stderr)
@@ -290,7 +294,7 @@ if os.environ.get("RUN_LOOKAHEAD", "") == "1":
         "--datadir", str(Path("freqtrade_data/data/okx").resolve()),
         "--timerange", timerange,
         "--pairs", "BTC/USDT",
-    ], capture_output=True, text=True, timeout=2100, env=env)
+    ], capture_output=True, text=True, timeout=LOOKAHEAD_TIMEOUT_SECONDS, env=env)
     la_text = la_result.stdout + "\n" + la_result.stderr
     la_log.write_text(la_text)
 

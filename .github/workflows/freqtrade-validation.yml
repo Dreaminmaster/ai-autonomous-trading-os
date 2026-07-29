@@ -16,6 +16,16 @@ on:
       - '!implementation/tests/test_c6a_source_authority*.py'
       - '!implementation/scripts/run_c6a_source_authority_gate.py'
   workflow_dispatch:
+    inputs:
+      c8a_h1_h5_authoritative:
+        description: 'Run the single frozen C8A official-public H1-H5 classification'
+        required: true
+        type: boolean
+        default: false
+      c8a_implementation_sha:
+        description: 'Exact reviewed 40-character C8A implementation SHA'
+        required: false
+        type: string
 
 jobs:
   atos-tests:
@@ -130,7 +140,7 @@ jobs:
           print('Pair format validated.')
           " 2>&1 | tee pair_format_check.log
       - name: Strategy Fix Round 1 (canonical)
-        timeout-minutes: 120
+        timeout-minutes: 180
         run: |
           cd implementation
           mkdir -p validation_reports
@@ -214,3 +224,113 @@ jobs:
             implementation/validation_summary.json
             implementation/validation_summary.md
           if-no-files-found: error
+
+  c8a-h1-h5-authoritative:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.c8a_h1_h5_authoritative == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - name: Validate exact implementation SHA input
+        env:
+          IMPLEMENTATION_SHA: ${{ inputs.c8a_implementation_sha }}
+        run: |
+          python - <<'PY'
+          import os, re
+          value = os.environ.get("IMPLEMENTATION_SHA", "")
+          if re.fullmatch(r"[0-9a-f]{40}", value) is None:
+              raise SystemExit("c8a_implementation_sha must be an exact lowercase 40-character SHA")
+          PY
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.c8a_implementation_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install reviewed C8A implementation
+        run: |
+          cd implementation
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+      - name: Capture official-public OKX H1-H5 data
+        id: c8a_capture
+        continue-on-error: true
+        env:
+          IMPLEMENTATION_SHA: ${{ inputs.c8a_implementation_sha }}
+        run: |
+          cd implementation
+          set +e
+          set -o pipefail
+          python scripts/c8a_h1_h5_capture.py \
+            --output c8a_authoritative/capture \
+            --implementation-sha "${IMPLEMENTATION_SHA}" \
+            2>&1 | tee c8a_capture.log
+          status=${PIPESTATUS[0]}
+          printf '%s\n' "${status}" > c8a_capture_exit_code.txt
+          exit "${status}"
+      - name: Evaluate frozen C8A economics and independent recomputation
+        id: c8a_evaluate
+        if: steps.c8a_capture.outcome == 'success'
+        continue-on-error: true
+        env:
+          IMPLEMENTATION_SHA: ${{ inputs.c8a_implementation_sha }}
+        run: |
+          cd implementation
+          set +e
+          set -o pipefail
+          python scripts/c8a_h1_h5_evaluate.py \
+            --capture c8a_authoritative/capture \
+            --output c8a_authoritative/evidence \
+            --implementation-sha "${IMPLEMENTATION_SHA}" \
+            --authoritative-run-id "${GITHUB_RUN_ID}" \
+            2>&1 | tee c8a_evaluate.log
+          status=${PIPESTATUS[0]}
+          printf '%s\n' "${status}" > c8a_evaluate_exit_code.txt
+          exit "${status}"
+      - name: Upload immutable C8A authority evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c8a-h1-h5-authoritative-${{ github.run_id }}
+          path: |
+            implementation/c8a_capture.log
+            implementation/c8a_capture_exit_code.txt
+            implementation/c8a_evaluate.log
+            implementation/c8a_evaluate_exit_code.txt
+            implementation/c8a_authoritative/capture
+            implementation/c8a_authoritative/evidence
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Enforce explicit final classification
+        if: always()
+        env:
+          CAPTURE_OUTCOME: ${{ steps.c8a_capture.outcome }}
+          EVALUATE_OUTCOME: ${{ steps.c8a_evaluate.outcome }}
+        run: |
+          cd implementation
+          python - <<'PY'
+          import json, os, pathlib
+          def exit_code(name):
+              path = pathlib.Path(name)
+              return int(path.read_text().strip()) if path.is_file() else None
+          capture_code = exit_code("c8a_capture_exit_code.txt")
+          evaluate_code = exit_code("c8a_evaluate_exit_code.txt")
+          if os.environ.get("CAPTURE_OUTCOME") != "success":
+              label = "DATA_FAILURE" if capture_code == 2 else "IMPLEMENTATION_FAILURE"
+              raise SystemExit("C8A " + label + ": official-public capture did not complete")
+          result = pathlib.Path("c8a_authoritative/evidence/final_classification.json")
+          if not result.is_file():
+              label = "DATA_FAILURE" if evaluate_code == 2 else "IMPLEMENTATION_FAILURE"
+              raise SystemExit("C8A " + label + ": final classification is absent")
+          payload = json.loads(result.read_text())
+          print(json.dumps(payload, sort_keys=True))
+          if os.environ.get("EVALUATE_OUTCOME") != "success":
+              raise SystemExit("C8A " + str(payload.get("classification", "IMPLEMENTATION_FAILURE")))
+          if payload.get("status") != "PASS" or payload.get("classification") != "ECONOMIC_PASS":
+              raise SystemExit("C8A final classification is not ECONOMIC_PASS")
+          PY
