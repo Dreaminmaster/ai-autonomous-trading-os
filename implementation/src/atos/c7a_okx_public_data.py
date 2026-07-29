@@ -82,6 +82,8 @@ PRIVATE_PATH_MARKERS = (
 )
 MAX_RAW_BYTES = 64 * 1024 * 1024
 MAX_EXTRACTED_DOWNLOAD_BYTES = 64 * 1024 * 1024
+MAX_EXACT_DECIMAL_INPUT_CHARS = 128
+MAX_FIXED_DECIMAL_EXPONENT = 128
 HTTP_TIMEOUT_SECONDS = 30
 MARK_PAGE_LIMIT = 100
 TRADE_PAGE_LIMIT = 300
@@ -131,10 +133,18 @@ class RawObject:
         return asdict(self)
 
 
-def _exact_decimal(value: Any, label: str, *, positive: bool = False) -> str:
+def _exact_decimal(
+    value: Any,
+    label: str,
+    *,
+    positive: bool = False,
+    allow_exponent: bool = False,
+) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise C7APublicDataError(f"{label} must be a non-empty exact decimal string")
-    if "e" in value.lower():
+    if len(value) > MAX_EXACT_DECIMAL_INPUT_CHARS:
+        raise C7APublicDataError(f"{label} exact decimal text is too long")
+    if not allow_exponent and "e" in value.lower():
         raise C7APublicDataError(f"{label} must not use exponent notation")
     try:
         parsed = Decimal(value)
@@ -143,6 +153,8 @@ def _exact_decimal(value: Any, label: str, *, positive: bool = False) -> str:
     if not parsed.is_finite() or (positive and parsed <= 0):
         qualifier = "positive finite" if positive else "finite"
         raise C7APublicDataError(f"{label} must be {qualifier}")
+    if allow_exponent and abs(parsed.adjusted()) > MAX_FIXED_DECIMAL_EXPONENT:
+        raise C7APublicDataError(f"{label} exponent exceeds canonical bounds")
     text = format(parsed, "f")
     if "." in text:
         text = text.rstrip("0").rstrip(".")
@@ -914,6 +926,7 @@ def _normalize_funding_records(
         realized = _exact_decimal(
             row.get("realizedRate"),
             f"funding row {index} realized rate",
+            allow_exponent=True,
         )
         if not math.isfinite(float(realized)):
             raise C7APublicDataError("non-finite normalized funding rate")
