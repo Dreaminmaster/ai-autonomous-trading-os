@@ -66,7 +66,7 @@ class HistoricalSignal:
         return asdict(self)
 
 
-def _stamp(value: Any, label: str) -> datetime:
+def _parsed_stamp(value: Any, label: str) -> datetime:
     try:
         parsed = (
             value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
@@ -75,7 +75,11 @@ def _stamp(value: Any, label: str) -> datetime:
         raise C7AHistoricalReplayError(f"invalid {label}: {value!r}") from exc
     if parsed.tzinfo is None:
         raise C7AHistoricalReplayError(f"{label} must be timezone-aware")
-    result = parsed.astimezone(UTC)
+    return parsed.astimezone(UTC)
+
+
+def _stamp(value: Any, label: str) -> datetime:
+    result = _parsed_stamp(value, label)
     if any((result.minute, result.second, result.microsecond)):
         raise C7AHistoricalReplayError(f"{label} must be aligned to an exact hour")
     return result
@@ -131,7 +135,9 @@ def _indexed_funding(
     output: dict[datetime, float] = {}
     previous: datetime | None = None
     for row in rows:
-        current = _stamp(row.get("funding_time"), f"{label} funding timestamp")
+        current = _parsed_stamp(
+            row.get("funding_time"), f"{label} funding timestamp"
+        )
         if previous is not None and current <= previous:
             raise C7AHistoricalReplayError(
                 f"unordered or duplicate funding series: {label}"
@@ -489,6 +495,13 @@ def replay_window(
         instrument: _indexed_funding(funding_rows[instrument], label=instrument)
         for instrument in INSTRUMENTS
     }
+    funding_events: dict[datetime, list[tuple[datetime, str, float]]] = {}
+    for instrument in INSTRUMENTS:
+        for stamp, rate in funding[instrument].items():
+            hour = stamp.replace(minute=0, second=0, microsecond=0)
+            funding_events.setdefault(hour, []).append((stamp, instrument, rate))
+    for events in funding_events.values():
+        events.sort(key=lambda event: (event[0], event[1]))
     bounds = required_source_bounds(window)
     for instrument in INSTRUMENTS:
         _exact_hours(
@@ -534,18 +547,30 @@ def replay_window(
                 for instrument in INSTRUMENTS
             }
 
-            for instrument in INSTRUMENTS:
-                rate = funding[instrument].get(current)
-                if rate is None:
-                    continue
-                settlement_pnl = -units[instrument] * previous_marks[instrument] * rate
-                equity += settlement_pnl
-                funding_pnl += settlement_pnl
-                if settlement_pnl >= 0:
-                    receipts += settlement_pnl
-                else:
-                    payments -= settlement_pnl
-                processed_funding[instrument].add(current)
+            def apply_funding(
+                events: Sequence[tuple[datetime, str, float]],
+                event_units: Mapping[str, float],
+                settlement_marks: Mapping[str, float],
+            ) -> None:
+                nonlocal equity, funding_pnl, receipts, payments
+                for stamp, instrument, rate in events:
+                    settlement_pnl = (
+                        -event_units[instrument] * settlement_marks[instrument] * rate
+                    )
+                    equity += settlement_pnl
+                    funding_pnl += settlement_pnl
+                    if settlement_pnl >= 0:
+                        receipts += settlement_pnl
+                    else:
+                        payments -= settlement_pnl
+                    processed_funding[instrument].add(stamp)
+
+            hour_events = funding_events.get(current, ())
+            apply_funding(
+                tuple(event for event in hour_events if event[0] == current),
+                units,
+                previous_marks,
+            )
 
             hour_start_prices = previous_marks
             if hour_index == 0:
@@ -592,6 +617,15 @@ def replay_window(
                         equity=equity, current_values=current_values, target=target
                     )
                 hour_start_prices = current_opens
+
+            # A settlement completed after the hour boundary occurs after any
+            # same-hour modeled trade. Its funding notional still uses the last
+            # completed one-hour mark candle, without changing the source stamp.
+            apply_funding(
+                tuple(event for event in hour_events if event[0] > current),
+                units,
+                previous_marks,
+            )
 
             current_marks = {
                 instrument: marks[instrument][current] for instrument in INSTRUMENTS

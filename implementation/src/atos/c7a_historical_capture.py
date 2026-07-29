@@ -59,7 +59,10 @@ API_FAMILIES = frozenset(
         "OKX_HISTORICAL_DATA_API",
     }
 )
-MAX_FUNDING_SETTLEMENT_GAP_MS = 8 * HOUR_MS
+FUNDING_SETTLEMENT_COMPLETION_TOLERANCE_MS = 60_000
+MAX_FUNDING_SETTLEMENT_GAP_MS = (
+    8 * HOUR_MS + FUNDING_SETTLEMENT_COMPLETION_TOLERANCE_MS
+)
 CAPTURE_PLAN_KEYS = frozenset(
     {
         "window_ids",
@@ -212,7 +215,8 @@ def _assert_complete_funding_interval(
     )
     if any(gap < 0 or gap > MAX_FUNDING_SETTLEMENT_GAP_MS for gap in gaps):
         raise C7AHistoricalCaptureError(
-            f"funding settlement coverage gap exceeds eight hours: {instrument}"
+            "funding settlement coverage gap exceeds eight hours plus "
+            f"completion tolerance: {instrument}"
         )
 
 
