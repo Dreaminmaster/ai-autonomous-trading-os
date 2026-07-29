@@ -410,6 +410,11 @@ def _simulate(
                 "quantity": float(state["quantity"]),
                 "signed_mark_notional": signed_notional,
                 "funding_pnl": pnl,
+                "buffer_after": (
+                    float(state["sleeve_equity"]) / abs(signed_notional)
+                    if signed_notional
+                    else None
+                ),
             }
         )
         check_buffer(instrument, stamp, predecessor)

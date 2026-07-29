@@ -32,6 +32,7 @@ from atos.c8a_contract import (
     MINIMUM_NONFLAT_DIRECTIONS,
     MINIMUM_POSITIVE_WINDOWS,
     MINIMUM_PSR,
+    MINIMUM_SLEEVE_BUFFER,
     MINIMUM_WORST_WINDOW_RETURN,
     SIGNAL_CLOSE_COUNT,
     TARGET_ABS_WEIGHT,
@@ -175,6 +176,144 @@ def _drawdown(path: Sequence[Any]) -> float:
         peak = max(peak, equity)
         maximum = max(maximum, (peak - equity) / peak)
     return maximum
+
+
+def _reference_price_ledger(
+    *,
+    trade_events: Sequence[Mapping[str, Any]],
+    marks: Mapping[str, Mapping[datetime, float]],
+    trades: Mapping[str, Mapping[datetime, float]],
+    window_id: str,
+) -> list[dict[str, Any]]:
+    """Rebuild every required mark/open transition from source and target quantities."""
+    window = window_by_id(window_id)
+    scheduled: dict[tuple[str, datetime], Mapping[str, Any]] = {}
+    risk_closes: set[tuple[str, datetime]] = set()
+    terminal_closes: set[tuple[str, datetime]] = set()
+    for event in trade_events:
+        instrument = str(event.get("instrument"))
+        stamp = _time(event.get("timestamp"))
+        if event.get("kind") == "SCHEDULED_REBALANCE":
+            key = (instrument, stamp)
+            if key in scheduled:
+                raise C8AHistoricalIndependentError("duplicate scheduled trade event")
+            scheduled[key] = event
+        elif event.get("kind") == "RISK_CLOSE":
+            risk_closes.add((instrument, stamp))
+        elif event.get("kind") == "TERMINAL_CLOSE":
+            terminal_closes.add((instrument, stamp))
+    output: list[dict[str, Any]] = []
+    for instrument in INSTRUMENTS:
+        quantity = 0.0
+        last_price: float | None = None
+        for decision in decision_times(window_id):
+            opening = trades[instrument][decision]
+            if quantity and last_price is not None:
+                output.append(
+                    {
+                        "timestamp": decision,
+                        "source_timestamp": None,
+                        "destination_kind": "TRADE_OPEN",
+                        "instrument": instrument,
+                        "quantity": quantity,
+                        "from_price": last_price,
+                        "to_price": opening,
+                        "price_pnl": quantity * (opening - last_price),
+                    }
+                )
+            event = scheduled.get((instrument, decision))
+            if event is None:
+                raise C8AHistoricalIndependentError("scheduled trade event is absent")
+            quantity = _number(event.get("target_quantity"))
+            last_price = opening
+            source_stamp = decision
+            week_end = decision + timedelta(days=7)
+            while source_stamp < week_end:
+                mark = marks[instrument][source_stamp]
+                close_time = source_stamp + HOUR
+                if quantity:
+                    output.append(
+                        {
+                            "timestamp": close_time,
+                            "source_timestamp": source_stamp,
+                            "destination_kind": "MARK_CLOSE",
+                            "instrument": instrument,
+                            "quantity": quantity,
+                            "from_price": last_price,
+                            "to_price": mark,
+                            "price_pnl": quantity * (mark - last_price),
+                        }
+                    )
+                last_price = mark
+                next_open = trades[instrument][close_time]
+                if quantity:
+                    output.append(
+                        {
+                            "timestamp": close_time,
+                            "source_timestamp": None,
+                            "destination_kind": "TRADE_OPEN",
+                            "instrument": instrument,
+                            "quantity": quantity,
+                            "from_price": last_price,
+                            "to_price": next_open,
+                            "price_pnl": quantity * (next_open - last_price),
+                        }
+                    )
+                last_price = next_open
+                if (instrument, close_time) in risk_closes:
+                    quantity = 0.0
+                source_stamp = close_time
+        if (instrument, window.end_exclusive) in terminal_closes:
+            quantity = 0.0
+        if quantity:
+            raise C8AHistoricalIndependentError(
+                f"reference position remains open after terminal event: {instrument}"
+            )
+    return output
+
+
+def _price_ledgers_match(
+    expected: Sequence[Mapping[str, Any]], observed: Sequence[Mapping[str, Any]]
+) -> bool:
+    def key(event: Mapping[str, Any]) -> tuple[str, str, str, str]:
+        source = event.get("source_timestamp")
+        return (
+            str(event.get("timestamp")),
+            str(event.get("destination_kind")),
+            str(source) if source is not None else "",
+            str(event.get("instrument")),
+        )
+
+    left = sorted(expected, key=key)
+    right = sorted(observed, key=key)
+    if len(left) != len(right):
+        return False
+    for reference, retained in zip(left, right, strict=True):
+        reference_stamp = reference["timestamp"]
+        reference_source = reference.get("source_timestamp")
+        if _time(retained.get("timestamp")) != reference_stamp:
+            return False
+        retained_source = retained.get("source_timestamp")
+        if (reference_source is None) != (retained_source is None):
+            return False
+        if reference_source is not None and _time(retained_source) != reference_source:
+            return False
+        if (
+            retained.get("destination_kind") != reference["destination_kind"]
+            or retained.get("instrument") != reference["instrument"]
+        ):
+            return False
+        if any(
+            not _close(retained.get(field), reference[field])
+            for field in ("quantity", "from_price", "to_price", "price_pnl")
+        ):
+            return False
+    return True
+
+
+def _expected_risk_close_time(stamp: datetime) -> datetime:
+    floor = stamp.replace(minute=0, second=0, microsecond=0)
+    return floor if floor == stamp else floor + HOUR
 
 
 def _review_replay(
@@ -354,6 +493,71 @@ def _review_replay(
         and _close(turnover, replay.get("one_way_turnover_ratio"))
     )
     checks["scheduled_targets_recompute"] = valid_targets
+    try:
+        reference_price_events = _reference_price_ledger(
+            trade_events=trade_events if isinstance(trade_events, list) else [],
+            marks=marks,
+            trades=trades,
+            window_id=window_id,
+        )
+        checks["complete_price_event_coverage"] = isinstance(
+            price_events, list
+        ) and _price_ledgers_match(reference_price_events, price_events)
+    except (KeyError, C8AHistoricalIndependentError):
+        checks["complete_price_event_coverage"] = False
+
+    low_points: list[tuple[str, datetime, float]] = []
+    for row in replay.get("hourly_equity", []):
+        try:
+            stamp = _time(row["timestamp"])
+            for instrument in INSTRUMENTS:
+                buffer = row["sleeves"][instrument].get("buffer")
+                if buffer is not None and _number(buffer) < MINIMUM_SLEEVE_BUFFER:
+                    low_points.append((instrument, stamp, _number(buffer)))
+        except (KeyError, TypeError, C8AHistoricalIndependentError):
+            checks["risk_path_recompute"] = False
+    for event in replay.get("funding_events", []):
+        try:
+            buffer = event.get("buffer_after")
+            if buffer is not None and _number(buffer) < MINIMUM_SLEEVE_BUFFER:
+                low_points.append(
+                    (
+                        str(event["instrument"]),
+                        _time(event["timestamp"]),
+                        _number(buffer),
+                    )
+                )
+        except (KeyError, TypeError, C8AHistoricalIndependentError):
+            checks["risk_path_recompute"] = False
+    risk_events = replay.get("risk_events")
+    actual_risk_closes = {
+        (str(event.get("instrument")), _time(event.get("timestamp")))
+        for event in (trade_events if isinstance(trade_events, list) else [])
+        if event.get("kind") == "RISK_CLOSE"
+    }
+    valid_risk = isinstance(risk_events, list)
+    retained_breaches: dict[tuple[str, datetime], float] = {}
+    if valid_risk:
+        for event in risk_events:
+            try:
+                buffer = _number(event["buffer"])
+                valid_risk &= buffer < MINIMUM_SLEEVE_BUFFER
+                retained_breaches[
+                    (str(event["instrument"]), _time(event["breach_timestamp"]))
+                ] = buffer
+            except (KeyError, TypeError, C8AHistoricalIndependentError):
+                valid_risk = False
+    low_keys = {(instrument, stamp) for instrument, stamp, _ in low_points}
+    expected_risk_closes = {
+        (instrument, _expected_risk_close_time(stamp))
+        for instrument, stamp, _ in low_points
+    }
+    valid_risk &= set(retained_breaches).issubset(low_keys)
+    valid_risk &= expected_risk_closes == actual_risk_closes
+    valid_risk &= len(retained_breaches) == replay.get("margin_buffer_breach_count")
+    if "risk_path_recompute" in checks:
+        valid_risk = False
+    checks["risk_path_recompute"] = valid_risk
 
     weekly_equity = replay.get("weekly_equity")
     weekly = replay.get("weekly_returns")

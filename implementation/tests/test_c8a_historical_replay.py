@@ -278,6 +278,27 @@ def test_reference_recompute_detects_tampered_fee() -> None:
     assert review["status"] == "FAIL"
 
 
+def test_reference_recompute_detects_an_omitted_price_transition() -> None:
+    marks, trades, funding = _fixture()
+    producer = evaluate_historical_window(
+        window_id="H1", mark_rows=marks, trade_rows=trades, funding_rows=funding
+    )
+    replay = producer["replays"]["candidate"]["1.0x"]
+    removed = replay["price_events"].pop()
+    replay["gross_price_pnl"] -= removed["price_pnl"]
+    replay["final_equity"] -= removed["price_pnl"]
+    review = review_historical_window(
+        producer, mark_rows=marks, trade_rows=trades, funding_rows=funding
+    )
+    assert review["status"] == "FAIL"
+    assert (
+        review["replay_reviews"]["candidate:1.0x"]["checks"][
+            "complete_price_event_coverage"
+        ]
+        is False
+    )
+
+
 def test_reference_recomputes_pooled_gates_and_final_verdict() -> None:
     marks, trades, funding = _fixture()
     window = evaluate_historical_window(
