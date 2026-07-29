@@ -246,22 +246,72 @@ def test_missing_eth_mark_hour_fails_closed_before_replay() -> None:
         )
 
 
-def test_unaccounted_scored_funding_settlement_fails_closed() -> None:
+def test_second_late_funding_uses_actual_time_and_reconciles_independently() -> None:
     marks, trades, funding = _fixture()
-    funding[BTC].append(
-        {
-            "funding_time": "2024-01-01T00:30:00+00:00",
-            "realized_rate": "0.1",
-        }
+    baseline = replay_window(
+        window_id="H1",
+        mark_rows=marks,
+        trade_rows=trades,
+        funding_rows=funding,
     )
-    funding[BTC].sort(key=lambda row: row["funding_time"])
-    with pytest.raises(C7AHistoricalReplayError, match="exact hour"):
-        replay_window(
-            window_id="H1",
-            mark_rows=marks,
-            trade_rows=trades,
-            funding_rows=funding,
+    decision = window_by_id("H1").first_scored_decision
+    for instrument in INSTRUMENTS:
+        row = next(
+            row
+            for row in funding[instrument]
+            if datetime.fromisoformat(row["funding_time"]) == decision
         )
+        row["funding_time"] = (decision + timedelta(seconds=2)).isoformat()
+
+    delayed = replay_window(
+        window_id="H1",
+        mark_rows=marks,
+        trade_rows=trades,
+        funding_rows=funding,
+    )
+    observed_increment = (
+        delayed["weekly_rows"][0]["funding_pnl"]
+        - baseline["weekly_rows"][0]["funding_pnl"]
+    )
+    first_rebalance = delayed["weekly_rows"][0]["decision_rebalance"]
+    expected_increment = 0.0
+    for instrument in INSTRUMENTS:
+        open_price = next(
+            row["open"]
+            for row in trades[instrument]
+            if datetime.fromisoformat(row["timestamp"]) == decision
+        )
+        predecessor_mark = next(
+            row["close"]
+            for row in marks[instrument]
+            if datetime.fromisoformat(row["timestamp"]) == decision - HOUR
+        )
+        realized_rate = next(
+            float(row["realized_rate"])
+            for row in funding[instrument]
+            if datetime.fromisoformat(row["funding_time"])
+            == decision + timedelta(seconds=2)
+        )
+        units = first_rebalance["target_values"][instrument] / open_price
+        expected_increment += -units * predecessor_mark * realized_rate
+    assert observed_increment == pytest.approx(expected_increment)
+    assert observed_increment > 0
+    assert delayed["weekly_rows"][0]["unaccounted_funding_settlements"] == 0
+
+    evidence = evaluate_historical_window(
+        window_id="H1",
+        mark_rows=marks,
+        trade_rows=trades,
+        funding_rows=funding,
+    )
+    independent = review_historical_window(
+        evidence,
+        mark_rows=marks,
+        trade_rows=trades,
+        funding_rows=funding,
+    )
+    assert independent["status"] == "PASS"
+    assert independent["primitive_source_recompute_passed"] is True
 
 
 def test_complete_window_evaluation_runs_all_costs_comparators_and_gates() -> None:

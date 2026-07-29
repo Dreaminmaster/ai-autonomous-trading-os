@@ -249,7 +249,7 @@ def _rebalance(value: Any, *, fee_rate: float, label: str) -> tuple[float, float
     return traded, cost
 
 
-def _source_stamp(value: Any, label: str) -> datetime:
+def _source_stamp(value: Any, label: str, *, exact_hour: bool = True) -> datetime:
     try:
         stamp = (
             value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
@@ -259,20 +259,25 @@ def _source_stamp(value: Any, label: str) -> datetime:
     if stamp.tzinfo is None:
         raise ValueError(f"independent source timestamp is naive: {label}")
     result = stamp.astimezone(UTC)
-    if any((result.minute, result.second, result.microsecond)):
+    if exact_hour and any((result.minute, result.second, result.microsecond)):
         raise ValueError(f"independent source timestamp is off-hour: {label}")
     return result
 
 
 def _source_index(
-    rows: Sequence[Mapping[str, Any]], *, timestamp: str, value: str, label: str
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    timestamp: str,
+    value: str,
+    label: str,
+    exact_hour: bool = True,
 ) -> dict[datetime, float]:
     if not rows:
         raise ValueError(f"independent source is empty: {label}")
     output: dict[datetime, float] = {}
     previous: datetime | None = None
     for row in rows:
-        stamp = _source_stamp(row.get(timestamp), label)
+        stamp = _source_stamp(row.get(timestamp), label, exact_hour=exact_hour)
         if previous is not None and stamp <= previous:
             raise ValueError(f"independent source is unordered: {label}")
         output[stamp] = _num(row.get(value), label, positive=value != "realized_rate")
@@ -620,6 +625,7 @@ def _source_replay(
             timestamp="funding_time",
             value="realized_rate",
             label=f"funding {instrument}",
+            exact_hour=False,
         )
         for instrument in INSTRUMENTS
     }
@@ -640,6 +646,13 @@ def _source_replay(
     equity = 1.0
     units = {instrument: 0.0 for instrument in INSTRUMENTS}
     processed = {instrument: set() for instrument in INSTRUMENTS}
+    scored_funding = sorted(
+        (stamp, instrument, rate)
+        for instrument in INSTRUMENTS
+        for stamp, rate in funding[instrument].items()
+        if decisions[0] <= stamp < window_end
+    )
+    funding_cursor = 0
     signals: list[dict[str, Any]] = []
     weekly_rows: list[dict[str, Any]] = []
     for week_index, decision in enumerate(decisions):
@@ -660,18 +673,40 @@ def _source_replay(
                 instrument: marks[instrument][current_time - HOUR]
                 for instrument in INSTRUMENTS
             }
-            for instrument in INSTRUMENTS:
-                rate = funding[instrument].get(current_time)
-                if rate is None:
-                    continue
-                pnl = -units[instrument] * previous_marks[instrument] * rate
-                equity += pnl
-                funding_pnl += pnl
-                if pnl >= 0:
-                    receipts += pnl
-                else:
-                    payments -= pnl
-                processed[instrument].add(current_time)
+            hour_funding: list[tuple[datetime, str, float]] = []
+            while (
+                funding_cursor < len(scored_funding)
+                and scored_funding[funding_cursor][0] < next_time
+            ):
+                event = scored_funding[funding_cursor]
+                if event[0] < current_time:
+                    raise ValueError("independent funding event cursor drift")
+                hour_funding.append(event)
+                funding_cursor += 1
+
+            def settle(
+                events: Sequence[tuple[datetime, str, float]],
+                event_units: Mapping[str, float],
+                settlement_marks: Mapping[str, float],
+            ) -> None:
+                nonlocal equity, funding_pnl, receipts, payments
+                for stamp, instrument, rate in events:
+                    pnl = (
+                        -event_units[instrument] * settlement_marks[instrument] * rate
+                    )
+                    equity += pnl
+                    funding_pnl += pnl
+                    if pnl >= 0:
+                        receipts += pnl
+                    else:
+                        payments -= pnl
+                    processed[instrument].add(stamp)
+
+            settle(
+                tuple(event for event in hour_funding if event[0] == current_time),
+                units,
+                previous_marks,
+            )
             hour_start_prices = previous_marks
             if hour_index == 0:
                 opens = {
@@ -710,6 +745,11 @@ def _source_replay(
                 else:
                     decision_ledger = _source_skip(equity, current_values, target)
                 hour_start_prices = opens
+            settle(
+                tuple(event for event in hour_funding if event[0] > current_time),
+                units,
+                previous_marks,
+            )
             current_marks = {
                 instrument: marks[instrument][current_time]
                 for instrument in INSTRUMENTS

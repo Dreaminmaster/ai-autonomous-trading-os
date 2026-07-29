@@ -509,6 +509,66 @@ def test_funding_download_capture_rejects_missing_settlement_gap(
         )
 
 
+@pytest.mark.parametrize(
+    ("jitter_ms", "error"),
+    [
+        (2_000, None),
+        (60_000, None),
+        (60_001, "completion tolerance"),
+    ],
+)
+def test_funding_completion_jitter_is_narrow_and_preserves_source_timestamp(
+    tmp_path, jitter_ms: int, error: str | None
+) -> None:
+    package = CapturePackage(tmp_path / f"funding-jitter-{jitter_ms}")
+    specs = [
+        FundingDownloadSpec(
+            request_id=f"{instrument.split('-', 1)[0].lower()}-jitter",
+            instrument=instrument,
+            url=f"https://static.okx.com/cdn/history/{instrument}.csv",
+            column_map={
+                "instrument": "inst",
+                "funding_time": "ts",
+                "realized_rate": "rate",
+            },
+        )
+        for instrument in (BTC, ETH)
+    ]
+
+    def fetch_object(request):
+        instrument = BTC if request.request_id == "btc-jitter" else ETH
+        timestamps = (T0, T0 + 8 * HOUR + jitter_ms, T0 + 16 * HOUR)
+        raw = (
+            "inst,ts,rate\n"
+            + "".join(
+                f"{instrument},{timestamp},0.0001\n" for timestamp in timestamps
+            )
+        ).encode()
+        return raw, _record(request, raw)
+
+    def capture():
+        return capture_funding_downloads(
+            package,
+            specs=specs,
+            start_inclusive="2024-01-01T00:00:00Z",
+            end_exclusive="2024-01-02T00:00:00Z",
+            fetch_object=fetch_object,
+            sleeper=lambda _: None,
+        )
+
+    if error is not None:
+        with pytest.raises(C7AHistoricalCaptureError, match=error):
+            capture()
+        return
+
+    result = capture()
+    expected = datetime.fromtimestamp(
+        (T0 + 8 * HOUR + jitter_ms) / 1000, tz=UTC
+    ).isoformat().replace("+00:00", "Z")
+    assert result[BTC][1]["funding_time"] == expected
+    assert result[ETH][1]["funding_time"] == expected
+
+
 def test_funding_download_capture_rejects_duplicate_settlement_across_files(
     tmp_path,
 ) -> None:
