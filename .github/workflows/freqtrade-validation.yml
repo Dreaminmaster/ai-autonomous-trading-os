@@ -16,12 +16,6 @@ on:
       - '!implementation/tests/test_c6a_source_authority*.py'
       - '!implementation/scripts/run_c6a_source_authority_gate.py'
   workflow_dispatch:
-    inputs:
-      c7a_h1_h5_authoritative:
-        description: 'Run the one-shot official-public C7A H1-H5 capture and evaluation'
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   atos-tests:
@@ -220,42 +214,3 @@ jobs:
             implementation/validation_summary.json
             implementation/validation_summary.md
           if-no-files-found: error
-
-  c7a-h1-h5-authoritative:
-    if: github.event_name == 'workflow_dispatch' && inputs.c7a_h1_h5_authoritative
-    needs: [atos-tests]
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install exact C7A implementation
-        run: |
-          cd implementation
-          python -m pip install -e '.[dev]'
-      - name: Capture official-public OKX H1-H5 sources
-        run: |
-          cd implementation
-          python scripts/c7a_h1_h5_capture.py \
-            --output "runtime/c7a-h1-h5-${GITHUB_SHA}/capture" \
-            --implementation-sha "${GITHUB_SHA}"
-      - name: Run frozen producer and independent economic recomputation
-        run: |
-          cd implementation
-          python scripts/c7a_h1_h5_evaluate.py \
-            --capture "runtime/c7a-h1-h5-${GITHUB_SHA}/capture" \
-            --output "runtime/c7a-h1-h5-${GITHUB_SHA}/evidence" \
-            --implementation-sha "${GITHUB_SHA}" \
-            --authoritative-run-id "github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-      - name: Upload immutable C7A H1-H5 custody and evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: c7a-h1-h5-${{ github.sha }}-${{ github.run_attempt }}
-          path: implementation/runtime/c7a-h1-h5-${{ github.sha }}/
-          if-no-files-found: warn
-          retention-days: 90
