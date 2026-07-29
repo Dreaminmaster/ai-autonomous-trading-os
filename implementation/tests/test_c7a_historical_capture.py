@@ -513,6 +513,7 @@ def test_funding_download_capture_rejects_missing_settlement_gap(
     ("jitter_ms", "error"),
     [
         (2_000, None),
+        (60_000, None),
         (60_001, "completion tolerance"),
     ],
 )
@@ -561,8 +562,11 @@ def test_funding_completion_jitter_is_narrow_and_preserves_source_timestamp(
         return
 
     result = capture()
-    assert result[BTC][1]["funding_time"] == "2024-01-01T08:00:02Z"
-    assert result[ETH][1]["funding_time"] == "2024-01-01T08:00:02Z"
+    expected = datetime.fromtimestamp(
+        (T0 + 8 * HOUR + jitter_ms) / 1000, tz=UTC
+    ).isoformat().replace("+00:00", "Z")
+    assert result[BTC][1]["funding_time"] == expected
+    assert result[ETH][1]["funding_time"] == expected
 
 
 def test_funding_download_capture_rejects_duplicate_settlement_across_files(

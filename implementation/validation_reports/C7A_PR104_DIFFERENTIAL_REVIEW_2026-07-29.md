@@ -189,7 +189,7 @@ and requires the physically separate recomputation to match.
 
 | Behavior | Result |
 |---|---|
-| 2-second completion stamp accepted | Direct capture assertion |
+| 2-second and exact 60-second completion stamps accepted | Direct capture assertions |
 | Source timestamp preserved | Direct normalized-row assertion |
 | 60.001-second excess rejected | Direct capture assertion |
 | Exact-hour settlement remains before same-time trade | Baseline-vs-delayed replay assertion |
@@ -201,8 +201,8 @@ and requires the physically separate recomputation to match.
 
 Validation completed locally under Python 3.11.15:
 
-- Focused capture and replay suite: `27 passed`.
-- Complete ATOS suite: `1260 passed, 7 skipped in 22.26s`.
+- Focused capture and replay suite: `28 passed`.
+- Complete ATOS suite: `1261 passed, 7 skipped in 22.14s`.
 - Ruff on all changed Python files: passed.
 - Secret leakage scan: passed.
 - `git diff --check`: passed.
