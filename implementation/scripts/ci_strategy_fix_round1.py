@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """Strategy Fix Round 1 — uses canonical runner per variant + best2 lookahead."""
-import copy, json, os, subprocess, sys
+import copy
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
+
+from atos.freqtrade_timeout_policy import (
+    BACKTEST_TIMEOUT_SECONDS,
+    LOOKAHEAD_WRAPPER_TIMEOUT_SECONDS,
+)
 
 IMPL_DIR = Path(__file__).resolve().parents[1]
 os.chdir(IMPL_DIR)
 
 VALIDATION_POLICY = "config/policy.validation.json"
 TIMERANGE = os.environ.get("TIMERANGE", "20250101-20250701")
-BACKTEST_TIMEOUT_S = 900
-LOOKAHEAD_WRAPPER_TIMEOUT_S = 2700  # must exceed canonical inner la timeout (2100s)
 
 VARIANTS = [
     ("round1_1_baseline_current", None),
@@ -62,7 +69,7 @@ for name, overrides in VARIANTS:
         result = subprocess.run([
             "python3", "scripts/run_canonical_backtest.py",
             name, name, str(policy_path.resolve())
-        ], capture_output=True, text=True, timeout=BACKTEST_TIMEOUT_S)
+        ], capture_output=True, text=True, timeout=BACKTEST_TIMEOUT_SECONDS)
         print((result.stdout or "(no stdout)")[-200:], flush=True)
         if result.stderr:
             print(f"STDERR: {(result.stderr)[:200]}", flush=True)
@@ -124,7 +131,7 @@ for b in best_two:
         result = subprocess.run([
             "python3", "scripts/run_canonical_backtest.py",
             f"{name}_la", f"{name}_la", str(policy_p)
-        ], capture_output=True, text=True, timeout=LOOKAHEAD_WRAPPER_TIMEOUT_S, env=env)
+        ], capture_output=True, text=True, timeout=LOOKAHEAD_WRAPPER_TIMEOUT_SECONDS, env=env)
         wrapper_rc = result.returncode
         from atos.lookahead_contract import consume_lookahead_status
         status_path = Path("freqtrade_data/backtest_results/{}_la_lookahead_status.json".format(name))
