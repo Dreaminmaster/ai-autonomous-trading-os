@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,12 @@ from atos.c7a_historical_capture import C7AHistoricalCaptureError, CaptureRecord
 from atos.c7a_okx_public_data import build_mark_price_request
 from atos.c8a_contract import INSTRUMENTS
 from atos.c8a_historical_capture import (
+    FUNDING_REQUEST_PAUSE_SECONDS,
     C8ACapturePackage,
     C8AHistoricalCaptureError,
     _assert_complete_funding_interval,
+    capture_funding_downloads,
+    capture_historical_funding_range,
 )
 from atos.c8a_historical_evidence import (
     C8AEvidencePackage,
@@ -128,6 +132,22 @@ def test_c8a_funding_coverage_allows_real_nonboundary_settlement_times() -> None
         instrument=INSTRUMENTS[0],
         start_inclusive="2024-01-01T00:00:00Z",
         end_exclusive="2024-01-01T10:00:00Z",
+    )
+
+
+def test_c8a_funding_requests_use_rate_limit_headroom() -> None:
+    assert FUNDING_REQUEST_PAUSE_SECONDS == 0.5
+    assert (
+        inspect.signature(capture_historical_funding_range)
+        .parameters["request_pause_seconds"]
+        .default
+        == FUNDING_REQUEST_PAUSE_SECONDS
+    )
+    assert (
+        inspect.signature(capture_funding_downloads)
+        .parameters["download_pause_seconds"]
+        .default
+        == FUNDING_REQUEST_PAUSE_SECONDS
     )
 
 

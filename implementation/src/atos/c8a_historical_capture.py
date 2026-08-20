@@ -43,6 +43,7 @@ class C8AHistoricalCaptureError(RuntimeError):
 PageFetcher = Callable[[PublicRequest], tuple[bytes, CaptureRecord]]
 Sleeper = Callable[[float], None]
 MAX_FUNDING_GAP_MS = 8 * HOUR_MS + 60_000
+FUNDING_REQUEST_PAUSE_SECONDS = 0.5
 
 
 def _timestamp_ms(value: Any) -> int:
@@ -120,7 +121,7 @@ def capture_funding_downloads(
     start_inclusive: str,
     end_exclusive: str,
     fetch_object: PageFetcher = fetch_raw_strict,
-    download_pause_seconds: float = 0.11,
+    download_pause_seconds: float = FUNDING_REQUEST_PAUSE_SECONDS,
     sleeper: Sleeper = time.sleep,
 ) -> dict[str, tuple[dict[str, Any], ...]]:
     if not specs or {spec.instrument for spec in specs} != set(INSTRUMENTS):
@@ -189,7 +190,7 @@ def capture_historical_funding_range(
     fetch_manifest: PageFetcher = fetch_raw_strict,
     fetch_object: PageFetcher = fetch_raw_strict,
     host: str = "openapi.okx.com",
-    request_pause_seconds: float = 0.11,
+    request_pause_seconds: float = FUNDING_REQUEST_PAUSE_SECONDS,
     sleeper: Sleeper = time.sleep,
 ) -> dict[str, tuple[dict[str, Any], ...]]:
     pause = _pause(request_pause_seconds)
