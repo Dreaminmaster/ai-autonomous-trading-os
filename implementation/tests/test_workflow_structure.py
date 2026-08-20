@@ -20,31 +20,12 @@ def test_completed_c7a_authoritative_run_cannot_be_dispatched_again(wf):
     assert "scripts/c7a_h1_h5_capture.py" not in raw
     assert "scripts/c7a_h1_h5_evaluate.py" not in raw
 
-def test_c8a_authoritative_job_is_single_exact_sha_public_only_gate(wf):
+def test_completed_c8a_authoritative_run_cannot_be_dispatched_again(wf):
     raw = open(WORKFLOW_PATH).read()
-    job = wf["jobs"]["c8a-h1-h5-authoritative"]
-    assert "inputs.c8a_h1_h5_authoritative == true" in job["if"]
-    assert job["permissions"] == {"contents": "read"}
-    assert "ref: ${{ inputs.c8a_implementation_sha }}" in raw
-    assert "persist-credentials: false" in raw
-    assert "scripts/c8a_h1_h5_capture.py" in raw
-    assert "scripts/c8a_h1_h5_evaluate.py" in raw
-    assert "OKX API KEY" not in raw.upper()
-    assert "/api/v5/trade/" not in raw
-
-def test_c8a_authoritative_upload_precedes_classification(wf):
-    steps = wf["jobs"]["c8a-h1-h5-authoritative"]["steps"]
-    names = [step.get("name", "") for step in steps]
-    assert names.index("Upload immutable C8A authority evidence") < names.index(
-        "Enforce explicit final classification"
-    )
-    upload = steps[names.index("Upload immutable C8A authority evidence")]
-    assert upload["if"] == "always()"
-    assert upload["with"]["retention-days"] == 90
-    raw = open(WORKFLOW_PATH).read()
-    assert raw.count("set -o pipefail") >= 4
-    assert "c8a_capture_exit_code.txt" in raw
-    assert "c8a_evaluate_exit_code.txt" in raw
+    assert "c8a-h1-h5-authoritative" not in wf.get("jobs", {})
+    assert "c8a_h1_h5_authoritative" not in raw
+    assert "scripts/c8a_h1_h5_capture.py" not in raw
+    assert "scripts/c8a_h1_h5_evaluate.py" not in raw
 
 def test_atos_tests_job(wf):
     assert "atos-tests" in wf.get("jobs",{})
