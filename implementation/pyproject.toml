@@ -17,13 +17,15 @@ dev = [
     "scipy>=1.10.0",
 ]
 freqtrade = [
-    "freqtrade>=2024.1",
+    # Validation is evidence-bearing: upgrade only in a reviewed PR after the
+    # canonical, lookahead, and attribution jobs pass on the candidate version.
+    "freqtrade==2026.6",
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "scipy>=1.10.0",
 ]
 research = [
-    "freqtrade[hyperopt]>=2024.1",
+    "freqtrade[hyperopt]==2026.6",
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "scipy>=1.10.0",
