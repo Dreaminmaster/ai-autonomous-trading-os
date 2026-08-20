@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import time
@@ -20,6 +21,7 @@ from datetime import UTC, datetime
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import parse_qsl, urlparse
 from urllib.request import Request, urlopen
 
@@ -74,6 +76,12 @@ CAPTURE_PLAN_KEYS = frozenset(
         "scored_end_exclusive",
     }
 )
+TRANSIENT_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
+TRANSIENT_RETRY_EVENTS = frozenset(
+    f"HTTP_{status}" for status in TRANSIENT_HTTP_STATUSES
+)
+MAX_TRANSIENT_HTTP_ATTEMPTS = 5
+MAX_TRANSIENT_RETRY_DELAY_SECONDS = 30.0
 
 
 class C7AHistoricalCaptureError(RuntimeError):
@@ -91,6 +99,8 @@ class CaptureRecord:
     size: int
     sha256: str
     relative_path: str
+    attempt_count: int = 1
+    retry_events: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -236,11 +246,24 @@ def _api_semantics(url: str) -> tuple[str, tuple[tuple[str, str], ...]]:
     return parsed.path, tuple(sorted(parse_qsl(parsed.query, keep_blank_values=True)))
 
 
+def _transient_retry_delay(headers: Any, failure_count: int) -> float:
+    fallback = min(float(2 ** (failure_count - 1)), 8.0)
+    value = headers.get("Retry-After") if hasattr(headers, "get") else None
+    try:
+        requested = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if not math.isfinite(requested) or requested < 0:
+        return fallback
+    return min(max(requested, 0.5), MAX_TRANSIENT_RETRY_DELAY_SECONDS)
+
+
 def fetch_raw_strict(
     request: PublicRequest,
     *,
     opener=urlopen,
     collected_at: datetime | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> tuple[bytes, CaptureRecord]:
     """Fetch one public object and preserve redirect-aware provenance.
 
@@ -262,46 +285,80 @@ def fetch_raw_strict(
         method="GET",
         headers={key: value for key, value in request.headers},
     )
-    response = None
-    try:
-        response = opener(http_request, timeout=HTTP_TIMEOUT_SECONDS)
-        final_url = (
-            str(response.geturl()) if hasattr(response, "geturl") else request.url
-        )
-        final_request = PublicRequest(
-            request_id=request.request_id,
-            source_family=request.source_family,
-            url=final_url,
-            method=request.method,
-            headers=request.headers,
-        )
-        validate_public_request(final_request)
-        if request.source_family in API_FAMILIES and (
-            _api_semantics(final_url) != _api_semantics(request.url)
-        ):
-            raise C7AHistoricalCaptureError(
-                "public API redirect changed endpoint or query semantics"
+    retry_events: list[str] = []
+    for attempt in range(1, MAX_TRANSIENT_HTTP_ATTEMPTS + 1):
+        response = None
+        try:
+            response = opener(http_request, timeout=HTTP_TIMEOUT_SECONDS)
+            status = int(getattr(response, "status", 200))
+            if status in TRANSIENT_HTTP_STATUSES:
+                event = f"HTTP_{status}"
+                if attempt == MAX_TRANSIENT_HTTP_ATTEMPTS:
+                    raise C7AHistoricalCaptureError(
+                        "public capture failed after "
+                        f"{attempt} attempts: {request.request_id}: HTTP {status}"
+                    )
+                retry_events.append(event)
+                delay = _transient_retry_delay(response.headers, len(retry_events))
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
+                response = None
+                sleeper(delay)
+                continue
+            final_url = (
+                str(response.geturl()) if hasattr(response, "geturl") else request.url
             )
-        raw = response.read(MAX_RAW_BYTES + 1)
-        status = int(getattr(response, "status", 200))
-        media_type = (
-            str(response.headers.get("Content-Type", "application/octet-stream"))
-            .split(";", 1)[0]
-            .strip()
-            .lower()
-        )
-    except C7AHistoricalCaptureError:
-        raise
-    except C7APublicDataError as exc:
-        raise C7AHistoricalCaptureError(str(exc)) from exc
-    except Exception as exc:
-        raise C7AHistoricalCaptureError(
-            f"public capture failed: {request.request_id}: {exc}"
-        ) from exc
-    finally:
-        close = getattr(response, "close", None)
-        if callable(close):
-            close()
+            final_request = PublicRequest(
+                request_id=request.request_id,
+                source_family=request.source_family,
+                url=final_url,
+                method=request.method,
+                headers=request.headers,
+            )
+            validate_public_request(final_request)
+            if request.source_family in API_FAMILIES and (
+                _api_semantics(final_url) != _api_semantics(request.url)
+            ):
+                raise C7AHistoricalCaptureError(
+                    "public API redirect changed endpoint or query semantics"
+                )
+            raw = response.read(MAX_RAW_BYTES + 1)
+            media_type = (
+                str(response.headers.get("Content-Type", "application/octet-stream"))
+                .split(";", 1)[0]
+                .strip()
+                .lower()
+            )
+            break
+        except HTTPError as exc:
+            status = int(exc.code)
+            if status not in TRANSIENT_HTTP_STATUSES:
+                raise C7AHistoricalCaptureError(
+                    f"public capture failed: {request.request_id}: {exc}"
+                ) from exc
+            event = f"HTTP_{status}"
+            if attempt == MAX_TRANSIENT_HTTP_ATTEMPTS:
+                raise C7AHistoricalCaptureError(
+                    "public capture failed after "
+                    f"{attempt} attempts: {request.request_id}: HTTP {status}"
+                ) from exc
+            retry_events.append(event)
+            delay = _transient_retry_delay(exc.headers, len(retry_events))
+            exc.close()
+            sleeper(delay)
+        except C7AHistoricalCaptureError:
+            raise
+        except C7APublicDataError as exc:
+            raise C7AHistoricalCaptureError(str(exc)) from exc
+        except Exception as exc:
+            raise C7AHistoricalCaptureError(
+                f"public capture failed: {request.request_id}: {exc}"
+            ) from exc
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
 
     if status != 200:
         raise C7AHistoricalCaptureError(f"public capture returned HTTP {status}")
@@ -325,6 +382,8 @@ def fetch_raw_strict(
         size=len(raw),
         sha256=hashlib.sha256(raw).hexdigest(),
         relative_path="",
+        attempt_count=1 + len(retry_events),
+        retry_events=tuple(retry_events),
     )
     return raw, record
 
@@ -426,6 +485,14 @@ class CapturePackage:
             raise C7AHistoricalCaptureError(
                 f"duplicate capture request ID: {record.request_id}"
             )
+        if (
+            type(record.attempt_count) is not int
+            or not 1 <= record.attempt_count <= MAX_TRANSIENT_HTTP_ATTEMPTS
+            or not isinstance(record.retry_events, tuple)
+            or len(record.retry_events) != record.attempt_count - 1
+            or any(event not in TRANSIENT_RETRY_EVENTS for event in record.retry_events)
+        ):
+            raise C7AHistoricalCaptureError("invalid capture retry provenance")
         try:
             requested = PublicRequest(
                 record.request_id,

@@ -4,7 +4,9 @@ import hashlib
 import io
 import json
 import zipfile
+from dataclasses import replace
 from datetime import UTC, datetime
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import pytest
@@ -123,6 +125,91 @@ def test_strict_fetch_rejects_api_redirect_query_or_path_drift() -> None:
                 final_url=drifted,
             ),
         )
+
+
+def test_strict_fetch_retries_429_and_retains_retry_provenance() -> None:
+    request = build_mark_price_request(BTC, after_ms=T0)
+    raw = b'{"code":"0","msg":"","data":[]}'
+    response = _Response(raw, final_url=request.url)
+    outcomes = iter(
+        (
+            HTTPError(
+                request.url,
+                429,
+                "Too Many Requests",
+                {"Retry-After": "3"},
+                None,
+            ),
+            response,
+        )
+    )
+    attempts = []
+
+    def opener(*_args, **_kwargs):
+        attempts.append(True)
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    pauses = []
+    fetched, record = fetch_raw_strict(
+        request,
+        opener=opener,
+        sleeper=pauses.append,
+        collected_at=datetime(2026, 7, 28, tzinfo=UTC),
+    )
+    assert fetched == raw
+    assert len(attempts) == 2
+    assert pauses == [3.0]
+    assert record.attempt_count == 2
+    assert record.retry_events == ("HTTP_429",)
+    assert response.closed is True
+
+
+def test_strict_fetch_exhausts_bounded_transient_retries() -> None:
+    request = build_mark_price_request(BTC, after_ms=T0)
+    attempts = []
+    pauses = []
+
+    def opener(*_args, **_kwargs):
+        attempts.append(True)
+        raise HTTPError(request.url, 429, "Too Many Requests", {}, None)
+
+    with pytest.raises(
+        C7AHistoricalCaptureError, match="failed after 5 attempts.*HTTP 429"
+    ):
+        fetch_raw_strict(request, opener=opener, sleeper=pauses.append)
+    assert len(attempts) == 5
+    assert pauses == [1.0, 2.0, 4.0, 8.0]
+
+
+def test_strict_fetch_does_not_retry_nontransient_http_error() -> None:
+    request = build_mark_price_request(BTC, after_ms=T0)
+    attempts = []
+    pauses = []
+
+    def opener(*_args, **_kwargs):
+        attempts.append(True)
+        raise HTTPError(request.url, 400, "Bad Request", {}, None)
+
+    with pytest.raises(C7AHistoricalCaptureError, match="HTTP Error 400"):
+        fetch_raw_strict(request, opener=opener, sleeper=pauses.append)
+    assert len(attempts) == 1
+    assert pauses == []
+
+
+def test_capture_package_rejects_invalid_retry_provenance(tmp_path) -> None:
+    package = CapturePackage(tmp_path / "invalid-retry")
+    request = build_mark_price_request(BTC, after_ms=T0)
+    raw = b'{"code":"0","data":[]}'
+    record = replace(
+        _record(request, raw),
+        attempt_count=2,
+        retry_events=("HTTP_400",),
+    )
+    with pytest.raises(C7AHistoricalCaptureError, match="retry provenance"):
+        package.retain_raw(raw, record)
 
 
 def test_capture_package_is_no_overwrite_and_manifested(tmp_path) -> None:
