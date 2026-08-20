@@ -115,15 +115,15 @@ def test_historical_funding_manifest_requests_are_public_and_chunked() -> None:
         start_inclusive="2023-12-04T00:00:00Z",
         end_exclusive="2026-06-29T00:00:00Z",
     )
-    assert len(requests) == 2
+    assert len(requests) == 4
     assert all(
         request.source_family == "OKX_HISTORICAL_DATA_API" for request in requests
     )
     assert all(
         urlparse(request.url).netloc == "openapi.okx.com" for request in requests
     )
-    first = parse_qs(urlparse(requests[0].url).query)
-    second = parse_qs(urlparse(requests[1].url).query)
+    queries = [parse_qs(urlparse(request.url).query) for request in requests]
+    first = queries[0]
     assert first["module"] == ["3"]
     assert first["instType"] == ["SWAP"]
     assert first["instFamilyList"] == ["BTC-USDT"]
@@ -131,9 +131,21 @@ def test_historical_funding_manifest_requests_are_public_and_chunked() -> None:
     assert datetime.fromtimestamp(int(first["begin"][0]) / 1000, tz=UTC) == datetime(
         2023, 12, 1, tzinfo=UTC
     )
-    assert datetime.fromtimestamp(int(second["begin"][0]) / 1000, tz=UTC) == datetime(
-        2025, 7, 1, tzinfo=UTC
-    )
+    assert [
+        datetime.fromtimestamp(int(query["begin"][0]) / 1000, tz=UTC)
+        for query in queries
+    ] == [
+        datetime(2023, 12, 1, tzinfo=UTC),
+        datetime(2024, 9, 1, tzinfo=UTC),
+        datetime(2025, 6, 1, tzinfo=UTC),
+        datetime(2026, 3, 1, tzinfo=UTC),
+    ]
+    def inclusive_utc_months(query: dict[str, list[str]]) -> int:
+        begin = datetime.fromtimestamp(int(query["begin"][0]) / 1000, tz=UTC)
+        end = datetime.fromtimestamp(int(query["end"][0]) / 1000, tz=UTC)
+        return (end.year - begin.year) * 12 + end.month - begin.month + 1
+
+    assert [inclusive_utc_months(query) for query in queries] == [9, 9, 9, 4]
     for request in requests:
         validate_public_request(request)
 

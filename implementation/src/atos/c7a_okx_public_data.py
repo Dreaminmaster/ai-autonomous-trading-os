@@ -91,10 +91,11 @@ FUNDING_PAGE_LIMIT = 400
 HOUR_MS = 3_600_000
 FUNDING_DOWNLOAD_MODULE = "3"
 FUNDING_DOWNLOAD_AGGREGATION = "monthly"
-# OKX caps the returned monthly file list at 20. A UTC request end can cross
-# into one additional UTC+8 archive month, so at most 19 requested UTC months
-# are safe without truncation or HTTP 400.
-MAX_MONTHS_PER_HISTORY_REQUEST = 19
+# The official endpoint currently rejects an inclusive ten-UTC-month request
+# with code 50077 ("cannot exceed 10 months").  Its UTC request bounds can also
+# cross into one additional UTC+8 archive month, so nine requested UTC months
+# are the largest fail-closed chunk accepted without relying on truncation.
+MAX_MONTHS_PER_HISTORY_REQUEST = 9
 FUNDING_ARCHIVE_COLUMNS = {
     "instrument": "instrument_name",
     "funding_time": "funding_time",
@@ -317,7 +318,7 @@ def validate_public_request(request: PublicRequest) -> None:
             raise C7APublicDataError("historical-data begin is after end")
         months = _month_starts(begin, end + 1)
         if not months or len(months) > MAX_MONTHS_PER_HISTORY_REQUEST:
-            raise C7APublicDataError("historical-data request exceeds 19 UTC months")
+            raise C7APublicDataError("historical-data request exceeds 9 UTC months")
     else:
         if parsed.path.startswith("/api/"):
             raise C7APublicDataError(
