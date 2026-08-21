@@ -182,6 +182,12 @@ def test_registry_rejects_authority_path_escape(tmp_path: Path) -> None:
             lambda payload: payload.update({"authenticated": True}),
             "safety-state drift",
         ),
+        (
+            lambda payload: payload.update(
+                {"btc_beta_benchmark_instrument": "ETH-USDT-SWAP"}
+            ),
+            "frozen field drift",
+        ),
     ],
 )
 def test_c10a_config_rejects_comparator_window_gate_or_safety_drift(
@@ -209,3 +215,4 @@ def test_c10a_contract_is_design_only_and_does_not_claim_profit() -> None:
     assert "`SHADOW_CLOSED`" in contract
     assert "`LIVE_FORBIDDEN`" in contract
     assert "No relatively best ineligible result" in contract
+    assert "`BTC-USDT-SWAP` benchmark mark candles are always retained" in contract

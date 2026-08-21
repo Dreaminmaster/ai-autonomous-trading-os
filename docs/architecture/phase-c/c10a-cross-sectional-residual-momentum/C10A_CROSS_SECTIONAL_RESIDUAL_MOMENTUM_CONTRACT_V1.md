@@ -175,7 +175,8 @@ funding, or later liquidity may not affect selection.
 Permitted source material is limited to official public OKX data:
 
 - historical one-hour swap trade candles;
-- historical one-hour swap mark-price candles;
+- historical one-hour swap mark-price candles for the selected instruments
+  and the fixed `BTC-USDT-SWAP` beta benchmark;
 - realized funding records for selected instruments.
 
 Official references:
@@ -193,6 +194,8 @@ The capture sequence is fixed:
 1. persist raw formation responses for all twelve instruments;
 2. strictly normalize formation candles and freeze the top eight;
 3. persist raw trade, mark, and funding responses required for those eight;
+   `BTC-USDT-SWAP` benchmark mark candles are always retained even if BTC is
+   not selected, and may affect only the frozen BTC-beta diagnostic;
 4. strictly normalize and inner-align only after raw persistence;
 5. create recursive SHA-256 manifests over source, normalized, replay,
    independent-review, and final-classification evidence.
