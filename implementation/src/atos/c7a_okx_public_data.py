@@ -41,6 +41,20 @@ class C7APublicDataError(RuntimeError):
 API_HOSTS = frozenset({"openapi.okx.com", "www.okx.com", "us.okx.com", "eea.okx.com"})
 C9A_PUBLIC_SPOT_TRADE_INSTRUMENTS = ("BTC-USDT", "ETH-USDT")
 C9A_PUBLIC_TRADE_INSTRUMENTS = (*C9A_PUBLIC_SPOT_TRADE_INSTRUMENTS, *INSTRUMENTS)
+C10A_PUBLIC_SWAP_INSTRUMENTS = (
+    "ADA-USDT-SWAP",
+    "AVAX-USDT-SWAP",
+    "BCH-USDT-SWAP",
+    "BTC-USDT-SWAP",
+    "DOGE-USDT-SWAP",
+    "DOT-USDT-SWAP",
+    "ETH-USDT-SWAP",
+    "LINK-USDT-SWAP",
+    "LTC-USDT-SWAP",
+    "SOL-USDT-SWAP",
+    "TRX-USDT-SWAP",
+    "XRP-USDT-SWAP",
+)
 TRADE_HISTORY_PATH = "/api/v5/market/history-candles"
 MARK_HISTORY_PATH = "/api/v5/market/history-mark-price-candles"
 FUNDING_HISTORY_PATH = "/api/v5/public/funding-rate-history"
@@ -182,9 +196,32 @@ def _iso_millis(value: int) -> str:
     )
 
 
-def _validate_instrument(instrument: str) -> None:
-    if instrument not in INSTRUMENTS:
-        raise C7APublicDataError(f"unsupported C7A instrument: {instrument!r}")
+def _validate_instrument(
+    instrument: str, *, allowed_instruments: Sequence[str] = INSTRUMENTS
+) -> None:
+    if instrument not in allowed_instruments:
+        raise C7APublicDataError(f"unsupported public instrument: {instrument!r}")
+
+
+def _validated_instrument_policy(
+    instruments: Sequence[str], trade_instruments: Sequence[str]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    values = tuple(instruments)
+    trade_values = tuple(trade_instruments)
+    if len(values) != len(set(values)) or len(trade_values) != len(set(trade_values)):
+        raise C7APublicDataError("duplicate public instrument policy")
+    policy = (frozenset(values), frozenset(trade_values))
+    supported = {
+        (frozenset(INSTRUMENTS), frozenset(INSTRUMENTS)),
+        (frozenset(INSTRUMENTS), frozenset(C9A_PUBLIC_TRADE_INSTRUMENTS)),
+        (
+            frozenset(C10A_PUBLIC_SWAP_INSTRUMENTS),
+            frozenset(C10A_PUBLIC_SWAP_INSTRUMENTS),
+        ),
+    }
+    if policy not in supported:
+        raise C7APublicDataError("unsupported public instrument policy")
+    return values, trade_values
 
 
 def _official_host(hostname: str | None) -> bool:
@@ -237,14 +274,14 @@ def _validate_api_query(
 
 
 def validate_public_request(
-    request: PublicRequest, *, trade_instruments: Sequence[str] = INSTRUMENTS
+    request: PublicRequest,
+    *,
+    instruments: Sequence[str] = INSTRUMENTS,
+    trade_instruments: Sequence[str] | None = None,
 ) -> None:
-    trade_set = frozenset(trade_instruments)
-    if trade_set not in {
-        frozenset(INSTRUMENTS),
-        frozenset(C9A_PUBLIC_TRADE_INSTRUMENTS),
-    }:
-        raise C7APublicDataError("unsupported public trade-instrument policy")
+    values, trade_values = _validated_instrument_policy(
+        instruments, trade_instruments if trade_instruments is not None else instruments
+    )
     if not request.request_id or request.method != "GET":
         raise C7APublicDataError(
             "public request requires a non-empty ID and GET method"
@@ -284,7 +321,7 @@ def validate_public_request(
             expected_path=TRADE_HISTORY_PATH,
             allowed_keys=frozenset({"instId", "bar", "limit", "after", "before"}),
             required_keys=frozenset({"instId", "bar", "limit"}),
-            allowed_instruments=trade_instruments,
+            allowed_instruments=trade_values,
         )
     elif request.source_family == "OKX_HISTORY_MARK_PRICE_CANDLES_API":
         if parsed.hostname not in API_HOSTS or parsed.path != MARK_HISTORY_PATH:
@@ -294,6 +331,7 @@ def validate_public_request(
             expected_path=MARK_HISTORY_PATH,
             allowed_keys=frozenset({"instId", "bar", "limit", "after", "before"}),
             required_keys=frozenset({"instId", "bar", "limit"}),
+            allowed_instruments=values,
         )
     elif request.source_family == "OKX_FUNDING_RATE_HISTORY_API":
         if parsed.hostname not in API_HOSTS or parsed.path != FUNDING_HISTORY_PATH:
@@ -303,6 +341,7 @@ def validate_public_request(
             expected_path=FUNDING_HISTORY_PATH,
             allowed_keys=frozenset({"instId", "limit", "after", "before"}),
             required_keys=frozenset({"instId", "limit"}),
+            allowed_instruments=values,
         )
     elif request.source_family == "OKX_HISTORICAL_DATA_API":
         if parsed.hostname not in API_HOSTS or parsed.path != HISTORICAL_DATA_PATH:
@@ -321,7 +360,7 @@ def validate_public_request(
             query["module"] != FUNDING_DOWNLOAD_MODULE
             or query["instType"] != "SWAP"
             or query["dateAggrType"] != FUNDING_DOWNLOAD_AGGREGATION
-            or f"{query['instFamilyList']}-SWAP" not in INSTRUMENTS
+            or f"{query['instFamilyList']}-SWAP" not in values
         ):
             raise C7APublicDataError("historical funding query identity drift")
         begin = _millis(query["begin"], "historical begin")
@@ -351,8 +390,9 @@ def build_mark_price_request(
     after_ms: int | None = None,
     before_ms: int | None = None,
     host: str = "www.okx.com",
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> PublicRequest:
-    _validate_instrument(instrument)
+    _validate_instrument(instrument, allowed_instruments=allowed_instruments)
     if after_ms is not None and before_ms is not None:
         raise C7APublicDataError("mark pagination may use after or before, not both")
     params = {"instId": instrument, "bar": "1H", "limit": str(MARK_PAGE_LIMIT)}
@@ -365,7 +405,7 @@ def build_mark_price_request(
         source_family="OKX_HISTORY_MARK_PRICE_CANDLES_API",
         url=_api_url(host, MARK_HISTORY_PATH, params),
     )
-    validate_public_request(request)
+    validate_public_request(request, instruments=allowed_instruments)
     return request
 
 
@@ -375,9 +415,10 @@ def build_trade_candle_request(
     after_ms: int | None = None,
     before_ms: int | None = None,
     host: str = "www.okx.com",
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> PublicRequest:
     """Build the official completed one-hour perpetual trade-candle request."""
-    _validate_instrument(instrument)
+    _validate_instrument(instrument, allowed_instruments=allowed_instruments)
     if after_ms is not None and before_ms is not None:
         raise C7APublicDataError("trade pagination may use after or before, not both")
     params = {"instId": instrument, "bar": "1H", "limit": str(TRADE_PAGE_LIMIT)}
@@ -390,7 +431,11 @@ def build_trade_candle_request(
         source_family="OKX_HISTORY_CANDLES_API",
         url=_api_url(host, TRADE_HISTORY_PATH, params),
     )
-    validate_public_request(request)
+    validate_public_request(
+        request,
+        instruments=allowed_instruments,
+        trade_instruments=allowed_instruments,
+    )
     return request
 
 
@@ -400,9 +445,10 @@ def build_recent_funding_request(
     after_ms: int | None = None,
     before_ms: int | None = None,
     host: str = "www.okx.com",
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> PublicRequest:
     """Build the documented recent-history request, never a deep-history substitute."""
-    _validate_instrument(instrument)
+    _validate_instrument(instrument, allowed_instruments=allowed_instruments)
     if after_ms is not None and before_ms is not None:
         raise C7APublicDataError("funding pagination may use after or before, not both")
     params = {"instId": instrument, "limit": str(FUNDING_PAGE_LIMIT)}
@@ -415,7 +461,7 @@ def build_recent_funding_request(
         source_family="OKX_FUNDING_RATE_HISTORY_API",
         url=_api_url(host, FUNDING_HISTORY_PATH, params),
     )
-    validate_public_request(request)
+    validate_public_request(request, instruments=allowed_instruments)
     return request
 
 
@@ -449,9 +495,10 @@ def build_historical_funding_manifest_requests(
     start_inclusive: Any,
     end_exclusive: Any,
     host: str = "openapi.okx.com",
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> tuple[PublicRequest, ...]:
     """Build bounded official batch-manifest requests for monthly funding archives."""
-    _validate_instrument(instrument)
+    _validate_instrument(instrument, allowed_instruments=allowed_instruments)
     start_ms = _timestamp_to_ms(start_inclusive)
     end_ms = _timestamp_to_ms(end_exclusive)
     months = _month_starts(start_ms, end_ms)
@@ -479,7 +526,7 @@ def build_historical_funding_manifest_requests(
                 },
             ),
         )
-        validate_public_request(request)
+        validate_public_request(request, instruments=allowed_instruments)
         requests.append(request)
     return tuple(requests)
 
@@ -578,9 +625,10 @@ def normalize_trade_candle_payload(
     payload: Mapping[str, Any],
     *,
     instrument: str,
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> tuple[dict[str, str], ...]:
     """Normalize only completed, exact-hour OKX perpetual trade candles."""
-    _validate_instrument(instrument)
+    _validate_instrument(instrument, allowed_instruments=allowed_instruments)
     if payload.get("code") != "0" or not isinstance(payload.get("data"), list):
         raise C7APublicDataError(
             "trade-candle payload is not a successful OKX response"
@@ -646,8 +694,9 @@ def normalize_mark_price_payload(
     payload: Mapping[str, Any],
     *,
     instrument: str,
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> tuple[dict[str, str], ...]:
-    _validate_instrument(instrument)
+    _validate_instrument(instrument, allowed_instruments=allowed_instruments)
     if payload.get("code") != "0" or not isinstance(payload.get("data"), list):
         raise C7APublicDataError("mark-price payload is not a successful OKX response")
     normalized: list[dict[str, str]] = []
@@ -725,8 +774,9 @@ def normalize_funding_api_payload(
     payload: Mapping[str, Any],
     *,
     instrument: str,
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> tuple[dict[str, str], ...]:
-    _validate_instrument(instrument)
+    _validate_instrument(instrument, allowed_instruments=allowed_instruments)
     if payload.get("code") != "0" or not isinstance(payload.get("data"), list):
         raise C7APublicDataError("funding payload is not a successful OKX response")
     return _normalize_funding_records(payload["data"], instrument=instrument)
@@ -737,6 +787,7 @@ def normalize_funding_download_csv(
     *,
     instrument: str,
     column_map: Mapping[str, str],
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> tuple[dict[str, str], ...]:
     """Normalize an official OKX CSV using an explicit, reviewed column map.
 
@@ -744,7 +795,7 @@ def normalize_funding_download_csv(
     ``realized_rate``.  The explicit mapping prevents silent acceptance of a
     changed download schema.
     """
-    _validate_instrument(instrument)
+    _validate_instrument(instrument, allowed_instruments=allowed_instruments)
     required = {"instrument", "funding_time", "realized_rate"}
     if set(column_map) != required or any(not value for value in column_map.values()):
         raise C7APublicDataError(
@@ -782,11 +833,15 @@ def normalize_funding_download(
     *,
     instrument: str,
     column_map: Mapping[str, str],
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> tuple[dict[str, str], ...]:
     """Normalize one official CSV or one-member ZIP without archive extraction."""
     if not raw.startswith(b"PK\x03\x04"):
         return normalize_funding_download_csv(
-            raw, instrument=instrument, column_map=column_map
+            raw,
+            instrument=instrument,
+            column_map=column_map,
+            allowed_instruments=allowed_instruments,
         )
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
@@ -820,7 +875,10 @@ def normalize_funding_download(
     if len(csv_raw) != member.file_size:
         raise C7APublicDataError("funding ZIP member size changed while reading")
     return normalize_funding_download_csv(
-        csv_raw, instrument=instrument, column_map=column_map
+        csv_raw,
+        instrument=instrument,
+        column_map=column_map,
+        allowed_instruments=allowed_instruments,
     )
 
 
@@ -830,9 +888,10 @@ def normalize_historical_funding_manifest(
     instrument: str,
     start_inclusive: Any,
     end_exclusive: Any,
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> tuple[dict[str, str], ...]:
     """Validate one OKX batch response and return its exact monthly archives."""
-    _validate_instrument(instrument)
+    _validate_instrument(instrument, allowed_instruments=allowed_instruments)
     if payload.get("code") != "0" or not isinstance(payload.get("data"), list):
         raise C7APublicDataError("historical funding manifest is not successful")
     expected_months = {
@@ -962,8 +1021,9 @@ def select_exact_mark_interval(
     instrument: str,
     start_inclusive: Any,
     end_exclusive: Any,
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> tuple[dict[str, Any], ...]:
-    _validate_instrument(instrument)
+    _validate_instrument(instrument, allowed_instruments=allowed_instruments)
     start_ms = _timestamp_to_ms(start_inclusive)
     end_ms = _timestamp_to_ms(end_exclusive)
     if start_ms >= end_ms or (end_ms - start_ms) % HOUR_MS:
@@ -999,9 +1059,10 @@ def select_exact_trade_interval(
     instrument: str,
     start_inclusive: Any,
     end_exclusive: Any,
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> tuple[dict[str, Any], ...]:
     """Select a gap-free exact-hour trade-candle interval without overshoot rows."""
-    _validate_instrument(instrument)
+    _validate_instrument(instrument, allowed_instruments=allowed_instruments)
     start_ms = _timestamp_to_ms(start_inclusive)
     end_ms = _timestamp_to_ms(end_exclusive)
     if start_ms >= end_ms or (end_ms - start_ms) % HOUR_MS:
@@ -1046,8 +1107,9 @@ def select_funding_interval(
     instrument: str,
     start_inclusive: Any,
     end_exclusive: Any,
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> tuple[dict[str, Any], ...]:
-    _validate_instrument(instrument)
+    _validate_instrument(instrument, allowed_instruments=allowed_instruments)
     start_ms = _timestamp_to_ms(start_inclusive)
     end_ms = _timestamp_to_ms(end_exclusive)
     if start_ms >= end_ms:

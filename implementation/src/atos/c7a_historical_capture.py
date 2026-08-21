@@ -32,6 +32,7 @@ from atos.c7a_historical_schedule import (
 )
 from atos.c7a_okx_public_data import (
     C9A_PUBLIC_TRADE_INSTRUMENTS,
+    C10A_PUBLIC_SWAP_INSTRUMENTS,
     FUNDING_ARCHIVE_COLUMNS,
     HOUR_MS,
     HTTP_TIMEOUT_SECONDS,
@@ -263,6 +264,7 @@ def fetch_raw_strict(
     opener=urlopen,
     collected_at: datetime | None = None,
     sleeper: Callable[[float], None] = time.sleep,
+    instruments: Sequence[str] = INSTRUMENTS,
     trade_instruments: Sequence[str] = INSTRUMENTS,
 ) -> tuple[bytes, CaptureRecord]:
     """Fetch one public object and preserve redirect-aware provenance.
@@ -272,7 +274,11 @@ def fetch_raw_strict(
     revalidated as official OKX download requests and both URLs are retained.
     """
     try:
-        validate_public_request(request, trade_instruments=trade_instruments)
+        validate_public_request(
+            request,
+            instruments=instruments,
+            trade_instruments=trade_instruments,
+        )
     except C7APublicDataError as exc:
         raise C7AHistoricalCaptureError(str(exc)) from exc
 
@@ -316,7 +322,11 @@ def fetch_raw_strict(
                 method=request.method,
                 headers=request.headers,
             )
-            validate_public_request(final_request, trade_instruments=trade_instruments)
+            validate_public_request(
+                final_request,
+                instruments=instruments,
+                trade_instruments=trade_instruments,
+            )
             if request.source_family in API_FAMILIES and (
                 _api_semantics(final_url) != _api_semantics(request.url)
             ):
@@ -403,15 +413,20 @@ class CapturePackage:
         allowed_set = frozenset(values)
         trade_set = frozenset(trade_values)
         supported = {
-            frozenset(INSTRUMENTS),
-            frozenset(C9A_PUBLIC_TRADE_INSTRUMENTS),
+            (frozenset(INSTRUMENTS), frozenset(INSTRUMENTS)),
+            (
+                frozenset(C9A_PUBLIC_TRADE_INSTRUMENTS),
+                frozenset(C9A_PUBLIC_TRADE_INSTRUMENTS),
+            ),
+            (
+                frozenset(C10A_PUBLIC_SWAP_INSTRUMENTS),
+                frozenset(C10A_PUBLIC_SWAP_INSTRUMENTS),
+            ),
         }
-        if (
-            len(values) != len(allowed_set)
-            or len(trade_values) != len(trade_set)
-            or allowed_set not in supported
-            or trade_set != allowed_set
-        ):
+        if len(values) != len(allowed_set) or len(trade_values) != len(trade_set) or (
+            allowed_set,
+            trade_set,
+        ) not in supported:
             raise C7AHistoricalCaptureError("invalid capture-package policy")
         self.root = Path(root)
         if self.root.exists():
@@ -426,6 +441,11 @@ class CapturePackage:
         self._finalized = False
         self._allowed_instruments = allowed_set
         self._public_trade_instruments = trade_values
+        self._public_instruments = (
+            tuple(INSTRUMENTS)
+            if allowed_set == frozenset(C9A_PUBLIC_TRADE_INSTRUMENTS)
+            else values
+        )
 
     def _assert_open(self) -> None:
         if self._finalized:
@@ -528,10 +548,14 @@ class CapturePackage:
                 record.final_url,
             )
             validate_public_request(
-                requested, trade_instruments=self._public_trade_instruments
+                requested,
+                instruments=self._public_instruments,
+                trade_instruments=self._public_trade_instruments,
             )
             validate_public_request(
-                final, trade_instruments=self._public_trade_instruments
+                final,
+                instruments=self._public_instruments,
+                trade_instruments=self._public_trade_instruments,
             )
         except C7APublicDataError as exc:
             raise C7AHistoricalCaptureError(str(exc)) from exc
