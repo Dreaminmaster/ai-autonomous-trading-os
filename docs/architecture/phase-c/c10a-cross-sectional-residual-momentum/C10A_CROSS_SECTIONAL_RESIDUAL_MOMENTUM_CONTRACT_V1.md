@@ -201,9 +201,11 @@ The capture sequence is fixed:
    independent-review, and final-classification evidence.
 
 Every retained request records requested URL, final URL, collection time,
-media type, byte length, retry history, and SHA-256. Redirects may not change
-official host, path, or query semantics. Writes are atomic, may not overwrite,
-and may not escape the package root.
+media type, byte length, retry history, and SHA-256. Redirects may not leave
+the reviewed official-host allowlist. API redirects may not change the endpoint
+path or query semantics; official archive-download redirects are revalidated
+against the download allowlist and both URLs are retained. Writes are atomic,
+may not overwrite, and may not escape the package root.
 
 All normalized timestamps are UTC, unique, strictly increasing, and on the
 one-hour grid. Candles must be confirmed, complete, finite, and have positive
