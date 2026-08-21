@@ -249,7 +249,7 @@ def _independent_scale(
                     - state["margin"]
                 )
                 margin_ok &= target_margin - swap_fee > 0
-        return free_cash >= 0, margin_ok
+        return free_cash >= -RECONCILIATION_TOLERANCE, margin_ok
 
     def unavailable(flat_feasible: bool) -> Decimal:
         if flat_feasible:
@@ -312,6 +312,25 @@ def _independent_scale(
 
 
 def _audit_carry(
+    replay: Mapping[str, Any],
+    *,
+    spot_trade: Mapping[str, Mapping[datetime, Mapping[str, Decimal]]],
+    swap_trade: Mapping[str, Mapping[datetime, Mapping[str, Decimal]]],
+    marks: Mapping[str, Mapping[datetime, Mapping[str, Decimal]]],
+    funding: Mapping[str, tuple[tuple[datetime, Decimal], ...]],
+) -> dict[str, Any]:
+    with localcontext() as context:
+        context.prec = 60
+        return _audit_carry_at_precision(
+            replay,
+            spot_trade=spot_trade,
+            swap_trade=swap_trade,
+            marks=marks,
+            funding=funding,
+        )
+
+
+def _audit_carry_at_precision(
     replay: Mapping[str, Any],
     *,
     spot_trade: Mapping[str, Mapping[datetime, Mapping[str, Decimal]]],
@@ -794,14 +813,20 @@ def _audit_carry(
                 spot: swap_trade[SPOT_TO_SWAP[spot]][current]["open"]
                 for spot in SPOT_INSTRUMENTS
             }
-            expected_scale = _independent_scale(
-                states,
-                cash=cash,
-                plan=expected_plan,
-                spot_opens=spot_opens,
-                swap_opens=swap_opens,
-                cost_rate=rate,
-            )
+            try:
+                expected_scale = _independent_scale(
+                    states,
+                    cash=cash,
+                    plan=expected_plan,
+                    spot_opens=spot_opens,
+                    swap_opens=swap_opens,
+                    cost_rate=rate,
+                )
+            except C9AHistoricalIndependentError as exc:
+                raise C9AHistoricalIndependentError(
+                    "independent scale failed for "
+                    f"{policy}:{cost_label} at {iso(current)}"
+                ) from exc
             checks["maximum_scale_recompute"] &= _close(
                 decision.get("target_scale"), expected_scale
             )

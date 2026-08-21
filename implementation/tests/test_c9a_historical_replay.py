@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
+
 from atos.c9a_contract import COST_RATES, HOUR, SPOT_INSTRUMENTS, SWAP_INSTRUMENTS
 from atos.c9a_historical_independent import (
     review_historical_window,
@@ -54,6 +55,52 @@ def _fixture(window_id: str = "W1") -> tuple[dict, dict, dict]:
             current += timedelta(hours=8)
         funding_rows[instrument] = rows
     return trade_rows, mark_rows, funding_rows
+
+
+def _varying_fixture() -> tuple[dict, dict, dict]:
+    trades, marks, funding = _fixture()
+    window = window_by_id("W1")
+
+    def price(timestamp: str, base: Decimal, *, swap: bool) -> Decimal:
+        stamp = datetime.fromisoformat(timestamp)
+        hours = int((stamp - window.start).total_seconds() // 3600)
+        regime = hours // 168 % 4
+        within_week = hours % 168
+        factor = (
+            Decimal(1)
+            + Decimal(regime) * Decimal("0.12")
+            + Decimal(within_week) * Decimal("0.00005")
+        )
+        return base * factor * (Decimal("1.001") if swap else Decimal(1))
+
+    for instrument, rows in trades.items():
+        base = Decimal(100) if instrument.startswith("BTC") else Decimal(50)
+        is_swap = instrument.endswith("SWAP")
+        for row in rows:
+            opening = price(row["timestamp"], base, swap=is_swap)
+            row["open"] = str(opening)
+            row["close"] = str(opening * Decimal("1.00002"))
+    for instrument, rows in marks.items():
+        base = Decimal(100) if instrument.startswith("BTC") else Decimal(50)
+        for row in rows:
+            row["close"] = str(
+                price(row["timestamp"], base, swap=True) * Decimal("1.00002")
+            )
+    disqualifying_source = window.start + timedelta(days=28) - 2 * HOUR
+    eth_spot_close = next(
+        Decimal(row["close"])
+        for row in trades["ETH-USDT"]
+        if row["timestamp"] == disqualifying_source.isoformat()
+    )
+    next(
+        row
+        for row in marks["ETH-USDT-SWAP"]
+        if row["timestamp"] == disqualifying_source.isoformat()
+    )["close"] = str(eth_spot_close * Decimal("1.03"))
+    for rows in funding.values():
+        for index, row in enumerate(rows):
+            row["realized_rate"] = "-0.00002" if index % 7 == 0 else "0.00016"
+    return trades, marks, funding
 
 
 @pytest.fixture(scope="module")
@@ -369,3 +416,26 @@ def test_each_frozen_window_completes_source_ordered_independent_recompute() -> 
         windows[window_id] = result
     pooled = summarize_w1_w5(windows)
     assert review_pooled_summary(pooled, windows)["status"] == "PASS"
+
+
+def test_varying_prices_resizes_and_eligibility_switches_recompute_independently() -> (
+    None
+):
+    trades, marks, funding = _varying_fixture()
+    result = evaluate_historical_window(
+        window_id="W1", trade_rows=trades, mark_rows=marks, funding_rows=funding
+    )
+    candidate = result["replays"]["candidate"]["1.0x"]
+    actions = [
+        action["action"]
+        for decision in candidate["decisions"]
+        for action in decision["actions"].values()
+    ]
+    assert "RESIZE" in actions
+    assert "CLOSE" in actions
+    assert (
+        review_historical_window(
+            result, trade_rows=trades, mark_rows=marks, funding_rows=funding
+        )["status"]
+        == "PASS"
+    )
