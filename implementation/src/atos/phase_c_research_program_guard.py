@@ -22,7 +22,7 @@ EXPECTED_REGISTRY_SHA256 = (
     "6f3499eabddc17e49527f9d47ef0cfae393ad47c3e398b95781db5981d4473a2"
 )
 EXPECTED_C10A_CONFIG_SHA256 = (
-    "cd2e1f9ed96d7deac16bf0dd0ba86e115b72f8464e56765f1ed0dd6d5a39cd32"
+    "03843f32818240f8221203ce40379958b58da7aabf03686b42ca0d07a9eeeee1"
 )
 
 EXPECTED_STAGE_TRIALS = (
@@ -279,6 +279,9 @@ def validate_c10a_config(
         "timeframe": "1H",
         "decision_schedule": "MONDAY_00_UTC",
         "btc_beta_benchmark_instrument": "BTC-USDT-SWAP",
+        "btc_beta_weekly_return_clock": (
+            "ARITHMETIC_MARK_CLOSE_T_MINUS_1H_TO_NEXT_T_MINUS_1H"
+        ),
         "signal_candle_lag_hours": 2,
         "beta_lookback_returns": 2016,
         "residual_score_returns": 672,

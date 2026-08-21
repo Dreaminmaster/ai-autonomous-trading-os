@@ -30,6 +30,7 @@
   "formation_end_exclusive": "2024-01-01T00:00:00Z",
   "mark_warmup_start": "2023-10-08T22:00:00Z",
   "btc_beta_benchmark_instrument": "BTC-USDT-SWAP",
+  "btc_beta_weekly_return_clock": "ARITHMETIC_MARK_CLOSE_T_MINUS_1H_TO_NEXT_T_MINUS_1H",
   "scored_start": "2024-01-01T00:00:00Z",
   "scored_end_exclusive": "2026-06-29T00:00:00Z",
   "timeframe": "1H",

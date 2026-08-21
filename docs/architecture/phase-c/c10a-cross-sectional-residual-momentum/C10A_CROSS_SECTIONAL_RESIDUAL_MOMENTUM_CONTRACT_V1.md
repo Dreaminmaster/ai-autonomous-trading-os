@@ -367,8 +367,11 @@ uses raw weekly Sharpe, bias-corrected sample skewness, ordinary kurtosis, and
 the non-normality correction. Invalid variance or radicand is PSR zero unless
 caused by invalid source/program state, which fails the run.
 
-BTC beta is OLS beta of candidate weekly returns on BTC weekly mark returns,
-with intercept, over the same 130 buckets. Maximum drawdown is the worst
+BTC beta is OLS beta of candidate weekly arithmetic returns on BTC weekly
+arithmetic mark returns, with intercept, over the same 130 buckets. For a
+bucket `[t, next_t)`, the benchmark return is the close of the mark candle
+stamped `next_t - 1 hour` divided by the close of the mark candle stamped
+`t - 1 hour`, minus one. Maximum drawdown is the worst
 within-window drawdown over complete post-event hourly paths. Annualized
 one-way turnover is absolute changed notional divided by pre-trade equity,
 summed and divided by 2.5 years.
