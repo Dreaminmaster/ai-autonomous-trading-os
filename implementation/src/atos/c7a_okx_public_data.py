@@ -39,6 +39,8 @@ class C7APublicDataError(RuntimeError):
 
 
 API_HOSTS = frozenset({"openapi.okx.com", "www.okx.com", "us.okx.com", "eea.okx.com"})
+C9A_PUBLIC_SPOT_TRADE_INSTRUMENTS = ("BTC-USDT", "ETH-USDT")
+C9A_PUBLIC_TRADE_INSTRUMENTS = (*C9A_PUBLIC_SPOT_TRADE_INSTRUMENTS, *INSTRUMENTS)
 TRADE_HISTORY_PATH = "/api/v5/market/history-candles"
 MARK_HISTORY_PATH = "/api/v5/market/history-mark-price-candles"
 FUNDING_HISTORY_PATH = "/api/v5/public/funding-rate-history"
@@ -206,11 +208,12 @@ def _validate_api_query(
     expected_path: str,
     allowed_keys: frozenset[str],
     required_keys: frozenset[str],
+    allowed_instruments: Sequence[str] = INSTRUMENTS,
 ) -> None:
     query = _query_map(request.url)
     if set(query) - allowed_keys or not required_keys.issubset(query):
         raise C7APublicDataError("public API query contract drift")
-    if query.get("instId") not in INSTRUMENTS:
+    if query.get("instId") not in allowed_instruments:
         raise C7APublicDataError("public API instrument drift")
     if "after" in query and "before" in query:
         raise C7APublicDataError(
@@ -233,7 +236,15 @@ def _validate_api_query(
             raise C7APublicDataError("funding API limit drift")
 
 
-def validate_public_request(request: PublicRequest) -> None:
+def validate_public_request(
+    request: PublicRequest, *, trade_instruments: Sequence[str] = INSTRUMENTS
+) -> None:
+    trade_set = frozenset(trade_instruments)
+    if trade_set not in {
+        frozenset(INSTRUMENTS),
+        frozenset(C9A_PUBLIC_TRADE_INSTRUMENTS),
+    }:
+        raise C7APublicDataError("unsupported public trade-instrument policy")
     if not request.request_id or request.method != "GET":
         raise C7APublicDataError(
             "public request requires a non-empty ID and GET method"
@@ -273,6 +284,7 @@ def validate_public_request(request: PublicRequest) -> None:
             expected_path=TRADE_HISTORY_PATH,
             allowed_keys=frozenset({"instId", "bar", "limit", "after", "before"}),
             required_keys=frozenset({"instId", "bar", "limit"}),
+            allowed_instruments=trade_instruments,
         )
     elif request.source_family == "OKX_HISTORY_MARK_PRICE_CANDLES_API":
         if parsed.hostname not in API_HOSTS or parsed.path != MARK_HISTORY_PATH:

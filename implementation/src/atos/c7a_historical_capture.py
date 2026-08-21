@@ -31,6 +31,7 @@ from atos.c7a_historical_schedule import (
     required_source_bounds,
 )
 from atos.c7a_okx_public_data import (
+    C9A_PUBLIC_TRADE_INSTRUMENTS,
     FUNDING_ARCHIVE_COLUMNS,
     HOUR_MS,
     HTTP_TIMEOUT_SECONDS,
@@ -62,9 +63,7 @@ API_FAMILIES = frozenset(
     }
 )
 FUNDING_SETTLEMENT_COMPLETION_TOLERANCE_MS = 60_000
-MAX_FUNDING_SETTLEMENT_GAP_MS = (
-    8 * HOUR_MS + FUNDING_SETTLEMENT_COMPLETION_TOLERANCE_MS
-)
+MAX_FUNDING_SETTLEMENT_GAP_MS = 8 * HOUR_MS + FUNDING_SETTLEMENT_COMPLETION_TOLERANCE_MS
 CAPTURE_PLAN_KEYS = frozenset(
     {
         "window_ids",
@@ -264,6 +263,7 @@ def fetch_raw_strict(
     opener=urlopen,
     collected_at: datetime | None = None,
     sleeper: Callable[[float], None] = time.sleep,
+    trade_instruments: Sequence[str] = INSTRUMENTS,
 ) -> tuple[bytes, CaptureRecord]:
     """Fetch one public object and preserve redirect-aware provenance.
 
@@ -272,7 +272,7 @@ def fetch_raw_strict(
     revalidated as official OKX download requests and both URLs are retained.
     """
     try:
-        validate_public_request(request)
+        validate_public_request(request, trade_instruments=trade_instruments)
     except C7APublicDataError as exc:
         raise C7AHistoricalCaptureError(str(exc)) from exc
 
@@ -316,7 +316,7 @@ def fetch_raw_strict(
                 method=request.method,
                 headers=request.headers,
             )
-            validate_public_request(final_request)
+            validate_public_request(final_request, trade_instruments=trade_instruments)
             if request.source_family in API_FAMILIES and (
                 _api_semantics(final_url) != _api_semantics(request.url)
             ):
@@ -391,7 +391,28 @@ def fetch_raw_strict(
 class CapturePackage:
     """One immutable historical capture package."""
 
-    def __init__(self, root: Path):
+    def __init__(
+        self,
+        root: Path,
+        *,
+        allowed_instruments: Sequence[str] = INSTRUMENTS,
+        public_trade_instruments: Sequence[str] = INSTRUMENTS,
+    ):
+        values = tuple(allowed_instruments)
+        trade_values = tuple(public_trade_instruments)
+        allowed_set = frozenset(values)
+        trade_set = frozenset(trade_values)
+        supported = {
+            frozenset(INSTRUMENTS),
+            frozenset(C9A_PUBLIC_TRADE_INSTRUMENTS),
+        }
+        if (
+            len(values) != len(allowed_set)
+            or len(trade_values) != len(trade_set)
+            or allowed_set not in supported
+            or trade_set != allowed_set
+        ):
+            raise C7AHistoricalCaptureError("invalid capture-package policy")
         self.root = Path(root)
         if self.root.exists():
             raise C7AHistoricalCaptureError(
@@ -403,6 +424,8 @@ class CapturePackage:
         self._request_ids: set[str] = set()
         self._normalized_series: dict[tuple[str, str], tuple[str, str]] = {}
         self._finalized = False
+        self._allowed_instruments = allowed_set
+        self._public_trade_instruments = trade_values
 
     def _assert_open(self) -> None:
         if self._finalized:
@@ -463,7 +486,7 @@ class CapturePackage:
         key = (series_type, instrument)
         if (
             series_type not in {"marks", "trades", "funding"}
-            or instrument not in INSTRUMENTS
+            or instrument not in self._allowed_instruments
         ):
             raise C7AHistoricalCaptureError("unsupported normalized series identity")
         if key in self._normalized_series:
@@ -504,8 +527,12 @@ class CapturePackage:
                 record.source_family,
                 record.final_url,
             )
-            validate_public_request(requested)
-            validate_public_request(final)
+            validate_public_request(
+                requested, trade_instruments=self._public_trade_instruments
+            )
+            validate_public_request(
+                final, trade_instruments=self._public_trade_instruments
+            )
         except C7APublicDataError as exc:
             raise C7AHistoricalCaptureError(str(exc)) from exc
         if record.source_family in API_FAMILIES and (
