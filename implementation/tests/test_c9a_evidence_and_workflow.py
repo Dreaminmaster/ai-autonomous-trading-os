@@ -5,10 +5,10 @@ import inspect
 import json
 from pathlib import Path
 
-import atos.c9a_historical_evidence as evidence_module
 import pytest
+
+import atos.c9a_historical_evidence as evidence_module
 import scripts.c9a_w1_w5_evaluate as evaluate_script
-import yaml
 from atos.c7a_historical_capture import CaptureRecord, fetch_raw_strict
 from atos.c9a_contract import ALL_TRADE_INSTRUMENTS, SWAP_INSTRUMENTS
 from atos.c9a_historical_capture import (
@@ -201,20 +201,14 @@ def test_shared_transport_extension_is_explicit_and_default_safe() -> None:
     assert "request_validator" not in inspect.signature(fetch_raw_strict).parameters
 
 
-def test_one_shot_workflow_is_manual_main_only_and_public_read_only() -> None:
+def test_completed_one_shot_workflow_is_closed() -> None:
     path = ROOT / ".github" / "workflows" / "freqtrade-validation.yml"
     text = path.read_text(encoding="utf-8")
-    parsed = yaml.safe_load(text)
-    dispatch = parsed[True]["workflow_dispatch"]
-    assert dispatch["inputs"]["c9a_w1_w5_authoritative"]["type"] == "boolean"
-    job = parsed["jobs"]["c9a-w1-w5-authoritative"]
-    assert "github.ref == 'refs/heads/main'" in job["if"]
-    assert job["permissions"] == {"contents": "read"}
-    assert "persist-credentials: false" in text
-    assert "scripts/c9a_w1_w5_capture.py" in text
-    assert "scripts/c9a_w1_w5_evaluate.py" in text
-    assert "api/v5/trade/order" not in text
-    assert "${{ secrets." not in text
+    assert "workflow_dispatch:" in text
+    assert "c9a_w1_w5_authoritative" not in text
+    assert "c9a-w1-w5-authoritative" not in text
+    assert "scripts/c9a_w1_w5_capture.py" not in text
+    assert "scripts/c9a_w1_w5_evaluate.py" not in text
 
 
 def test_independent_module_does_not_import_production_engine() -> None:

@@ -16,12 +16,6 @@ on:
       - '!implementation/tests/test_c6a_source_authority*.py'
       - '!implementation/scripts/run_c6a_source_authority_gate.py'
   workflow_dispatch:
-    inputs:
-      c9a_w1_w5_authoritative:
-        description: 'Run the one-shot C9A official-public W1-W5 authority package'
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   atos-tests:
@@ -220,63 +214,3 @@ jobs:
             implementation/validation_summary.json
             implementation/validation_summary.md
           if-no-files-found: error
-
-  c9a-w1-w5-authoritative:
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      inputs.c9a_w1_w5_authoritative == true &&
-      github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Bind exact clean implementation checkout
-        run: |
-          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          test -z "$(git status --porcelain=v1 --untracked-files=no)"
-      - name: Install reviewed C9A runtime
-        run: |
-          cd implementation
-          python -m pip install --upgrade pip
-          python -m pip install -e '.[dev]'
-      - name: Capture official-public OKX W1-W5 data
-        run: |
-          cd implementation
-          set -o pipefail
-          python scripts/c9a_w1_w5_capture.py \
-            --output "${RUNNER_TEMP}/c9a-capture" \
-            --implementation-sha "${GITHUB_SHA}" \
-            2>&1 | tee "${RUNNER_TEMP}/c9a-capture.log"
-      - name: Replay and independently recompute C9A economics
-        run: |
-          cd implementation
-          set +e
-          python scripts/c9a_w1_w5_evaluate.py \
-            --capture "${RUNNER_TEMP}/c9a-capture" \
-            --output "${RUNNER_TEMP}/c9a-evidence" \
-            --implementation-sha "${GITHUB_SHA}" \
-            --authoritative-run-id "${GITHUB_RUN_ID}" \
-            2>&1 | tee "${RUNNER_TEMP}/c9a-evaluate.log"
-          status=${PIPESTATUS[0]}
-          set -e
-          test "${status}" -le 1
-      - name: Upload immutable C9A authority package
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: c9a-w1-w5-authority-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/c9a-capture
-            ${{ runner.temp }}/c9a-evidence
-            ${{ runner.temp }}/c9a-capture.log
-            ${{ runner.temp }}/c9a-evaluate.log
-          if-no-files-found: warn
-          retention-days: 30
