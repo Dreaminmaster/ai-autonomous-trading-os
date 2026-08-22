@@ -1,0 +1,123 @@
+{
+  "schema_version": 2,
+  "program": "PHASE_C_PROFITABILITY_RESEARCH",
+  "history_semantics": "DECLARED_OBSERVED_TRIAL_LOWER_BOUND",
+  "prior_observed_economic_trial_count": 626,
+  "prospective_stage": "C11A",
+  "prospective_candidate_count": 1,
+  "familywise_trial_count": 627,
+  "familywise_alpha": "0.05",
+  "untracked_human_discretion_fully_corrected": false,
+  "stages": [
+    {
+      "stage": "C0B",
+      "observed_economic_trials": 9,
+      "result": "NO_SURVIVOR",
+      "authority_path": "docs/architecture/phase-c/C0C_COST_AWARE_EMA_PLAN_V1.md",
+      "authority_markers": [
+        "C0B Matrix #2 (`29352209123`) produced a valid `NO SURVIVOR` result.",
+        "None of the nine deterministic strategy/timeframe candidates"
+      ]
+    },
+    {
+      "stage": "C0C",
+      "observed_economic_trials": 600,
+      "result": "REJECTED",
+      "authority_path": "docs/architecture/phase-c/c0c/C0C_COST_AWARE_EMA_RESULT_V1.md",
+      "authority_markers": ["Status: `REJECTED`", "three 200-epoch Hyperopt runs"]
+    },
+    {
+      "stage": "C1A",
+      "observed_economic_trials": 3,
+      "result": "REJECTED",
+      "authority_path": "docs/architecture/phase-c/c1a-family-screen/C1A_STRATEGY_FAMILY_SCREEN_RESULT_V1.md",
+      "authority_markers": ["- Economic result: `REJECTED`", "- Selected family: `null`"]
+    },
+    {
+      "stage": "C2A",
+      "observed_economic_trials": 3,
+      "result": "REJECTED",
+      "authority_path": "docs/architecture/phase-c/c2a-low-turnover-allocation/C2A_LOW_TURNOVER_ALLOCATION_RESULT_V1.md",
+      "authority_markers": ["- Economic result: `REJECTED`", "- Selected policy: `null`"]
+    },
+    {
+      "stage": "C3A",
+      "observed_economic_trials": 3,
+      "result": "REJECTED",
+      "authority_path": "docs/architecture/phase-c/c3a-residual-mean-reversion/C3A_RESIDUAL_MEAN_REVERSION_RESULT_V1.md",
+      "authority_markers": ["- Economic result: `REJECTED`", "- Selected policy: `null`"]
+    },
+    {
+      "stage": "C4A",
+      "observed_economic_trials": 3,
+      "result": "REJECTED",
+      "authority_path": "docs/architecture/phase-c/c4a-large-liquid-cross-sectional-momentum/C4A_LARGE_LIQUID_CROSS_SECTIONAL_MOMENTUM_RESULT_V1.md",
+      "authority_markers": [
+        "- Economic result: `REJECTED`",
+        "within-stage DSR correction for exactly three C4A policy trials"
+      ]
+    },
+    {
+      "stage": "C5A",
+      "observed_economic_trials": 2,
+      "result": "REJECTED",
+      "authority_path": "docs/architecture/phase-c/c5a-derivatives-crowding-regime/C5A_DERIVATIVES_CROWDING_REGIME_RESULT_V1.md",
+      "authority_markers": ["- Economic result: `REJECTED`", "### Non-selectable ablation"]
+    },
+    {
+      "stage": "C6A",
+      "observed_economic_trials": 0,
+      "result": "DATA_AUTHORITY_FAILURE_ECONOMICS_NOT_RUN",
+      "authority_path": "docs/architecture/phase-c/c6a-market-neutral-funding-carry/C6A_MARKET_NEUTRAL_FUNDING_CARRY_RESULT_V1.md",
+      "authority_markers": ["- Economic screen: `NOT_RUN`", "- Economic result: `NOT_AVAILABLE`"]
+    },
+    {
+      "stage": "C7A",
+      "observed_economic_trials": 1,
+      "result": "ECONOMIC_FAIL",
+      "authority_path": "docs/architecture/phase-c/c7a-beta-neutral-funding-dispersion/C7A_BETA_NEUTRAL_FUNDING_DISPERSION_RESULT_V1.md",
+      "authority_markers": ["- Classification: `ECONOMIC_FAIL`", "- Rerun after economic inspection: `NOT_AUTHORIZED`"]
+    },
+    {
+      "stage": "C8A",
+      "observed_economic_trials": 1,
+      "result": "ECONOMIC_FAIL",
+      "authority_path": "docs/architecture/phase-c/c8a-short-horizon-time-series-momentum/C8A_SHORT_HORIZON_TIME_SERIES_MOMENTUM_RESULT_V1.md",
+      "authority_markers": ["- Classification: `ECONOMIC_FAIL`", "- Rerun after economic inspection: `NOT_AUTHORIZED`"]
+    },
+    {
+      "stage": "C9A",
+      "observed_economic_trials": 1,
+      "result": "ECONOMIC_FAIL",
+      "authority_path": "docs/architecture/phase-c/c9a-continuous-notional-funding-carry/C9A_CONTINUOUS_NOTIONAL_FUNDING_CARRY_RESULT_V1.md",
+      "authority_markers": ["- Classification: `ECONOMIC_FAIL`", "- Rerun after economic inspection: `NOT_AUTHORIZED`"]
+    },
+    {
+      "stage": "C10A",
+      "observed_economic_trials": 0,
+      "result": "PROGRAM_FAILURE_ECONOMICS_NOT_RUN",
+      "authority_path": "docs/architecture/phase-c/c10a-cross-sectional-residual-momentum/C10A_CROSS_SECTIONAL_RESIDUAL_MOMENTUM_RESULT_V1.md",
+      "authority_markers": [
+        "- Classification: `PROGRAM_FAILURE`",
+        "- Economic PASS/FAIL: `NOT_PRODUCED`",
+        "- Authoritative rerun: `NOT_AUTHORIZED`"
+      ]
+    }
+  ],
+  "exposed_economic_interval_union": {
+    "start_inclusive": "2023-07-03T00:00:00Z",
+    "end_exclusive": "2026-06-29T00:00:00Z",
+    "status": "HISTORICAL_DEVELOPMENT_ONLY"
+  },
+  "c11a_windows": [
+    {"id": "H1", "start": "2024-01-01T00:00:00Z", "end": "2024-07-01T00:00:00Z"},
+    {"id": "H2", "start": "2024-07-01T00:00:00Z", "end": "2024-12-30T00:00:00Z"},
+    {"id": "H3", "start": "2024-12-30T00:00:00Z", "end": "2025-06-30T00:00:00Z"},
+    {"id": "H4", "start": "2025-06-30T00:00:00Z", "end": "2025-12-29T00:00:00Z"},
+    {"id": "H5", "start": "2025-12-29T00:00:00Z", "end": "2026-06-29T00:00:00Z"}
+  ],
+  "promotion_state": "RESEARCH_ONLY",
+  "paper_state": "PAPER_CLOSED",
+  "shadow_state": "SHADOW_CLOSED",
+  "live_state": "LIVE_FORBIDDEN"
+}
