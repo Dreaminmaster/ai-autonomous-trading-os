@@ -294,6 +294,93 @@ def test_funding_uses_signed_quantity_and_pre_rebalance_event_order() -> None:
     assert Decimal(paying_longs["component_totals"]["funding_pnl"]) < 0
     assert Decimal(paying_longs["final_equity"]) < Decimal(zero["final_equity"])
 
+    boundary_rates = {
+        instrument: [dict(row) for row in rows]
+        for instrument, rows in funding_rows.items()
+    }
+    first_rebalance_boundary = HISTORICAL_WINDOWS[0].start + timedelta(days=7)
+    for rows in boundary_rates.values():
+        boundary = next(
+            row
+            for row in rows
+            if datetime.fromisoformat(row["funding_time"])
+            == first_rebalance_boundary
+        )
+        boundary["realized_rate"] = "0.10"
+    boundary_result = evaluate_historical_window(
+        "H1",
+        selected_universe=SELECTED,
+        trade_rows=trade_rows,
+        mark_rows=mark_rows,
+        funding_rows=boundary_rates,
+        cost_label="1.0x",
+        policy="AlwaysLongSelectedUniverseComparator",
+    )
+    assert Decimal(boundary_result["weekly_returns"][0]) < Decimal(
+        zero["weekly_returns"][0]
+    )
+
+
+def test_delayed_official_funding_uses_actual_time_and_predecessor_mark() -> None:
+    trade_rows, mark_rows, funding_rows = _window_sources()
+    exact = {
+        instrument: [dict(row) for row in rows]
+        for instrument, rows in funding_rows.items()
+    }
+    exact[SELECTED[0]][1]["realized_rate"] = "0.001"
+    delayed = {
+        instrument: [dict(row) for row in rows]
+        for instrument, rows in exact.items()
+    }
+    exact_time = datetime.fromisoformat(delayed[SELECTED[0]][1]["funding_time"])
+    delayed_time = exact_time + timedelta(seconds=8)
+    delayed[SELECTED[0]][1]["funding_time"] = delayed_time.isoformat()
+
+    exact_result = evaluate_historical_window(
+        "H1",
+        selected_universe=SELECTED,
+        trade_rows=trade_rows,
+        mark_rows=mark_rows,
+        funding_rows=exact,
+        cost_label="1.0x",
+        policy="AlwaysLongSelectedUniverseComparator",
+    )
+    delayed_result = evaluate_historical_window(
+        "H1",
+        selected_universe=SELECTED,
+        trade_rows=trade_rows,
+        mark_rows=mark_rows,
+        funding_rows=delayed,
+        cost_label="1.0x",
+        policy="AlwaysLongSelectedUniverseComparator",
+    )
+
+    assert delayed_result["final_equity"] == exact_result["final_equity"]
+    assert (
+        delayed_result["contributions"][SELECTED[0]]["funding_pnl"]
+        == exact_result["contributions"][SELECTED[0]]["funding_pnl"]
+    )
+    assert any(
+        row["event"] == "FUNDING"
+        and row["timestamp"]
+        == delayed_time.isoformat().replace("+00:00", "Z")
+        for row in delayed_result["complete_hourly_equity_path"]
+    )
+
+    producer = evaluate_historical_window_matrix(
+        "H1",
+        selected_universe=SELECTED,
+        trade_rows=trade_rows,
+        mark_rows=mark_rows,
+        funding_rows=delayed,
+    )
+    assert review_historical_window(
+        producer,
+        trade_rows=trade_rows,
+        mark_rows=mark_rows,
+        funding_rows=delayed,
+    )["status"] == "PASS"
+
 
 def test_window_rejects_missing_trade_hour_and_unaccounted_source_shape() -> None:
     trade_rows, mark_rows, funding_rows = _window_sources()

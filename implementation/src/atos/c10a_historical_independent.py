@@ -167,8 +167,6 @@ def _funding(
     last = None
     for row in rows:
         stamp = _time(row.get("funding_time"))
-        if stamp.minute or stamp.second or stamp.microsecond:
-            raise C10AHistoricalIndependentError(f"{label} funding is off-grid")
         if last is not None and stamp <= last:
             raise C10AHistoricalIndependentError(
                 f"{label} funding is duplicate or unordered"
@@ -369,7 +367,17 @@ def _simulate(
         when: {instrument: value for instrument, value in values}
         for when, values in _group_funding(funding).items()
     }
+    delayed_funding: dict[
+        datetime, list[tuple[datetime, dict[str, Decimal]]]
+    ] = {}
+    for stamp, values in source_funding.items():
+        if stamp.minute or stamp.second or stamp.microsecond:
+            following_hour = stamp.replace(minute=0, second=0, microsecond=0) + HOUR
+            delayed_funding.setdefault(following_hour, []).append((stamp, values))
+    for events in delayed_funding.values():
+        events.sort(key=lambda item: item[0])
     funding_count = 0
+    processed_funding: set[tuple[datetime, str]] = set()
 
     def mark_to(instrument: str, price: Decimal) -> None:
         nonlocal equity
@@ -386,11 +394,18 @@ def _simulate(
         costs[instrument] += value
         equity -= value
 
-    def check_buffer() -> None:
+    def check_buffer(
+        valuation_prices: Mapping[str, Decimal] | None = None,
+    ) -> None:
         nonlocal pending_close, buffer_breaches
         gross = sum(
             (
-                abs(quantities[instrument]) * (references[instrument] or ZERO)
+                abs(quantities[instrument])
+                * (
+                    valuation_prices[instrument]
+                    if valuation_prices is not None
+                    else references[instrument] or ZERO
+                )
                 for instrument in selected
             ),
             ZERO,
@@ -400,29 +415,50 @@ def _simulate(
                 buffer_breaches += 1
             pending_close = True
 
+    def apply_funding(timestamp: datetime, values: Mapping[str, Decimal]) -> None:
+        nonlocal equity, funding_count
+        predecessor_time = (timestamp - HOUR).replace(
+            minute=0, second=0, microsecond=0
+        )
+        try:
+            predecessor_marks = {
+                instrument: marks[instrument][predecessor_time]
+                for instrument in selected
+            }
+        except KeyError as exc:
+            raise C10AHistoricalIndependentError(
+                "independent funding lacks completed predecessor mark"
+            ) from exc
+        for instrument, funding_rate in values.items():
+            key = (timestamp, instrument)
+            if key in processed_funding:
+                raise C10AHistoricalIndependentError(
+                    "independent funding settlement accounted twice"
+                )
+            if quantities[instrument] != 0:
+                movement = (
+                    -quantities[instrument]
+                    * predecessor_marks[instrument]
+                    * funding_rate
+                )
+                funding_pnl[instrument] += movement
+                equity += movement
+            processed_funding.add(key)
+            funding_count += 1
+        if values:
+            path.append(equity)
+            check_buffer(predecessor_marks)
+
     decisions = set(decision_times(window))
     current = window.start
     while current < window.end_exclusive:
         scheduled = current in decisions
+        apply_funding(current, source_funding.get(current, {}))
+        check_buffer()
         if scheduled:
             if weekly_starts:
                 weekly_ends.append(equity)
             weekly_starts.append(equity)
-        funding_at_time = source_funding.get(current, {})
-        for instrument, funding_rate in funding_at_time.items():
-            reference = references[instrument]
-            if quantities[instrument] != 0:
-                if reference is None:
-                    raise C10AHistoricalIndependentError(
-                        "independent active funding lacks prior mark"
-                    )
-                movement = -quantities[instrument] * reference * funding_rate
-                funding_pnl[instrument] += movement
-                equity += movement
-            funding_count += 1
-        if funding_at_time:
-            path.append(equity)
-        check_buffer()
         suppress = False
         if pending_close:
             for instrument in selected:
@@ -472,6 +508,8 @@ def _simulate(
             turnover += changed / before
             signal_rows.append(signal)
             path.append(equity)
+        for funding_time, values in delayed_funding.get(current + HOUR, ()):
+            apply_funding(funding_time, values)
         for instrument in selected:
             mark_to(instrument, marks[instrument][current])
         if not equity.is_finite() or equity <= 0:
@@ -493,6 +531,16 @@ def _simulate(
     turnover += changed / before
     weekly_ends.append(equity)
     path.append(equity)
+    expected_funding = {
+        (stamp, instrument)
+        for stamp, values in source_funding.items()
+        if window.start <= stamp < window.end_exclusive
+        for instrument in values
+    }
+    if processed_funding != expected_funding:
+        raise C10AHistoricalIndependentError(
+            "independent funding settlements are unaccounted"
+        )
     if (
         len(weekly_starts) != EXPECTED_DECISIONS_PER_WINDOW
         or len(weekly_ends) != EXPECTED_DECISIONS_PER_WINDOW
