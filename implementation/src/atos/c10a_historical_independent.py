@@ -394,11 +394,18 @@ def _simulate(
         costs[instrument] += value
         equity -= value
 
-    def check_buffer() -> None:
+    def check_buffer(
+        valuation_prices: Mapping[str, Decimal] | None = None,
+    ) -> None:
         nonlocal pending_close, buffer_breaches
         gross = sum(
             (
-                abs(quantities[instrument]) * (references[instrument] or ZERO)
+                abs(quantities[instrument])
+                * (
+                    valuation_prices[instrument]
+                    if valuation_prices is not None
+                    else references[instrument] or ZERO
+                )
                 for instrument in selected
             ),
             ZERO,
@@ -413,27 +420,34 @@ def _simulate(
         predecessor_time = (timestamp - HOUR).replace(
             minute=0, second=0, microsecond=0
         )
+        try:
+            predecessor_marks = {
+                instrument: marks[instrument][predecessor_time]
+                for instrument in selected
+            }
+        except KeyError as exc:
+            raise C10AHistoricalIndependentError(
+                "independent funding lacks completed predecessor mark"
+            ) from exc
         for instrument, funding_rate in values.items():
             key = (timestamp, instrument)
             if key in processed_funding:
                 raise C10AHistoricalIndependentError(
                     "independent funding settlement accounted twice"
                 )
-            try:
-                predecessor_mark = marks[instrument][predecessor_time]
-            except KeyError as exc:
-                raise C10AHistoricalIndependentError(
-                    "independent funding lacks completed predecessor mark"
-                ) from exc
             if quantities[instrument] != 0:
-                movement = -quantities[instrument] * predecessor_mark * funding_rate
+                movement = (
+                    -quantities[instrument]
+                    * predecessor_marks[instrument]
+                    * funding_rate
+                )
                 funding_pnl[instrument] += movement
                 equity += movement
             processed_funding.add(key)
             funding_count += 1
         if values:
             path.append(equity)
-            check_buffer()
+            check_buffer(predecessor_marks)
 
     decisions = set(decision_times(window))
     current = window.start

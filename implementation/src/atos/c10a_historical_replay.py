@@ -440,16 +440,24 @@ def evaluate_historical_window(
         equity -= value
         return value
 
-    def gross_at_reference() -> Decimal:
+    def gross_at_reference(
+        valuation_prices: Mapping[str, Decimal] | None = None,
+    ) -> Decimal:
         return sum(
             abs(quantities[instrument])
-            * (reference_marks[instrument] or Decimal(0))
+            * (
+                valuation_prices[instrument]
+                if valuation_prices is not None
+                else reference_marks[instrument] or Decimal(0)
+            )
             for instrument in selected
         )
 
-    def observe_buffer() -> None:
+    def observe_buffer(
+        valuation_prices: Mapping[str, Decimal] | None = None,
+    ) -> None:
         nonlocal pending_forced_close, buffer_breaches
-        gross = gross_at_reference()
+        gross = gross_at_reference(valuation_prices)
         if gross > 0 and equity / gross < MINIMUM_EQUITY_TO_GROSS_NOTIONAL:
             if not pending_forced_close:
                 buffer_breaches += 1
@@ -470,27 +478,30 @@ def evaluate_historical_window(
         predecessor_time = (timestamp - HOUR).replace(
             minute=0, second=0, microsecond=0
         )
+        try:
+            predecessor_marks = {
+                instrument: marks[instrument][predecessor_time]
+                for instrument in selected
+            }
+        except KeyError as exc:
+            raise C10AHistoricalReplayError(
+                "funding has no completed predecessor mark"
+            ) from exc
         for instrument, rate in values.items():
             key = (timestamp, instrument)
             if key in processed_funding:
                 raise C10AHistoricalReplayError(
                     "funding settlement accounted twice"
                 )
-            try:
-                predecessor_mark = marks[instrument][predecessor_time]
-            except KeyError as exc:
-                raise C10AHistoricalReplayError(
-                    "active funding has no completed predecessor mark"
-                ) from exc
             if quantities[instrument] != 0:
-                change = -quantities[instrument] * predecessor_mark * rate
+                change = -quantities[instrument] * predecessor_marks[instrument] * rate
                 funding_pnl[instrument] += change
                 equity += change
             processed_funding.add(key)
             funding_count += 1
         if values:
             record_event(timestamp, "FUNDING")
-            observe_buffer()
+            observe_buffer(predecessor_marks)
 
     current = selected_window.start
     while current < selected_window.end_exclusive:
