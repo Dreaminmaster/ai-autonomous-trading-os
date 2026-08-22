@@ -121,8 +121,6 @@ def _funding_rows(
         previous = None
         for row in rows_by_instrument[instrument]:
             stamp = _time(row.get("funding_time"))
-            if stamp.minute or stamp.second or stamp.microsecond:
-                raise C10AHistoricalReplayError("funding timestamp is off-grid")
             if previous is not None and stamp <= previous:
                 raise C10AHistoricalReplayError(
                     "funding rows are duplicate or unordered within instrument"
@@ -375,6 +373,15 @@ def evaluate_historical_window(
         label="mark",
     )
     funding = _funding_rows(funding_rows, selected_universe=selected)
+    delayed_funding: dict[
+        datetime, list[tuple[datetime, dict[str, Decimal]]]
+    ] = {}
+    for stamp, values in funding.items():
+        if stamp.minute or stamp.second or stamp.microsecond:
+            following_hour = stamp.replace(minute=0, second=0, microsecond=0) + HOUR
+            delayed_funding.setdefault(following_hour, []).append((stamp, values))
+    for events in delayed_funding.values():
+        events.sort(key=lambda item: item[0])
     _require_exact_hours(
         next(iter(trades.values())),
         start=selected_window.start,
@@ -458,9 +465,38 @@ def evaluate_historical_window(
             }
         )
 
+    def apply_funding(timestamp: datetime, values: Mapping[str, Decimal]) -> None:
+        nonlocal equity, funding_count
+        predecessor_time = (timestamp - HOUR).replace(
+            minute=0, second=0, microsecond=0
+        )
+        for instrument, rate in values.items():
+            key = (timestamp, instrument)
+            if key in processed_funding:
+                raise C10AHistoricalReplayError(
+                    "funding settlement accounted twice"
+                )
+            try:
+                predecessor_mark = marks[instrument][predecessor_time]
+            except KeyError as exc:
+                raise C10AHistoricalReplayError(
+                    "active funding has no completed predecessor mark"
+                ) from exc
+            if quantities[instrument] != 0:
+                change = -quantities[instrument] * predecessor_mark * rate
+                funding_pnl[instrument] += change
+                equity += change
+            processed_funding.add(key)
+            funding_count += 1
+        if values:
+            record_event(timestamp, "FUNDING")
+            observe_buffer()
+
     current = selected_window.start
     while current < selected_window.end_exclusive:
         is_decision = current in decisions
+        apply_funding(current, funding.get(current, {}))
+        observe_buffer()
         if is_decision:
             if weekly_start is not None:
                 weekly_return = equity / weekly_start - Decimal(1)
@@ -479,21 +515,6 @@ def evaluate_historical_window(
                 )
             weekly_start = equity
             weekly_start_time = current
-
-        funding_at_time = funding.get(current, {})
-        for instrument, rate in funding_at_time.items():
-            mark = reference_marks[instrument]
-            if quantities[instrument] != 0:
-                if mark is None:
-                    raise C10AHistoricalReplayError("active funding has no preceding mark")
-                change = -quantities[instrument] * mark * rate
-                funding_pnl[instrument] += change
-                equity += change
-            processed_funding.add((current, instrument))
-            funding_count += 1
-        if funding_at_time:
-            record_event(current, "FUNDING")
-        observe_buffer()
 
         suppress_decision = False
         if pending_forced_close:
@@ -576,6 +597,9 @@ def evaluate_historical_window(
             signal["signed_target_notional"] = format(signed_target, "f")
             signals.append(signal)
             record_event(current, "SCHEDULED_REBALANCE")
+
+        for funding_time, values in delayed_funding.get(current + HOUR, ()):
+            apply_funding(funding_time, values)
 
         for instrument in selected:
             apply_price(instrument, marks[instrument][current])
