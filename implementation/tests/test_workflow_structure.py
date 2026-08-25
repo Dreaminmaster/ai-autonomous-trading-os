@@ -140,3 +140,35 @@ def test_validation_summary_upload():
     val = [u for u in uploads if u.get('with',{}).get('name')=='validation-summary']
     assert len(val)==1, f'validation-summary upload missing: found {len(val)}'
     assert val[0]['with']['if-no-files-found']=='error'
+
+def test_notify_job_is_pr_only_and_waits_for_validation(wf):
+    notify = wf["jobs"]["notify"]
+    assert set(notify["needs"]) == {"atos-tests", "freqtrade", "validation-summary"}
+    condition = str(notify["if"])
+    assert "always()" in condition
+    assert "github.event_name == 'pull_request'" in condition
+
+def test_notify_is_fail_open_and_uses_secret_endpoint(wf):
+    notify = wf["jobs"]["notify"]
+    assert len(notify["steps"]) == 1
+    step = notify["steps"][0]
+    assert step["continue-on-error"] is True
+    assert step["env"]["MESSAGE_PUSH_ENDPOINT"] == "${{ secrets.MESSAGE_PUSH_ENDPOINT }}"
+    assert "|| true" in step["run"]
+
+def test_notify_payload_contract_and_no_endpoint_literal():
+    raw = WORKFLOW_PATH.read_text()
+    assert "messagepush.luckfast.com" not in raw
+    assert "curl --fail --silent --show-error --max-time 20 --get" in raw
+    assert '--data-urlencode "title=ATOS · Freqtrade Validation 完成"' in raw
+    assert '--data-urlencode "message=${body}"' in raw
+    assert '--data-urlencode "content=${body}"' not in raw
+    assert '--data-urlencode "sound=1"' in raw
+    assert 'PR #${PR_NUMBER} | ${status} | SHA ${PR_HEAD_SHA} | Run ID ${RUN_ID}' in raw
+    for status in ("SUCCESS", "FAILURE", "CANCELLED"):
+        assert status in raw
+
+def test_notify_uses_exact_pr_head_not_synthetic_merge_sha(wf):
+    env = wf["jobs"]["notify"]["steps"][0]["env"]
+    assert env["PR_HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
+    assert env["RUN_ID"] == "${{ github.run_id }}"

@@ -33,6 +33,7 @@ from atos.c7a_historical_schedule import (
 from atos.c7a_okx_public_data import (
     C9A_PUBLIC_TRADE_INSTRUMENTS,
     C10A_PUBLIC_SWAP_INSTRUMENTS,
+    C12A_PUBLIC_INSTRUMENTS,
     FUNDING_ARCHIVE_COLUMNS,
     HOUR_MS,
     HTTP_TIMEOUT_SECONDS,
@@ -61,6 +62,7 @@ API_FAMILIES = frozenset(
         "OKX_HISTORY_MARK_PRICE_CANDLES_API",
         "OKX_FUNDING_RATE_HISTORY_API",
         "OKX_HISTORICAL_DATA_API",
+        "OKX_HISTORICAL_FUTURES_CHAIN_API",
     }
 )
 FUNDING_SETTLEMENT_COMPLETION_TOLERANCE_MS = 60_000
@@ -421,6 +423,10 @@ class CapturePackage:
             (
                 frozenset(C10A_PUBLIC_SWAP_INSTRUMENTS),
                 frozenset(C10A_PUBLIC_SWAP_INSTRUMENTS),
+            ),
+            (
+                frozenset(C12A_PUBLIC_INSTRUMENTS),
+                frozenset(C12A_PUBLIC_INSTRUMENTS),
             ),
         }
         if len(values) != len(allowed_set) or len(trade_values) != len(trade_set) or (
