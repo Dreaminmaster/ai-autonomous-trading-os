@@ -55,6 +55,31 @@ C10A_PUBLIC_SWAP_INSTRUMENTS = (
     "TRX-USDT-SWAP",
     "XRP-USDT-SWAP",
 )
+C12A_PUBLIC_INSTRUMENTS = (
+    "BTC-USDT",
+    "ETH-USDT",
+    "BTC-USDT-240329",
+    "ETH-USDT-240329",
+    "BTC-USDT-240628",
+    "ETH-USDT-240628",
+    "BTC-USDT-240927",
+    "ETH-USDT-240927",
+    "BTC-USDT-241227",
+    "ETH-USDT-241227",
+    "BTC-USDT-250328",
+    "ETH-USDT-250328",
+    "BTC-USDT-250627",
+    "ETH-USDT-250627",
+    "BTC-USDT-250926",
+    "ETH-USDT-250926",
+    "BTC-USDT-251226",
+    "ETH-USDT-251226",
+    "BTC-USDT-260327",
+    "ETH-USDT-260327",
+    "BTC-USDT-260626",
+    "ETH-USDT-260626",
+)
+C12A_FUTURES_FAMILIES = ("BTC-USDT", "ETH-USDT")
 TRADE_HISTORY_PATH = "/api/v5/market/history-candles"
 MARK_HISTORY_PATH = "/api/v5/market/history-mark-price-candles"
 FUNDING_HISTORY_PATH = "/api/v5/public/funding-rate-history"
@@ -106,6 +131,7 @@ TRADE_PAGE_LIMIT = 300
 FUNDING_PAGE_LIMIT = 400
 HOUR_MS = 3_600_000
 FUNDING_DOWNLOAD_MODULE = "3"
+FUTURES_CHAIN_DOWNLOAD_MODULE = "1"
 FUNDING_DOWNLOAD_AGGREGATION = "monthly"
 # The official endpoint currently rejects an inclusive ten-UTC-month request
 # with code 50077 ("cannot exceed 10 months").  Its UTC request bounds can also
@@ -218,6 +244,10 @@ def _validated_instrument_policy(
             frozenset(C10A_PUBLIC_SWAP_INSTRUMENTS),
             frozenset(C10A_PUBLIC_SWAP_INSTRUMENTS),
         ),
+        (
+            frozenset(C12A_PUBLIC_INSTRUMENTS),
+            frozenset(C12A_PUBLIC_INSTRUMENTS),
+        ),
     }
     if policy not in supported:
         raise C7APublicDataError("unsupported public instrument policy")
@@ -292,6 +322,8 @@ def validate_public_request(
         "OKX_FUNDING_RATE_HISTORY_API",
         "OKX_HISTORICAL_DATA_API",
         "OKX_HISTORICAL_DOWNLOAD",
+        "OKX_HISTORICAL_FUTURES_CHAIN_API",
+        "OKX_HISTORICAL_FUTURES_CHAIN_DOWNLOAD",
     }:
         raise C7APublicDataError("unsupported C7A public source family")
     parsed = urlparse(request.url)
@@ -343,7 +375,10 @@ def validate_public_request(
             required_keys=frozenset({"instId", "limit"}),
             allowed_instruments=values,
         )
-    elif request.source_family == "OKX_HISTORICAL_DATA_API":
+    elif request.source_family in {
+        "OKX_HISTORICAL_DATA_API",
+        "OKX_HISTORICAL_FUTURES_CHAIN_API",
+    }:
         if parsed.hostname not in API_HOSTS or parsed.path != HISTORICAL_DATA_PATH:
             raise C7APublicDataError("historical-data endpoint or host drift")
         query = _query_map(request.url)
@@ -356,13 +391,21 @@ def validate_public_request(
             "end",
         }:
             raise C7APublicDataError("historical-data API query contract drift")
-        if (
-            query["module"] != FUNDING_DOWNLOAD_MODULE
-            or query["instType"] != "SWAP"
-            or query["dateAggrType"] != FUNDING_DOWNLOAD_AGGREGATION
-            or f"{query['instFamilyList']}-SWAP" not in values
+        if request.source_family == "OKX_HISTORICAL_DATA_API":
+            if (
+                query["module"] != FUNDING_DOWNLOAD_MODULE
+                or query["instType"] != "SWAP"
+                or query["dateAggrType"] != FUNDING_DOWNLOAD_AGGREGATION
+                or f"{query['instFamilyList']}-SWAP" not in values
+            ):
+                raise C7APublicDataError("historical funding query identity drift")
+        elif (
+            query["module"] != FUTURES_CHAIN_DOWNLOAD_MODULE
+            or query["instType"] != "FUTURES"
+            or query["dateAggrType"] != "monthly"
+            or query["instFamilyList"] not in C12A_FUTURES_FAMILIES
         ):
-            raise C7APublicDataError("historical funding query identity drift")
+            raise C7APublicDataError("historical futures-chain query identity drift")
         begin = _millis(query["begin"], "historical begin")
         end = _millis(query["end"], "historical end")
         if begin > end:
@@ -370,6 +413,23 @@ def validate_public_request(
         months = _month_starts(begin, end + 1)
         if not months or len(months) > MAX_MONTHS_PER_HISTORY_REQUEST:
             raise C7APublicDataError("historical-data request exceeds 9 UTC months")
+        if request.source_family == "OKX_HISTORICAL_FUTURES_CHAIN_API":
+            local_begin = datetime.fromtimestamp((begin + 8 * HOUR_MS) / 1000, tz=UTC)
+            local_end = datetime.fromtimestamp((end + 1 + 8 * HOUR_MS) / 1000, tz=UTC)
+            expected_year = local_begin.year + (1 if local_begin.month == 12 else 0)
+            expected_month = 1 if local_begin.month == 12 else local_begin.month + 1
+            if (
+                local_begin.day != 1
+                or local_begin.hour
+                or local_begin.minute
+                or local_begin.second
+                or local_begin.microsecond
+                or local_end
+                != datetime(expected_year, expected_month, 1, tzinfo=UTC)
+            ):
+                raise C7APublicDataError(
+                    "historical futures-chain request must cover one UTC+8 month"
+                )
     else:
         if parsed.path.startswith("/api/"):
             raise C7APublicDataError(
