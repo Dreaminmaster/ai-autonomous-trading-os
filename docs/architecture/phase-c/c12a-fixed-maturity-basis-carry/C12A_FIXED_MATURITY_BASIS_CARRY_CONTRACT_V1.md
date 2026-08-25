@@ -157,8 +157,8 @@ intervals, or malformed values fail closed.
 For every futures contract, derive an hourly last-trade mark from all prints in
 each closed UTC hour. Every carried hour from entry up to the exit requires at
 least one print; there is no forward fill. Entry and exit execution use the
-first eligible trade at or after the frozen timestamp and no later than sixty
-seconds afterward. Absence fails closed. Spot execution uses the corresponding
+first eligible trade at or after the frozen timestamp and no later than five
+minutes afterward. Absence fails closed. Spot execution uses the corresponding
 confirmed hourly candle open; its exact timestamp must equal the frozen
 transaction time. No interpolation, alternate venue, perpetual proxy,
 replacement contract, or settlement-price substitution is permitted.
@@ -210,7 +210,7 @@ take-profit, or re-entry.
 
 Each asset receives a fixed sleeve equal to `0.50` of that window's current
 pre-entry equity. At actual entry prices `S_entry` and `F_entry`, with the
-expected-cost rate `c`, base quantity is:
+frozen worst-case `2.0x` cost reserve `c = 0.0030`, base quantity is:
 
 ```text
 q = sleeve_equity / ((S_entry + F_entry) * (1 + c))
@@ -237,8 +237,10 @@ Each of the four transactions—spot entry, futures entry, spot exit, futures
 exit—pays its leg's absolute notional times the one-side all-in cost. Costs are
 replayed independently at `1.0x = 0.0015`, expected `1.5x = 0.00225`, and
 stress `2.0x = 0.0030`; the entry decision always uses the frozen `2.0x`
-threshold and cannot change between cells. Exit occurs one hour before expiry
-even when the basis remains open.
+threshold and cannot change between cells. Sizing also reserves `2.0x`, so
+entry cash is non-negative in every cost cell and quantities cannot grow in a
+cheaper cell. Exit occurs one hour before expiry even when the basis remains
+open.
 
 Weekly returns include zero buckets and all mark-to-market PnL. Contract,
 asset, window, week, price, and cost contributions must reconcile within

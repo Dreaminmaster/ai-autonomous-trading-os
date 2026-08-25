@@ -18,14 +18,19 @@ ROOT = Path(__file__).resolve().parents[3]
 REGISTRY_PATH = ROOT / "implementation/config/phase_c_research_program_registry_v3.json"
 C12A_CONFIG_PATH = ROOT / "implementation/config/c12a_fixed_maturity_basis_carry.json"
 CONTRACT_PATH = (
-    ROOT
-    / "docs/architecture/phase-c/c12a-fixed-maturity-basis-carry/"
+    ROOT / "docs/architecture/phase-c/c12a-fixed-maturity-basis-carry/"
     "C12A_FIXED_MATURITY_BASIS_CARRY_CONTRACT_V1.md"
 )
 
-EXPECTED_REGISTRY_SHA256 = "aa7924ac272040de80da65620a6f1811477b77296f6b27f0fbd57efee99b831b"
-EXPECTED_C12A_CONFIG_SHA256 = "20eccef80af54aab17e768fcdec47da69e5f999737d97147c61c436f11549cda"
-EXPECTED_CONTRACT_SHA256 = "76833ed0b270cfb0ff8f5ba27d36621e53b0bed6d57dec82805f607201716c81"
+EXPECTED_REGISTRY_SHA256 = (
+    "aa7924ac272040de80da65620a6f1811477b77296f6b27f0fbd57efee99b831b"
+)
+EXPECTED_C12A_CONFIG_SHA256 = (
+    "cd4fbe4ba9109206f8b8b6c5240835c5063d6c52904dbbf820a95d358d81ce5c"
+)
+EXPECTED_CONTRACT_SHA256 = (
+    "e8697aa868c648a2ae2926b969370b33d1dd5f2d93fe93bfe24a857d2504e358"
+)
 EXPECTED_DESIGN_BASE_SHA = "2b561e86cb0f708559e0821db1ba9bf0210b817c"
 
 EXPECTED_STAGE_TRIALS = (
@@ -101,7 +106,9 @@ def _sha256(path: Path) -> str:
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError as exc:
-        raise C12AResearchProgramGuardError(f"unable to hash authority {path}: {exc}") from exc
+        raise C12AResearchProgramGuardError(
+            f"unable to hash authority {path}: {exc}"
+        ) from exc
 
 
 def _load_object(path: Path) -> dict[str, Any]:
@@ -120,7 +127,9 @@ def _load_object(path: Path) -> dict[str, Any]:
             path.read_text(encoding="utf-8"), object_pairs_hook=reject_duplicates
         )
     except (OSError, json.JSONDecodeError) as exc:
-        raise C12AResearchProgramGuardError(f"invalid JSON authority {path}: {exc}") from exc
+        raise C12AResearchProgramGuardError(
+            f"invalid JSON authority {path}: {exc}"
+        ) from exc
     if not isinstance(payload, dict):
         raise C12AResearchProgramGuardError(f"JSON authority must be an object: {path}")
     return payload
@@ -158,10 +167,14 @@ def _contract_tuples(value: object) -> tuple[tuple[str, str, str], ...]:
     rows: list[tuple[str, str, str]] = []
     for item in value:
         if not isinstance(item, Mapping):
-            raise C12AResearchProgramGuardError("quarterly contract rows must be objects")
+            raise C12AResearchProgramGuardError(
+                "quarterly contract rows must be objects"
+            )
         row = (item.get("expiry"), item.get("btc"), item.get("eth"))
         if not all(isinstance(part, str) for part in row):
-            raise C12AResearchProgramGuardError("quarterly contract fields must be strings")
+            raise C12AResearchProgramGuardError(
+                "quarterly contract fields must be strings"
+            )
         if set(item) != {"expiry", "btc", "eth"}:
             raise C12AResearchProgramGuardError("quarterly contract field drift")
         rows.append(row)  # type: ignore[arg-type]
@@ -180,7 +193,9 @@ def bonferroni_adjusted_psr(
         raise C12AResearchProgramGuardError("psr must be in [0, 1]")
     if trial_count != EXPECTED_FAMILYWISE_TRIALS:
         raise C12AResearchProgramGuardError("family-wise trial-count drift")
-    return max(Decimal(0), Decimal(1) - Decimal(trial_count) * (Decimal(1) - probability))
+    return max(
+        Decimal(0), Decimal(1) - Decimal(trial_count) * (Decimal(1) - probability)
+    )
 
 
 def validate_registry(
@@ -197,7 +212,9 @@ def validate_registry(
     if registry.get("history_semantics") != "DECLARED_OBSERVED_TRIAL_LOWER_BOUND":
         raise C12AResearchProgramGuardError("program history semantics drift")
     if registry.get("untracked_human_discretion_fully_corrected") is not False:
-        raise C12AResearchProgramGuardError("untracked discretion cannot claim correction")
+        raise C12AResearchProgramGuardError(
+            "untracked discretion cannot claim correction"
+        )
 
     stages = registry.get("stages")
     if not isinstance(stages, list) or len(stages) != len(EXPECTED_STAGE_TRIALS):
@@ -211,21 +228,27 @@ def validate_registry(
             raise C12AResearchProgramGuardError("program stage row must be an object")
         count = row.get("observed_economic_trials")
         if isinstance(count, bool) or not isinstance(count, int) or count < 0:
-            raise C12AResearchProgramGuardError("observed trial count must be non-negative int")
+            raise C12AResearchProgramGuardError(
+                "observed trial count must be non-negative int"
+            )
         observed.append((row.get("stage"), count, row.get("result")))  # type: ignore[arg-type]
         relative = row.get("authority_path")
         markers = row.get("authority_markers")
         if not isinstance(relative, str) or relative in paths:
             raise C12AResearchProgramGuardError("authority path missing or duplicated")
-        if not isinstance(markers, list) or not markers or not all(
-            isinstance(marker, str) and marker for marker in markers
+        if (
+            not isinstance(markers, list)
+            or not markers
+            or not all(isinstance(marker, str) and marker for marker in markers)
         ):
             raise C12AResearchProgramGuardError("authority markers missing")
         paths.add(relative)
         if resolved_root is not None:
             path = (resolved_root / relative).resolve()
             if not path.is_relative_to(resolved_root):
-                raise C12AResearchProgramGuardError("authority path escapes repository root")
+                raise C12AResearchProgramGuardError(
+                    "authority path escapes repository root"
+                )
             try:
                 text = path.read_text(encoding="utf-8")
             except OSError as exc:
@@ -262,7 +285,9 @@ def validate_registry(
         raise C12AResearchProgramGuardError("family-wise trial-count drift")
     if registry.get("familywise_trial_count") != EXPECTED_FAMILYWISE_TRIALS:
         raise C12AResearchProgramGuardError("family-wise trial-count drift")
-    if _decimal(registry.get("familywise_alpha"), "familywise alpha") != Decimal("0.05"):
+    if _decimal(registry.get("familywise_alpha"), "familywise alpha") != Decimal(
+        "0.05"
+    ):
         raise C12AResearchProgramGuardError("family-wise alpha drift")
     if registry.get("exposed_economic_interval_union") != {
         "start_inclusive": "2023-07-03T00:00:00Z",
@@ -270,7 +295,10 @@ def validate_registry(
         "status": "HISTORICAL_DEVELOPMENT_ONLY",
     }:
         raise C12AResearchProgramGuardError("historical exposure registry drift")
-    if _window_tuples(registry.get("c12a_windows"), "registry windows") != EXPECTED_WINDOWS:
+    if (
+        _window_tuples(registry.get("c12a_windows"), "registry windows")
+        != EXPECTED_WINDOWS
+    ):
         raise C12AResearchProgramGuardError("C12A registered-window drift")
     safety = {
         "promotion_state": "RESEARCH_ONLY",
@@ -284,7 +312,9 @@ def validate_registry(
     return authorities
 
 
-def validate_c12a_config(config: Mapping[str, Any], registry: Mapping[str, Any]) -> None:
+def validate_c12a_config(
+    config: Mapping[str, Any], registry: Mapping[str, Any]
+) -> None:
     """Validate every frozen C12A design and safety field."""
 
     if config.get("schema_version") != 1 or config.get("stage") != "C12A":
@@ -311,7 +341,10 @@ def validate_c12a_config(config: Mapping[str, Any], registry: Mapping[str, Any])
         raise C12AResearchProgramGuardError("C12A quarterly-contract drift")
     if _window_tuples(config.get("windows"), "config windows") != EXPECTED_WINDOWS:
         raise C12AResearchProgramGuardError("C12A config-window drift")
-    if _window_tuples(registry.get("c12a_windows"), "registry windows") != EXPECTED_WINDOWS:
+    if (
+        _window_tuples(registry.get("c12a_windows"), "registry windows")
+        != EXPECTED_WINDOWS
+    ):
         raise C12AResearchProgramGuardError("C12A registry-window drift")
 
     fixed: dict[str, object] = {
@@ -325,11 +358,10 @@ def validate_c12a_config(config: Mapping[str, Any], registry: Mapping[str, Any])
         "signal_time_before_entry_hours": 1,
         "entry_time_utc": "08:00:00",
         "exit_before_expiry_hours": 1,
-        "execution_trade_max_delay_seconds": 60,
+        "execution_trade_max_delay_seconds": 300,
         "rank_or_selection": "NONE_FIXED_TWO_ASSET_SLEEVES",
         "basis_definition": (
-            "(FUTURES_MARK_MINUS_SPOT_CLOSE)_DIVIDED_BY_"
-            "(FUTURES_MARK_PLUS_SPOT_CLOSE)"
+            "(FUTURES_MARK_MINUS_SPOT_CLOSE)_DIVIDED_BY_(FUTURES_MARK_PLUS_SPOT_CLOSE)"
         ),
         "entry_rule": "POSITIVE_BASIS_STRICTLY_EXCEEDS_2X_COMPLETE_ROUND_TRIP_COST",
         "base_quantity_hedge": "EXACT_EQUAL_SPOT_LONG_FUTURES_SHORT",
@@ -348,6 +380,7 @@ def validate_c12a_config(config: Mapping[str, Any], registry: Mapping[str, Any])
         ),
         _decimal(config.get("reconciliation_tolerance"), "reconciliation tolerance"),
         _decimal(config.get("entry_basis_threshold"), "entry basis threshold"),
+        _decimal(config.get("sizing_cost_rate"), "sizing cost rate"),
     )
     if portfolio != (
         Decimal(1000),
@@ -356,6 +389,7 @@ def validate_c12a_config(config: Mapping[str, Any], registry: Mapping[str, Any])
         Decimal("0.25"),
         Decimal("1e-10"),
         Decimal("0.0120"),
+        Decimal("0.0030"),
     ):
         raise C12AResearchProgramGuardError("C12A portfolio/accounting drift")
     if config.get("one_side_all_in_cost_rates") != {

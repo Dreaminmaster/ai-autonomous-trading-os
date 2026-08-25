@@ -62,9 +62,7 @@ def test_registry_records_c11a_as_one_closed_economic_trial() -> None:
         if isinstance(row, dict)
     }
     results = {
-        str(row["stage"]): str(row["result"])
-        for row in stages
-        if isinstance(row, dict)
+        str(row["stage"]): str(row["result"]) for row in stages if isinstance(row, dict)
     }
     assert counts["C10A"] == 0
     assert counts["C11A"] == 1
@@ -183,6 +181,10 @@ def test_registry_rejects_authority_path_escape(tmp_path: Path) -> None:
         ),
         (
             lambda payload: payload.update({"entry_basis_threshold": "0.0100"}),
+            "portfolio/accounting drift",
+        ),
+        (
+            lambda payload: payload.update({"sizing_cost_rate": "0.00225"}),
             "portfolio/accounting drift",
         ),
         (
