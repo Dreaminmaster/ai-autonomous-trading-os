@@ -55,6 +55,16 @@ C10A_PUBLIC_SWAP_INSTRUMENTS = (
     "TRX-USDT-SWAP",
     "XRP-USDT-SWAP",
 )
+C13A_PUBLIC_SWAP_INSTRUMENTS = (
+    "BTC-USDT-SWAP",
+    "ETH-USDT-SWAP",
+    "SOL-USDT-SWAP",
+    "BCH-USDT-SWAP",
+    "DOGE-USDT-SWAP",
+    "XRP-USDT-SWAP",
+    "LTC-USDT-SWAP",
+    "LINK-USDT-SWAP",
+)
 C12A_PUBLIC_INSTRUMENTS = (
     "BTC-USDT",
     "ETH-USDT",
@@ -247,6 +257,10 @@ def _validated_instrument_policy(
         (
             frozenset(C12A_PUBLIC_INSTRUMENTS),
             frozenset(C12A_PUBLIC_INSTRUMENTS),
+        ),
+        (
+            frozenset(C13A_PUBLIC_SWAP_INSTRUMENTS),
+            frozenset(C13A_PUBLIC_SWAP_INSTRUMENTS),
         ),
     }
     if policy not in supported:
