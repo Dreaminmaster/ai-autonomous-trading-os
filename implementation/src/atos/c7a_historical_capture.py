@@ -34,6 +34,7 @@ from atos.c7a_okx_public_data import (
     C9A_PUBLIC_TRADE_INSTRUMENTS,
     C10A_PUBLIC_SWAP_INSTRUMENTS,
     C12A_PUBLIC_INSTRUMENTS,
+    C13A_PUBLIC_SWAP_INSTRUMENTS,
     FUNDING_ARCHIVE_COLUMNS,
     HOUR_MS,
     HTTP_TIMEOUT_SECONDS,
@@ -427,6 +428,10 @@ class CapturePackage:
             (
                 frozenset(C12A_PUBLIC_INSTRUMENTS),
                 frozenset(C12A_PUBLIC_INSTRUMENTS),
+            ),
+            (
+                frozenset(C13A_PUBLIC_SWAP_INSTRUMENTS),
+                frozenset(C13A_PUBLIC_SWAP_INSTRUMENTS),
             ),
         }
         if len(values) != len(allowed_set) or len(trade_values) != len(trade_set) or (
