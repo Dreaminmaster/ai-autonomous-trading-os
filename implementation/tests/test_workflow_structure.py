@@ -1,5 +1,10 @@
 """Structural contract tests for Freqtrade Validation workflow."""
-import yaml, pathlib, pytest
+import os
+import pathlib
+import subprocess
+
+import pytest
+import yaml
 
 WORKFLOW_PATH = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows" / "freqtrade-validation.yml"
 
@@ -33,6 +38,14 @@ def test_completed_c9a_authoritative_run_cannot_be_dispatched_again(wf):
     assert "c9a_w1_w5_authoritative" not in raw
     assert "scripts/c9a_w1_w5_capture.py" not in raw
     assert "scripts/c9a_w1_w5_evaluate.py" not in raw
+
+def test_completed_c12a_authoritative_run_cannot_be_dispatched_again(wf):
+    raw = WORKFLOW_PATH.read_text()
+    assert "c12a-h1-h5-authoritative" not in wf.get("jobs", {})
+    assert "c12a_h1_h5_authoritative" not in raw
+    assert "scripts/c12a_h1_h5_capture.py" not in raw
+    assert "scripts/c12a_h1_h5_evaluate.py" not in raw
+
 
 def test_atos_tests_job(wf):
     assert "atos-tests" in wf.get("jobs",{})
@@ -141,12 +154,11 @@ def test_validation_summary_upload():
     assert len(val)==1, f'validation-summary upload missing: found {len(val)}'
     assert val[0]['with']['if-no-files-found']=='error'
 
-def test_notify_job_is_pr_only_and_waits_for_validation(wf):
+def test_notify_job_always_waits_for_validation(wf):
     notify = wf["jobs"]["notify"]
     assert set(notify["needs"]) == {"atos-tests", "freqtrade", "validation-summary"}
-    condition = str(notify["if"])
-    assert "always()" in condition
-    assert "github.event_name == 'pull_request'" in condition
+    assert notify["if"] == "${{ always() }}"
+
 
 def test_notify_is_fail_open_and_uses_secret_endpoint(wf):
     notify = wf["jobs"]["notify"]
@@ -165,10 +177,83 @@ def test_notify_payload_contract_and_no_endpoint_literal():
     assert '--data-urlencode "content=${body}"' not in raw
     assert '--data-urlencode "sound=1"' in raw
     assert 'PR #${PR_NUMBER} | ${status} | SHA ${PR_HEAD_SHA} | Run ID ${RUN_ID}' in raw
-    for status in ("SUCCESS", "FAILURE", "CANCELLED"):
+    assert 'ATOS ${ATOS_RESULT} | Freqtrade ${FREQTRADE_RESULT} | Summary ${SUMMARY_RESULT}' in raw
+    for status in ("SUCCESS", "FAILURE", "SKIPPED", "CANCELLED"):
         assert status in raw
 
-def test_notify_uses_exact_pr_head_not_synthetic_merge_sha(wf):
+def test_notify_uses_pr_head_with_non_pr_fallback(wf):
     env = wf["jobs"]["notify"]["steps"][0]["env"]
-    assert env["PR_HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
+    assert env["EVENT_NAME"] == "${{ github.event_name }}"
+    assert env["PR_NUMBER"] == "${{ github.event.pull_request.number || 'N/A' }}"
+    assert env["PR_HEAD_SHA"] == "${{ github.event.pull_request.head.sha || github.sha }}"
     assert env["RUN_ID"] == "${{ github.run_id }}"
+
+
+@pytest.mark.parametrize(
+    ("atos", "freqtrade", "summary", "expected"),
+    [
+        ("success", "success", "success", "SUCCESS"),
+        ("failure", "success", "success", "FAILURE"),
+        ("success", "failure", "skipped", "FAILURE"),
+        ("cancelled", "success", "success", "CANCELLED"),
+        ("success", "cancelled", "skipped", "CANCELLED"),
+        ("skipped", "success", "success", "SKIPPED"),
+    ],
+)
+def test_notify_shell_reports_true_aggregate_status(
+    wf, tmp_path, atos, freqtrade, summary, expected
+):
+    capture = tmp_path / "curl-arguments.txt"
+    fake_curl = tmp_path / "curl"
+    fake_curl.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE_FILE"\n')
+    fake_curl.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "CAPTURE_FILE": str(capture),
+        "MESSAGE_PUSH_ENDPOINT": "https://example.invalid/send",
+        "EVENT_NAME": "pull_request",
+        "PR_NUMBER": "42",
+        "PR_HEAD_SHA": "0123456789abcdef",
+        "RUN_ID": "123456",
+        "ATOS_RESULT": atos,
+        "FREQTRADE_RESULT": freqtrade,
+        "SUMMARY_RESULT": summary,
+    }
+    script = wf["jobs"]["notify"]["steps"][0]["run"]
+
+    subprocess.run(["bash", "-euo", "pipefail", "-c", script], env=env, check=True)
+
+    arguments = capture.read_text()
+    assert "title=ATOS · Freqtrade Validation 完成" in arguments
+    assert (
+        f"message=PR #42 | {expected} | SHA 0123456789abcdef | Run ID 123456"
+        in arguments
+    )
+    assert f"ATOS {atos} | Freqtrade {freqtrade} | Summary {summary}" in arguments
+    assert "sound=1" in arguments
+
+
+def test_notify_shell_suppresses_duplicate_non_pr_runs(wf, tmp_path):
+    capture = tmp_path / "curl-arguments.txt"
+    fake_curl = tmp_path / "curl"
+    fake_curl.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE_FILE"\n')
+    fake_curl.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "CAPTURE_FILE": str(capture),
+        "MESSAGE_PUSH_ENDPOINT": "https://example.invalid/send",
+        "EVENT_NAME": "push",
+        "PR_NUMBER": "N/A",
+        "PR_HEAD_SHA": "0123456789abcdef",
+        "RUN_ID": "123456",
+        "ATOS_RESULT": "cancelled",
+        "FREQTRADE_RESULT": "cancelled",
+        "SUMMARY_RESULT": "skipped",
+    }
+    script = wf["jobs"]["notify"]["steps"][0]["run"]
+
+    subprocess.run(["bash", "-euo", "pipefail", "-c", script], env=env, check=True)
+
+    assert not capture.exists()

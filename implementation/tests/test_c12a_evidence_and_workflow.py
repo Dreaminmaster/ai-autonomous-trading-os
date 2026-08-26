@@ -221,18 +221,13 @@ def test_end_to_end_evidence_recomputes_from_primitive_rows(tmp_path: Path) -> N
     )
 
 
-def test_one_shot_authority_workflow_is_explicit_main_only_and_fail_closed() -> None:
+def test_completed_one_shot_authority_is_permanently_removed_from_workflow() -> None:
     workflow = (
         Path(__file__).parents[2] / ".github" / "workflows" / "freqtrade-validation.yml"
     )
     text = workflow.read_text(encoding="utf-8")
-    assert text.count("c12a_h1_h5_authoritative:") == 1
-    assert text.count("c12a-h1-h5-authoritative:") == 1
-    assert "github.event_name == 'workflow_dispatch'" in text
-    assert "github.ref == 'refs/heads/main'" in text
-    assert "cancel-in-progress: false" in text
-    assert 'if [ "${status}" -gt 1 ]; then exit "${status}"; fi' in text
-    assert "implementation/c12a_authority" in text
-    assert "c12a_h1_h5_capture.py" in text
-    assert "c12a_h1_h5_evaluate.py" in text
-    assert "Account/private/order/Paper/Shadow/Live side effects: `NONE`" in text
+    assert "c12a_h1_h5_authoritative" not in text
+    assert "c12a-h1-h5-authoritative" not in text
+    assert "implementation/c12a_authority" not in text
+    assert "c12a_h1_h5_capture.py" not in text
+    assert "c12a_h1_h5_evaluate.py" not in text
