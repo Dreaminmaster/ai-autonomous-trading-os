@@ -175,7 +175,7 @@ def test_notify_payload_contract_and_no_endpoint_literal():
     assert '--data-urlencode "title=ATOS · Freqtrade Validation 完成"' in raw
     assert '--data-urlencode "message=${body}"' in raw
     assert '--data-urlencode "content=${body}"' not in raw
-    assert '--data-urlencode "sound=1"' in raw
+    assert '--data-urlencode "sound=8"' in raw
     assert 'PR #${PR_NUMBER} | ${status} | SHA ${PR_HEAD_SHA} | Run ID ${RUN_ID}' in raw
     assert 'ATOS ${ATOS_RESULT} | Freqtrade ${FREQTRADE_RESULT} | Summary ${SUMMARY_RESULT}' in raw
     for status in ("SUCCESS", "FAILURE", "SKIPPED", "CANCELLED"):
@@ -231,7 +231,7 @@ def test_notify_shell_reports_true_aggregate_status(
         in arguments
     )
     assert f"ATOS {atos} | Freqtrade {freqtrade} | Summary {summary}" in arguments
-    assert "sound=1" in arguments
+    assert "sound=8" in arguments
 
 
 def test_notify_shell_suppresses_duplicate_non_pr_runs(wf, tmp_path):
