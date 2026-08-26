@@ -259,18 +259,12 @@ def test_economic_fail_is_expected_but_program_failure_is_not() -> None:
         evaluate_script.classification_exit_code("PROGRAM_FAILURE")
 
 
-def test_one_shot_authority_workflow_is_explicit_and_safety_closed() -> None:
+def test_one_shot_authority_workflow_is_absent_after_closeout() -> None:
     text = (ROOT / ".github" / "workflows" / "freqtrade-validation.yml").read_text(
         encoding="utf-8"
     )
-    assert "c13a_h1_h5_authoritative" in text
-    assert "c13a-h1-h5-authoritative" in text
-    assert "scripts/c13a_h1_h5_capture.py" in text
-    assert "scripts/c13a_h1_h5_evaluate.py" in text
-    assert "scripts/c13a_h1_h5_artifact_manifest.py" in text
-    authority_job = text.split("  c13a-h1-h5-authoritative:", 1)[1].split(
-        "\n  validation-summary:", 1
-    )[0]
-    assert "secrets." not in authority_job
-    assert "api-key" not in authority_job.lower()
-    assert "api_secret" not in authority_job.lower()
+    assert "c13a_h1_h5_authoritative" not in text
+    assert "c13a-h1-h5-authoritative" not in text
+    assert "implementation/c13a_authority" not in text
+    assert "scripts/c13a_h1_h5_capture.py" not in text
+    assert "scripts/c13a_h1_h5_evaluate.py" not in text

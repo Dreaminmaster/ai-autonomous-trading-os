@@ -15,13 +15,7 @@ on:
       - '!implementation/src/atos/c6a_source_authority*.py'
       - '!implementation/tests/test_c6a_source_authority*.py'
       - '!implementation/scripts/run_c6a_source_authority_gate.py'
-  workflow_dispatch:
-    inputs:
-      c13a_h1_h5_authoritative:
-        description: 'Run the one-shot frozen C13A H1-H5 public-data authority'
-        required: false
-        default: false
-        type: boolean
+  workflow_dispatch: {}
 
 jobs:
   atos-tests:
@@ -158,112 +152,6 @@ jobs:
             implementation/freqtrade_data/backtest_results/round1_*_la_lookahead_status.json
           if-no-files-found: error
 
-  c13a-h1-h5-authoritative:
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      inputs.c13a_h1_h5_authoritative == true &&
-      github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    permissions:
-      contents: read
-    concurrency:
-      group: c13a-h1-h5-authoritative
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with: {python-version: '3.11'}
-      - name: Install frozen C13A runtime
-        run: |
-          cd implementation
-          python -m pip install --upgrade pip
-          python -m pip install -e '.[dev]'
-          mkdir -p c13a_authority
-          python -m pip freeze --all > c13a_authority/python_environment.txt
-      - name: Verify exact clean main checkout
-        env:
-          IMPLEMENTATION_SHA: ${{ github.sha }}
-        run: |
-          cd implementation
-          python -c "from pathlib import Path; from atos.c13a_historical_run_guard import verify_checkout_binding; print(verify_checkout_binding('${IMPLEMENTATION_SHA}', repository_root=Path('..')))"
-      - name: Capture official-public OKX H1-H5 data
-        env:
-          IMPLEMENTATION_SHA: ${{ github.sha }}
-        run: |
-          cd implementation
-          mkdir -p c13a_authority
-          set -o pipefail
-          python scripts/c13a_h1_h5_capture.py \
-            --output c13a_authority/capture \
-            --implementation-sha "${IMPLEMENTATION_SHA}" \
-            2>&1 | tee c13a_authority/capture.log
-      - name: Replay, independently recompute, and classify once
-        env:
-          IMPLEMENTATION_SHA: ${{ github.sha }}
-          AUTHORITATIVE_RUN_ID: ${{ github.run_id }}
-        run: |
-          cd implementation
-          set +e
-          set -o pipefail
-          python scripts/c13a_h1_h5_evaluate.py \
-            --capture c13a_authority/capture \
-            --output c13a_authority/evidence \
-            --implementation-sha "${IMPLEMENTATION_SHA}" \
-            --authoritative-run-id "${AUTHORITATIVE_RUN_ID}" \
-            2>&1 | tee c13a_authority/evaluate.log
-          status=${PIPESTATUS[0]}
-          set -e
-          if [ "${status}" -gt 1 ]; then exit "${status}"; fi
-      - name: Publish C13A classification summary
-        if: always() && hashFiles('implementation/c13a_authority/evidence/final_classification.json') != ''
-        run: |
-          cd implementation
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          root = Path("c13a_authority/evidence")
-          final = json.loads((root / "final_classification.json").read_text())
-          pooled = json.loads((root / "pooled_summary.json").read_text())
-          candidate = pooled["pooled"]["C13ACrossSectionalLotteryDemandReversal"]["1.0x"]
-          lines = [
-              "# C13A H1-H5 authority",
-              f"- Classification: `{final['classification']}`",
-              f"- Exact implementation SHA: `{final['implementation_sha']}`",
-              f"- Independent recomputation: `{final['independent_recompute_passed']}`",
-              f"- Aggregate return, 1.0x cost: `{candidate['aggregate_return']}`",
-              f"- Annualized weekly Sharpe: `{candidate['statistics']['annualized_weekly_sharpe']}`",
-              f"- Weekly PSR: `{candidate['statistics']['psr_probability']}`",
-              f"- Bonferroni-adjusted PSR: `{candidate['bonferroni_adjusted_psr']}`",
-              f"- Candidate BTC beta: `{pooled['candidate_btc_beta']}`",
-              "- Failed gates: " + ", ".join(pooled["rejection_reasons"]),
-              "- Account/private/order/Paper/Shadow/Live side effects: `NONE`",
-          ]
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
-              handle.write("\n".join(lines) + "\n")
-          PY
-      - name: Seal complete C13A authority artifact inventory
-        if: always()
-        env:
-          IMPLEMENTATION_SHA: ${{ github.sha }}
-          AUTHORITATIVE_RUN_ID: ${{ github.run_id }}
-        run: |
-          cd implementation
-          python scripts/c13a_h1_h5_artifact_manifest.py \
-            --root c13a_authority \
-            --implementation-sha "${IMPLEMENTATION_SHA}" \
-            --authoritative-run-id "${AUTHORITATIVE_RUN_ID}"
-      - name: Upload immutable C13A authority evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: c13a-h1-h5-authoritative-${{ github.run_id }}
-          path: implementation/c13a_authority
-          if-no-files-found: warn
-          retention-days: 30
-
   validation-summary:
     runs-on: ubuntu-latest
     permissions:
@@ -383,5 +271,5 @@ jobs:
             "${MESSAGE_PUSH_ENDPOINT}" \
             --data-urlencode "title=ATOS · Freqtrade Validation 完成" \
             --data-urlencode "message=${body}" \
-            --data-urlencode "sound=1" \
+            --data-urlencode "sound=8" \
             --output /dev/null || true
