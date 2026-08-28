@@ -47,6 +47,14 @@ def test_completed_c12a_authoritative_run_cannot_be_dispatched_again(wf):
     assert "scripts/c12a_h1_h5_evaluate.py" not in raw
 
 
+def test_completed_c14a_authoritative_run_cannot_be_dispatched_again(wf):
+    raw = WORKFLOW_PATH.read_text()
+    assert "c14a-h1-h5-authoritative" not in wf.get("jobs", {})
+    assert "c14a_h1_h5_authoritative" not in raw
+    assert "scripts/c14a_h1_h5_capture.py" not in raw
+    assert "scripts/c14a_h1_h5_evaluate.py" not in raw
+
+
 def test_atos_tests_job(wf):
     assert "atos-tests" in wf.get("jobs",{})
 

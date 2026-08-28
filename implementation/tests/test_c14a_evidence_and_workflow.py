@@ -259,17 +259,11 @@ def test_economic_fail_is_expected_but_program_failure_is_not() -> None:
         evaluate_script.classification_exit_code("PROGRAM_FAILURE")
 
 
-def test_one_shot_authority_workflow_is_main_only_public_and_non_cancelling() -> None:
+def test_one_shot_authority_workflow_is_absent_after_closeout() -> None:
     text = (ROOT / ".github" / "workflows" / "freqtrade-validation.yml").read_text(
         encoding="utf-8"
     )
-    assert "c14a_h1_h5_authoritative" in text
-    assert "c14a-h1-h5-authoritative" in text
-    assert "github.event_name == 'workflow_dispatch'" in text
-    assert "github.ref == 'refs/heads/main'" in text
-    assert "cancel-in-progress: false" in text
-    assert "contents: read" in text
-    assert "scripts/c14a_h1_h5_capture.py" in text
-    assert "scripts/c14a_h1_h5_evaluate.py" in text
-    assert "apiKey" not in text
-    assert "secretKey" not in text
+    assert "c14a_h1_h5_authoritative" not in text
+    assert "c14a-h1-h5-authoritative" not in text
+    assert "scripts/c14a_h1_h5_capture.py" not in text
+    assert "scripts/c14a_h1_h5_evaluate.py" not in text
