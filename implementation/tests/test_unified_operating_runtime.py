@@ -559,7 +559,7 @@ def test_durable_startup_detects_incomplete_cycle_and_pauses(tmp_path: Path) -> 
     assert report["required"] is True
     assert report["classification"] == "RECOVERY_REQUIRED"
     assert report["cycles"][0]["cycle_id"] == "cycle-incomplete"
-    with pytest.raises(RuntimeError, match="startup recovery"):
+    with pytest.raises(RuntimeError, match="recovery is required"):
         restarted.execute(
             {},
             {},
@@ -567,3 +567,78 @@ def test_durable_startup_detects_incomplete_cycle_and_pauses(tmp_path: Path) -> 
             equity_usdt=1000.0,
             execution_context={},
         )
+
+
+def test_durable_mid_cycle_failure_latches_recovery_in_same_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executor = DurableSimulatedExecutor(
+        mode="paper", database_path=tmp_path / "runtime.sqlite"
+    )
+    observed_at = datetime.now(tz=UTC).isoformat().replace("+00:00", "Z")
+    context = {
+        "session_id": "session-mid-cycle-failure",
+        "session_started_at": observed_at,
+        "cycle_id": "cycle-mid-cycle-failure",
+        "mode": "paper",
+        "observed_at": observed_at,
+    }
+    intent = {
+        "schema_version": "trade_intent.v1",
+        "action": "BUY",
+        "symbol": "BTC-USDT",
+        "market_type": "paper_spot",
+        "confidence": 0.8,
+        "thesis": "fault injection",
+        "evidence": ["deterministic"],
+        "selected_strategy_ids": ["test"],
+        "position_size_pct": 1.0,
+        "stop_loss_pct": 1.0,
+        "take_profit_pct": 2.0,
+        "max_holding_minutes": 60,
+        "invalidation_conditions": ["test invalidated"],
+        "risk_notes": "test",
+        "metadata": {},
+    }
+    risk = {
+        "decision": "APPROVED",
+        "reasons": ["all_checks_passed"],
+        "risk_score": 0.1,
+        "checks": {"external_execution": False},
+    }
+
+    def fail_after_dispatch(_: object) -> None:
+        raise RuntimeError("injected coordinator failure")
+
+    monkeypatch.setattr(executor._coordinator, "execute", fail_after_dispatch)
+    with pytest.raises(RuntimeError, match="injected coordinator failure"):
+        executor.execute(
+            intent,
+            risk,
+            mark_price=100.0,
+            equity_usdt=1000.0,
+            execution_context=context,
+        )
+
+    report = executor.recovery_report()
+    assert report["required"] is True
+    assert report["classification"] == "RECOVERY_REQUIRED"
+    assert report["cycles"][0]["cycle_id"] == context["cycle_id"]
+    assert report["executions"][0]["status"] == "DISPATCH_COMMITTED"
+
+    later_context = dict(context, cycle_id="cycle-must-not-start")
+    with pytest.raises(RuntimeError, match="recovery is required"):
+        executor.execute(
+            intent,
+            risk,
+            mark_price=100.0,
+            equity_usdt=1000.0,
+            execution_context=later_context,
+        )
+    assert (
+        executor.database.connection.execute(
+            "SELECT COUNT(*) FROM runtime_cycles WHERE cycle_id=?",
+            (later_context["cycle_id"],),
+        ).fetchone()[0]
+        == 0
+    )

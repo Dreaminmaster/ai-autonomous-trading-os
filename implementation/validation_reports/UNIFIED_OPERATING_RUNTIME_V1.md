@@ -48,7 +48,7 @@ official OKX public market data or caller-supplied history
 ## Verification
 
 - Full pytest after all runtime, persistence, portfolio-risk, and recovery
-  additions: `1623 passed, 7 skipped`.
+  additions: `1624 passed, 7 skipped`.
 - Focused snapshot/runtime/lifecycle regression after the additions:
   `116 passed`.
 - Durable runtime/idempotency/lifecycle regression: `119 passed`.

@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal, localcontext
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from atos.execution import ExecutionResult, PaperExecutor
 from atos.execution_idempotency_repository import (
@@ -43,10 +45,32 @@ from atos.runtime_migrations import MIGRATION_PLAN, MigrationManager
 
 LIVE = "FORBIDDEN"
 _GRAPH_VERSION = "OPERATING_RUNTIME_DURABLE_GRAPH_V1"
+_T = TypeVar("_T")
 
 
 class DurableExecutionError(RuntimeError):
     """A durable simulation invariant could not be proven."""
+
+
+def _recovery_guard(method: Callable[..., _T]) -> Callable[..., _T]:
+    """Refresh and latch durable recovery authority around each execution."""
+
+    @wraps(method)
+    def guarded(self: DurableSimulatedExecutor, *args: Any, **kwargs: Any) -> _T:
+        self._startup_recovery = self._read_recovery_report()
+        if self._startup_recovery["required"]:
+            raise DurableExecutionError(
+                "recovery is required before new simulated execution"
+            )
+        try:
+            return method(self, *args, **kwargs)
+        except Exception:
+            # A failure after the decision graph or dispatch claim was
+            # committed must block later cycles in this same process.
+            self._startup_recovery = self._read_recovery_report()
+            raise
+
+    return guarded
 
 
 def _canonical_json(value: Any) -> str:
@@ -150,7 +174,8 @@ class DurableSimulatedExecutor(PaperExecutor):
         }
 
     def recovery_report(self) -> dict[str, Any]:
-        """Return the immutable startup recovery assessment."""
+        """Return the latest fail-closed recovery assessment."""
+        self._startup_recovery = self._read_recovery_report()
         return json.loads(_canonical_json(self._startup_recovery))
 
     def risk_state(
@@ -482,6 +507,7 @@ class DurableSimulatedExecutor(PaperExecutor):
             if cursor.rowcount != 1:
                 raise DurableExecutionError("runtime cycle completion CAS failed")
 
+    @_recovery_guard
     def execute(
         self,
         trade_intent: dict,
@@ -491,10 +517,6 @@ class DurableSimulatedExecutor(PaperExecutor):
         *,
         execution_context: dict[str, Any] | None = None,
     ) -> ExecutionResult:
-        if self._startup_recovery["required"]:
-            raise DurableExecutionError(
-                "startup recovery is required before new simulated execution"
-            )
         if execution_context is None:
             raise DurableExecutionError("durable execution context is required")
         observed_at = _utc_datetime(execution_context.get("observed_at"), "observed_at")
