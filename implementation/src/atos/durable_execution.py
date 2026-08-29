@@ -42,6 +42,8 @@ from atos.paper_execution_adapter import (
 from atos.position_accounting import NettingPositionAccountingV1
 from atos.runtime_db import RuntimeDatabase
 from atos.runtime_migrations import MIGRATION_PLAN, MigrationManager
+from atos.runtime_state import RuntimeSessionStatus
+from atos.runtime_state_writer import RuntimeStateWriter
 
 LIVE = "FORBIDDEN"
 _GRAPH_VERSION = "OPERATING_RUNTIME_DURABLE_GRAPH_V1"
@@ -177,6 +179,52 @@ class DurableSimulatedExecutor(PaperExecutor):
         """Return the latest fail-closed recovery assessment."""
         self._startup_recovery = self._read_recovery_report()
         return json.loads(_canonical_json(self._startup_recovery))
+
+    def finalize_session(
+        self,
+        session_id: str,
+        *,
+        at_utc: str,
+        reason: str,
+        recovery_required: bool = False,
+    ) -> str:
+        """Durably close or recovery-pause one simulation session.
+
+        A runtime session is created lazily with its first durable cycle.  A
+        supervisor that stops before that point therefore has no row to
+        transition; this is reported explicitly instead of creating synthetic
+        lifecycle state.  This method has no network or exchange dependency.
+        """
+        if not isinstance(session_id, str) or not session_id:
+            raise DurableExecutionError("session_id is required")
+        if not isinstance(reason, str) or not reason or len(reason) > 160:
+            raise DurableExecutionError("session finalization reason is invalid")
+        row = self._db.connection.execute(
+            "SELECT status FROM runtime_sessions WHERE session_id=?", (session_id,)
+        ).fetchone()
+        if row is None:
+            return "NOT_PERSISTED"
+        try:
+            current = RuntimeSessionStatus(row["status"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DurableExecutionError("persisted session status is invalid") from exc
+        target = (
+            RuntimeSessionStatus.PAUSED_RECOVERY_REQUIRED
+            if recovery_required
+            else RuntimeSessionStatus.STOPPED
+        )
+        if current == target:
+            return target.value
+        if current == RuntimeSessionStatus.STOPPED:
+            return current.value
+        RuntimeStateWriter(self._db).transition_session(
+            session_id,
+            current,
+            target,
+            at_utc=at_utc,
+            stop_reason=reason if target == RuntimeSessionStatus.STOPPED else None,
+        )
+        return target.value
 
     def risk_state(
         self,
@@ -520,7 +568,13 @@ class DurableSimulatedExecutor(PaperExecutor):
         if execution_context is None:
             raise DurableExecutionError("durable execution context is required")
         observed_at = _utc_datetime(execution_context.get("observed_at"), "observed_at")
-        mark = _decimal(mark_price, "mark_price", positive=True)
+        action_requested = str(trade_intent.get("action", ""))
+        creates_simulated_execution = risk_decision.get("decision") == "APPROVED" and (
+            action_requested in {"BUY", "SELL"}
+        )
+        mark = _decimal(mark_price, "mark_price", positive=creates_simulated_execution)
+        if mark < 0:
+            raise DurableExecutionError("mark_price must be non-negative")
         equity = _decimal(equity_usdt, "equity_usdt", positive=True)
         graph = self._persist_decision_graph(
             trade_intent=trade_intent,
