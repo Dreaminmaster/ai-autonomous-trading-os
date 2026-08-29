@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
+import threading
 from pathlib import Path
 
 from atos.dashboard import run_dashboard
@@ -11,6 +13,7 @@ from atos.market import PublicMarketAdapter
 from atos.risk import RiskEngine
 from atos.runtime import AutonomousRuntime
 from atos.scoring import ScoringEngine
+from atos.shadow_supervisor import build_shadow_supervisor
 
 
 def load_policy(path: str) -> dict:
@@ -70,6 +73,49 @@ def operate(
     )
 
 
+def supervise(
+    policy: dict,
+    *,
+    symbols: list[str],
+    max_loops: int | None,
+    interval_seconds: float,
+    bar: str,
+    limit: int,
+    failure_threshold: int,
+    health_path: str,
+    ledger_path: str,
+) -> dict:
+    """Run the interruptible public-only Shadow supervisor."""
+    if max_loops is not None and (type(max_loops) is not int or max_loops < 1):
+        raise ValueError("max_loops must be positive or None")
+    operating_policy = {**policy, "mode": "shadow"}
+    stop_event = threading.Event()
+    supervisor = build_shadow_supervisor(
+        operating_policy,
+        symbols=symbols,
+        health_path=health_path,
+        ledger_path=ledger_path,
+        bar=bar,
+        limit=limit,
+        interval_seconds=interval_seconds,
+        failure_threshold=failure_threshold,
+        sleep_fn=stop_event.wait,
+    )
+    previous_handlers: dict[signal.Signals, object] = {}
+
+    def request_stop(_: int, __: object) -> None:
+        stop_event.set()
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        previous_handlers[signum] = signal.getsignal(signum)
+        signal.signal(signum, request_stop)
+    try:
+        return supervisor.run(max_loops=max_loops, stop_requested=stop_event.is_set)
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+
 def market(symbol: str) -> dict:
     snap = PublicMarketAdapter().snapshot(symbol)
     return {
@@ -127,6 +173,7 @@ def main() -> None:
             "cycle",
             "loop",
             "operate",
+            "supervise",
             "market",
             "review",
             "recover",
@@ -139,7 +186,12 @@ def main() -> None:
     parser.add_argument("--mode", choices=["paper", "shadow"], default="shadow")
     parser.add_argument("--symbols", default="BTC-USDT,ETH-USDT")
     parser.add_argument("--bar", default="1m")
-    parser.add_argument("--interval-seconds", type=float, default=0.0)
+    parser.add_argument("--interval-seconds", type=float)
+    parser.add_argument("--max-loops", type=int, default=0)
+    parser.add_argument("--limit", type=int, default=100)
+    parser.add_argument("--failure-threshold", type=int)
+    parser.add_argument("--health-path")
+    parser.add_argument("--ledger-path")
     parser.add_argument("--database-path")
     parser.add_argument("--confirm-recovery")
     parser.add_argument("--reason")
@@ -164,8 +216,40 @@ def main() -> None:
             mode=args.mode,
             symbols=symbols,
             loops=args.loops,
-            interval_seconds=args.interval_seconds,
+            interval_seconds=args.interval_seconds or 0.0,
             bar=args.bar,
+        )
+    elif args.command == "supervise":
+        symbols = [value.strip() for value in args.symbols.split(",") if value.strip()]
+        supervisor_policy = policy.get("shadow_supervisor", {})
+        output = supervise(
+            policy,
+            symbols=symbols,
+            max_loops=None if args.max_loops == 0 else args.max_loops,
+            interval_seconds=(
+                args.interval_seconds
+                if args.interval_seconds is not None
+                else float(supervisor_policy.get("interval_seconds", 60.0))
+            ),
+            bar=args.bar,
+            limit=args.limit,
+            failure_threshold=(
+                args.failure_threshold
+                if args.failure_threshold is not None
+                else int(supervisor_policy.get("failure_threshold", 3))
+            ),
+            health_path=(
+                args.health_path
+                or str(
+                    supervisor_policy.get("health_path", "runtime/shadow_health.json")
+                )
+            ),
+            ledger_path=(
+                args.ledger_path
+                or str(
+                    supervisor_policy.get("ledger_path", "runtime/shadow_events.sqlite")
+                )
+            ),
         )
     elif args.command == "market":
         output = market(args.symbol)

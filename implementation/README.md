@@ -17,6 +17,13 @@ pytest
 python -m atos.cli operate --mode paper --symbols BTC-USDT --loops 1
 python -m atos.cli operate --mode shadow --symbols BTC-USDT,ETH-USDT --loops 1
 
+# Long-running public-only Shadow supervisor (Ctrl-C/SIGTERM stops safely)
+python -m atos.cli supervise --symbols BTC-USDT,ETH-USDT \
+  --interval-seconds 60 --max-loops 0
+
+# Bounded operational smoke run; writes atomic health and durable audit state
+python -m atos.cli supervise --symbols BTC-USDT --interval-seconds 0 --max-loops 1
+
 # Inspect a durable recovery lock (read-only)
 python -m atos.cli recover --mode paper --database-path runtime/atos_runtime.sqlite
 

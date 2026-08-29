@@ -24,5 +24,12 @@
   "persistence": {
     "enabled": true,
     "database_path": "runtime/atos_runtime.sqlite"
+  },
+  "shadow_supervisor": {
+    "health_path": "runtime/shadow_health.json",
+    "ledger_path": "runtime/shadow_events.sqlite",
+    "interval_seconds": 60.0,
+    "failure_threshold": 3,
+    "automatic_restart": false
   }
 }
