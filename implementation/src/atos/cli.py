@@ -13,6 +13,7 @@ from atos.market import PublicMarketAdapter
 from atos.risk import RiskEngine
 from atos.runtime import AutonomousRuntime
 from atos.scoring import ScoringEngine
+from atos.shadow_soak_evidence import build_shadow_soak_evidence
 from atos.shadow_supervisor import build_shadow_supervisor
 
 
@@ -116,6 +117,34 @@ def supervise(
             signal.signal(signum, handler)
 
 
+def shadow_evidence(
+    policy_path: str,
+    *,
+    health_path: str,
+    ledger_path: str,
+    database_path: str,
+    output_path: str,
+    implementation_sha: str,
+) -> dict:
+    """Build one read-only, no-overwrite Shadow soak evidence package."""
+    report, manifest = build_shadow_soak_evidence(
+        output_path,
+        policy_path=policy_path,
+        health_path=health_path,
+        ledger_path=ledger_path,
+        database_path=database_path,
+        implementation_sha=implementation_sha,
+    )
+    return {
+        "status": report["gate"]["status"],
+        "session_id": report["session_id"],
+        "output_path": output_path,
+        "evidence_sha256": manifest["files"][0]["sha256"],
+        "authorizes_live": False,
+        "live": "FORBIDDEN",
+    }
+
+
 def market(symbol: str) -> dict:
     snap = PublicMarketAdapter().snapshot(symbol)
     return {
@@ -174,6 +203,7 @@ def main() -> None:
             "loop",
             "operate",
             "supervise",
+            "shadow-evidence",
             "market",
             "review",
             "recover",
@@ -195,6 +225,8 @@ def main() -> None:
     parser.add_argument("--database-path")
     parser.add_argument("--confirm-recovery")
     parser.add_argument("--reason")
+    parser.add_argument("--evidence-output")
+    parser.add_argument("--implementation-sha")
     parser.add_argument("--port", type=int, default=28787)
     args = parser.parse_args()
     policy = load_policy(args.policy)
@@ -250,6 +282,37 @@ def main() -> None:
                     supervisor_policy.get("ledger_path", "runtime/shadow_events.sqlite")
                 )
             ),
+        )
+    elif args.command == "shadow-evidence":
+        supervisor_policy = policy.get("shadow_supervisor", {})
+        if not isinstance(supervisor_policy, dict):
+            raise ValueError("shadow_supervisor policy must be an object")
+        if not args.evidence_output or not args.implementation_sha:
+            raise ValueError("--evidence-output and --implementation-sha are required")
+        output = shadow_evidence(
+            args.policy,
+            health_path=(
+                args.health_path
+                or str(
+                    supervisor_policy.get("health_path", "runtime/shadow_health.json")
+                )
+            ),
+            ledger_path=(
+                args.ledger_path
+                or str(
+                    supervisor_policy.get("ledger_path", "runtime/shadow_events.sqlite")
+                )
+            ),
+            database_path=(
+                args.database_path
+                or str(
+                    policy.get("persistence", {}).get(
+                        "database_path", "runtime/atos_runtime.sqlite"
+                    )
+                )
+            ),
+            output_path=args.evidence_output,
+            implementation_sha=args.implementation_sha,
         )
     elif args.command == "market":
         output = market(args.symbol)
