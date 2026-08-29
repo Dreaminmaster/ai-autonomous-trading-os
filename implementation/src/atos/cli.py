@@ -6,6 +6,7 @@ from pathlib import Path
 
 from atos.dashboard import run_dashboard
 from atos.domain import Candle, make_hold
+from atos.durable_recovery import DurableSimulatedRecoveryController
 from atos.market import PublicMarketAdapter
 from atos.risk import RiskEngine
 from atos.runtime import AutonomousRuntime
@@ -85,6 +86,27 @@ def review() -> dict:
     )
 
 
+def recover(
+    policy: dict,
+    *,
+    mode: str,
+    database_path: str | None,
+    confirmation_token: str | None,
+    reason: str | None,
+) -> dict:
+    configured = policy.get("persistence", {}).get(
+        "database_path", "runtime/atos_runtime.sqlite"
+    )
+    controller = DurableSimulatedRecoveryController(
+        mode=mode, database_path=database_path or str(configured)
+    )
+    if confirmation_token is None:
+        return controller.inspect()
+    if reason is None:
+        raise ValueError("--reason is required with --confirm-recovery")
+    return controller.resolve(confirmation_token=confirmation_token, reason=reason)
+
+
 def risk(policy: dict) -> dict:
     return (
         RiskEngine(policy)
@@ -107,6 +129,7 @@ def main() -> None:
             "operate",
             "market",
             "review",
+            "recover",
             "dashboard",
         ],
     )
@@ -117,6 +140,9 @@ def main() -> None:
     parser.add_argument("--symbols", default="BTC-USDT,ETH-USDT")
     parser.add_argument("--bar", default="1m")
     parser.add_argument("--interval-seconds", type=float, default=0.0)
+    parser.add_argument("--database-path")
+    parser.add_argument("--confirm-recovery")
+    parser.add_argument("--reason")
     parser.add_argument("--port", type=int, default=28787)
     args = parser.parse_args()
     policy = load_policy(args.policy)
@@ -143,6 +169,14 @@ def main() -> None:
         )
     elif args.command == "market":
         output = market(args.symbol)
+    elif args.command == "recover":
+        output = recover(
+            policy,
+            mode=args.mode,
+            database_path=args.database_path,
+            confirmation_token=args.confirm_recovery,
+            reason=args.reason,
+        )
     else:
         output = review()
     print(json.dumps(output, indent=2, ensure_ascii=False))
