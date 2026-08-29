@@ -13,8 +13,8 @@ This is the DEFAULT provider and the ultimate FALLBACK.
 
 from __future__ import annotations
 
-from atos.providers.base import BaseProvider, ProviderRequest, ProviderResult
 from atos.domain import TradeIntent, make_hold
+from atos.providers.base import BaseProvider, ProviderRequest, ProviderResult
 
 
 class MockProvider(BaseProvider):
@@ -35,11 +35,27 @@ class MockProvider(BaseProvider):
             for candidate in request.candidates:
                 side = candidate.get("side", "HOLD")
                 confidence = float(candidate.get("confidence", 0.0))
-                if side == "BUY" and confidence >= self.min_confidence:
-                    if best is None or confidence > float(best.get("confidence", 0.0)):
-                        best = candidate
+                if (
+                    side == "BUY"
+                    and confidence >= self.min_confidence
+                    and (
+                        best is None or confidence > float(best.get("confidence", 0.0))
+                    )
+                ):
+                    best = candidate
 
             if best:
+                max_position_pct = float(
+                    request.risk_state.get("max_position_pct_per_trade", 5.0)
+                )
+                if max_position_pct <= 0:
+                    return ProviderResult(
+                        intent=make_hold(
+                            "risk policy allows no position", symbol=request.symbol
+                        ),
+                        provider_name=self.name,
+                        tokens_used=0,
+                    )
                 intent = TradeIntent(
                     schema_version="trade_intent.v1",
                     action="BUY",
@@ -49,15 +65,20 @@ class MockProvider(BaseProvider):
                     thesis=str(best.get("entry_reason", "candidate supports trade")),
                     evidence=[str(best.get("entry_reason", "strategy candidate"))],
                     selected_strategy_ids=[str(best.get("strategy_id", "unknown"))],
-                    position_size_pct=5.0,
+                    position_size_pct=min(5.0, max_position_pct),
                     stop_loss_pct=float(best.get("suggested_stop_loss_pct", 1.0)),
                     take_profit_pct=float(best.get("suggested_take_profit_pct", 2.0)),
                     max_holding_minutes=int(best.get("max_holding_minutes", 240)),
                     invalidation_conditions=["candidate invalidated", "risk worsens"],
                     risk_notes="mock provider decision",
-                    metadata={"provider": self.name, "selected_strategy": best.get("strategy_id")},
+                    metadata={
+                        "provider": self.name,
+                        "selected_strategy": best.get("strategy_id"),
+                    },
                 )
-                return ProviderResult(intent=intent, provider_name=self.name, tokens_used=0)
+                return ProviderResult(
+                    intent=intent, provider_name=self.name, tokens_used=0
+                )
 
             # No BUY candidate → HOLD
             return ProviderResult(
@@ -66,5 +87,7 @@ class MockProvider(BaseProvider):
                 tokens_used=0,
             )
 
-        except Exception as e:
-            return self.safe_hold(request.symbol, f"mock provider error: {e}", self.name, str(e))
+        except Exception as e:  # noqa: BLE001 - provider boundary must return HOLD
+            return self.safe_hold(
+                request.symbol, f"mock provider error: {e}", self.name, str(e)
+            )

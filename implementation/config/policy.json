@@ -1,6 +1,28 @@
 {
   "mode": "paper",
+  "live_enabled": false,
   "allowed_symbols": ["BTC-USDT", "ETH-USDT"],
+  "public_data_only": true,
   "position_limits": {"max_position_pct_per_trade": 1.0},
-  "ai_output_limits": {"min_confidence_for_trade": 0.6}
+  "ai_output_limits": {"min_confidence_for_trade": 0.6},
+  "trade_limits": {"max_trades_per_day": 20, "cooldown_seconds": 300},
+  "risk_limits": {"max_drawdown_pct": 20.0},
+  "portfolio_limits": {
+    "max_gross_exposure_pct": 20.0,
+    "max_symbol_exposure_pct": 5.0
+  },
+  "data_freshness": {
+    "max_candle_age_seconds": 300,
+    "min_candles_required": 20,
+    "max_gap_minutes": 15
+  },
+  "paper": {
+    "equity_usdt": 1000.0,
+    "fee_bps": 10.0,
+    "slippage_bps": 5.0
+  },
+  "persistence": {
+    "enabled": true,
+    "database_path": "runtime/atos_runtime.sqlite"
+  }
 }

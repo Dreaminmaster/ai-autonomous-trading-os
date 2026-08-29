@@ -13,13 +13,17 @@ python -m atos.cli status
 python -m atos.cli cycle
 pytest
 
-# 3. Setup Freqtrade (requires macOS/Linux, not iOS)
+# 3. Run one account-free public-market cycle
+python -m atos.cli operate --mode paper --symbols BTC-USDT --loops 1
+python -m atos.cli operate --mode shadow --symbols BTC-USDT,ETH-USDT --loops 1
+
+# 4. Setup Freqtrade (requires macOS/Linux, not iOS)
 ./scripts/setup_freqtrade.sh
 ./scripts/download_data.sh
 ./scripts/run_backtest.sh
 ./scripts/run_dryrun.sh
 
-# 4. Dashboard
+# 5. Dashboard
 ./scripts/run_dashboard.sh
 ```
 
@@ -64,7 +68,9 @@ pytest
 - AI **never** places orders directly
 - All trade intents **must** pass deterministic risk checks
 - Default mode is **dry-run** (paper trading)
-- Live trading requires **explicit** config change
+- This repository has **no connected Live execution path**
+- Paper/Shadow decisions use the canonical SQLite lifecycle with immutable
+  intents, deterministic idempotency, simulated fills, and position accounting
 - API keys are **never** stored in code, git, logs, or prompts
 - Any failure → **HOLD** (no trade)
 
@@ -76,7 +82,7 @@ pytest
 | `backtest` | Historical replay | — |
 | `paper` | Simulated execution | ✅ |
 | `shadow` | Live market, simulated orders | — |
-| `live` | Real orders | Disabled |
+| `live` | Real orders | Forbidden; runtime rejects it before data access |
 
 ## CLI Commands
 
@@ -85,6 +91,8 @@ python -m atos.cli status       # System status
 python -m atos.cli risk         # Risk engine self-check
 python -m atos.cli cycle        # Single decision cycle
 python -m atos.cli loop --loops 3  # Multi-loop autonomous run
+python -m atos.cli operate --mode paper --symbols BTC-USDT --loops 1  # Public data + simulated fill
+python -m atos.cli operate --mode shadow --symbols BTC-USDT --loops 1 # Public observation + simulated decision
 python -m atos.cli review       # Strategy scoring
 python -m atos.cli market --symbol BTC-USDT  # OKX public data
 python -m atos.cli dashboard    # HTTP dashboard
@@ -96,7 +104,7 @@ python -m atos.cli_ext timer    # Timer test
 ## Tests
 
 ```bash
-pytest                          # 12 tests, all pass
+pytest                          # Full deterministic test suite
 ./scripts/validate_no_secrets.sh  # Scan for secret leakage
 ```
 

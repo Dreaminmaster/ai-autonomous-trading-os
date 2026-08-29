@@ -11,6 +11,8 @@ New strategies beyond the original 4 (trend, mean_reversion, breakout, hold):
 
 from __future__ import annotations
 
+import math
+from dataclasses import asdict, dataclass
 from typing import Protocol
 
 from atos.domain import Candle, StrategyCandidate
@@ -20,10 +22,10 @@ class StrategyRegistry:
     """Registry of available strategies that can be enabled/disabled."""
 
     def __init__(self):
-        self._strategies: dict[str, "Strategy"] = {}
+        self._strategies: dict[str, Strategy] = {}
         self._enabled: set[str] = set()
 
-    def register(self, strategy: "Strategy", enabled: bool = True) -> None:
+    def register(self, strategy: Strategy, enabled: bool = True) -> None:
         self._strategies[strategy.strategy_id] = strategy
         if enabled:
             self._enabled.add(strategy.strategy_id)
@@ -38,34 +40,100 @@ class StrategyRegistry:
         return list(self._strategies.keys())
 
     def enabled_ids(self) -> list[str]:
-        return [sid for sid in self._enabled if sid in self._strategies]
+        return [sid for sid in self._strategies if sid in self._enabled]
 
-    def get(self, strategy_id: str) -> "Strategy | None":
+    def get(self, strategy_id: str) -> Strategy | None:
         return self._strategies.get(strategy_id)
 
-    def generate_all(self, symbol: str, candles: list[Candle]) -> list[StrategyCandidate]:
-        """Run all enabled strategies and return their candidates."""
-        candidates = []
-        for sid in self._enabled:
-            strategy = self._strategies.get(sid)
-            if strategy:
-                c = strategy.generate(symbol, candles)
-                if c:
-                    candidates.append(c)
-        # Always append hold baseline
-        candidates.append(HoldBaselineStrategy().generate(symbol, candles))
+    def generate_all(
+        self, symbol: str, candles: list[Candle]
+    ) -> list[StrategyCandidate]:
+        """Compatibility wrapper around the diagnostic plugin runner."""
+        candidates, _ = self.generate_with_diagnostics(symbol, candles)
         return candidates
+
+    def generate_with_diagnostics(
+        self, symbol: str, candles: list[Candle]
+    ) -> tuple[list[StrategyCandidate], list[dict]]:
+        """Run enabled plugins deterministically and isolate invalid plugins.
+
+        A plugin exception or malformed candidate is retained as a diagnostic
+        and cannot bypass the HOLD baseline or abort the operating process.
+        """
+        candidates: list[StrategyCandidate] = []
+        diagnostics: list[dict] = []
+        for sid in self.enabled_ids():
+            strategy = self._strategies[sid]
+            try:
+                candidate = strategy.generate(symbol, candles)
+                if candidate is None:
+                    diagnostics.append(
+                        StrategyDiagnostic(sid, "NO_SIGNAL", "no candidate").to_dict()
+                    )
+                    continue
+                self._validate_candidate(candidate, symbol, sid)
+                candidates.append(candidate)
+                diagnostics.append(
+                    StrategyDiagnostic(sid, "OK", "candidate accepted").to_dict()
+                )
+            except Exception as exc:  # noqa: BLE001 - isolate untrusted plugins
+                diagnostics.append(
+                    StrategyDiagnostic(
+                        sid,
+                        "PLUGIN_FAILED",
+                        f"{type(exc).__name__}: {exc}",
+                    ).to_dict()
+                )
+        candidates.append(HoldBaselineStrategy().generate(symbol, candles))
+        return candidates, diagnostics
+
+    @staticmethod
+    def _validate_candidate(
+        candidate: StrategyCandidate, symbol: str, strategy_id: str
+    ) -> None:
+        if not isinstance(candidate, StrategyCandidate):
+            raise TypeError("strategy plugin returned a non-StrategyCandidate")
+        if candidate.strategy_id != strategy_id or candidate.symbol != symbol:
+            raise ValueError("strategy candidate identity drift")
+        if candidate.side not in {"BUY", "SELL", "HOLD"}:
+            raise ValueError("strategy candidate side is invalid")
+        if not all(
+            math.isfinite(float(value))
+            for value in (
+                candidate.signal_strength,
+                candidate.confidence,
+                candidate.suggested_stop_loss_pct,
+                candidate.suggested_take_profit_pct,
+            )
+        ):
+            raise ValueError("strategy candidate contains non-finite numbers")
+        if not 0.0 <= float(candidate.confidence) <= 1.0:
+            raise ValueError("strategy candidate confidence is outside [0, 1]")
+
+
+@dataclass(frozen=True)
+class StrategyDiagnostic:
+    strategy_id: str
+    status: str
+    detail: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 # ── Strategy Protocol ───────────────────────────────────────────────
 
+
 class Strategy(Protocol):
     strategy_id: str
 
-    def generate(self, symbol: str, candles: list[Candle]) -> StrategyCandidate | None: ...
+    def generate(
+        self, symbol: str, candles: list[Candle]
+    ) -> StrategyCandidate | None: ...
 
 
 # ── New Strategies ──────────────────────────────────────────────────
+
 
 class RangeGridStrategy:
     strategy_id = "range_grid_v1"
@@ -87,9 +155,16 @@ class RangeGridStrategy:
         position_in_range = (last - bottom) / (top - bottom) if top > bottom else 0.5
         if position_in_range < 0.3:
             return StrategyCandidate(
-                self.strategy_id, symbol, "BUY", 0.55, 0.58,
+                self.strategy_id,
+                symbol,
+                "BUY",
+                0.55,
+                0.58,
                 f"price near range bottom ({position_in_range:.1%})",
-                0.8, 1.5, 120, ["range", "grid"],
+                0.8,
+                1.5,
+                120,
+                ["range", "grid"],
                 "range breakdown stops this strategy",
             )
         return None
@@ -120,9 +195,16 @@ class VolatilityBreakoutStrategy:
         if vol_ratio > 1.5 and range_ratio > 1.3:
             direction = "BUY" if candles[-1].close > candles[-2].close else "SELL"
             return StrategyCandidate(
-                self.strategy_id, symbol, direction, 0.60, 0.61,
+                self.strategy_id,
+                symbol,
+                direction,
+                0.60,
+                0.61,
                 f"vol spike {vol_ratio:.1f}x, range {range_ratio:.1f}x",
-                1.5, 3.0, 180, ["volatility", "breakout"],
+                1.5,
+                3.0,
+                180,
+                ["volatility", "breakout"],
                 "false breakout risk is high — tight stop",
             )
         return None
@@ -137,8 +219,8 @@ class MomentumStrategy:
         closes = [c.close for c in candles]
 
         # Simple RSI-like calculation
-        gains = [max(0, closes[i] - closes[i-1]) for i in range(1, len(closes))]
-        losses = [max(0, closes[i-1] - closes[i]) for i in range(1, len(closes))]
+        gains = [max(0, closes[i] - closes[i - 1]) for i in range(1, len(closes))]
+        losses = [max(0, closes[i - 1] - closes[i]) for i in range(1, len(closes))]
         avg_gain = sum(gains[-14:]) / 14
         avg_loss = sum(losses[-14:]) / 14
 
@@ -152,15 +234,29 @@ class MomentumStrategy:
         # RSI 55-70: overbought, potential SELL
         if rsi < 35:
             return StrategyCandidate(
-                self.strategy_id, symbol, "BUY", 0.58, 0.62,
-                f"RSI oversold at {rsi:.1f}", 1.0, 2.0, 120,
+                self.strategy_id,
+                symbol,
+                "BUY",
+                0.58,
+                0.62,
+                f"RSI oversold at {rsi:.1f}",
+                1.0,
+                2.0,
+                120,
                 ["momentum", "oversold"],
                 "RSI can stay oversold in strong downtrend",
             )
         elif rsi > 65:
             return StrategyCandidate(
-                self.strategy_id, symbol, "SELL", 0.55, 0.58,
-                f"RSI overbought at {rsi:.1f}", 1.0, 2.0, 120,
+                self.strategy_id,
+                symbol,
+                "SELL",
+                0.55,
+                0.58,
+                f"RSI overbought at {rsi:.1f}",
+                1.0,
+                2.0,
+                120,
                 ["momentum", "overbought"],
                 "RSI can stay overbought in strong uptrend",
             )
@@ -190,15 +286,29 @@ class HoldBaselineStrategy:
 
     def generate(self, symbol: str, candles: list[Candle]) -> StrategyCandidate | None:
         return StrategyCandidate(
-            self.strategy_id, symbol, "HOLD", 0.0, 1.0,
-            "baseline hold", 0.0, 0.0, 0, ["all"], "safe default",
+            self.strategy_id,
+            symbol,
+            "HOLD",
+            0.0,
+            1.0,
+            "baseline hold",
+            0.0,
+            0.0,
+            0,
+            ["all"],
+            "safe default",
         )
 
 
 # ── Convenience ─────────────────────────────────────────────────────
 
+
 def create_default_registry() -> StrategyRegistry:
-    from atos.strategies import TrendFollowingStrategy, MeanReversionStrategy, BreakoutStrategy
+    from atos.strategies import (
+        BreakoutStrategy,
+        MeanReversionStrategy,
+        TrendFollowingStrategy,
+    )
 
     registry = StrategyRegistry()
     registry.register(TrendFollowingStrategy())
