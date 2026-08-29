@@ -17,6 +17,13 @@ pytest
 python -m atos.cli operate --mode paper --symbols BTC-USDT --loops 1
 python -m atos.cli operate --mode shadow --symbols BTC-USDT,ETH-USDT --loops 1
 
+# Inspect a durable recovery lock (read-only)
+python -m atos.cli recover --mode paper --database-path runtime/atos_runtime.sqlite
+
+# Resolve only after reviewing the snapshot; both arguments are mandatory
+python -m atos.cli recover --mode paper --database-path runtime/atos_runtime.sqlite \
+  --confirm-recovery <sha256-token> --reason "reviewed simulated pre-dispatch failure"
+
 # 4. Setup Freqtrade (requires macOS/Linux, not iOS)
 ./scripts/setup_freqtrade.sh
 ./scripts/download_data.sh
@@ -95,6 +102,7 @@ python -m atos.cli operate --mode paper --symbols BTC-USDT --loops 1  # Public d
 python -m atos.cli operate --mode shadow --symbols BTC-USDT --loops 1 # Public observation + simulated decision
 python -m atos.cli review       # Strategy scoring
 python -m atos.cli market --symbol BTC-USDT  # OKX public data
+python -m atos.cli recover --mode paper       # Inspect durable recovery; no mutation by default
 python -m atos.cli dashboard    # HTTP dashboard
 python -m atos.cli_ext state    # System state
 python -m atos.cli_ext evaluate # Evaluation metrics
