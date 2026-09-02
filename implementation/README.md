@@ -21,6 +21,10 @@ python -m atos.cli operate --mode shadow --symbols BTC-USDT,ETH-USDT --loops 1
 python -m atos.cli supervise --symbols BTC-USDT,ETH-USDT \
   --interval-seconds 60 --max-loops 0
 
+# Read-only liveness/status check. Every ambiguity reports HOLD; it cannot
+# start/stop the process or authorize Live.
+python -m atos.cli shadow-status
+
 # Bounded operational smoke run; writes atomic health and durable audit state
 python -m atos.cli supervise --symbols BTC-USDT --interval-seconds 0 --max-loops 1
 
@@ -117,6 +121,7 @@ python -m atos.cli review       # Strategy scoring
 python -m atos.cli market --symbol BTC-USDT  # OKX public data
 python -m atos.cli recover --mode paper       # Inspect durable recovery; no mutation by default
 python -m atos.cli shadow-evidence --help      # Completed Shadow soak assessment
+python -m atos.cli shadow-status               # Read-only supervisor liveness
 python -m atos.cli dashboard    # HTTP dashboard
 python -m atos.cli_ext state    # System state
 python -m atos.cli_ext evaluate # Evaluation metrics

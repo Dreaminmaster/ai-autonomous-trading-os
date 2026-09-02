@@ -13,6 +13,7 @@ from atos.market import PublicMarketAdapter
 from atos.risk import RiskEngine
 from atos.runtime import AutonomousRuntime
 from atos.scoring import ScoringEngine
+from atos.shadow_operator import inspect_shadow_status
 from atos.shadow_soak_evidence import build_shadow_soak_evidence
 from atos.shadow_supervisor import build_shadow_supervisor
 
@@ -145,6 +146,22 @@ def shadow_evidence(
     }
 
 
+def shadow_status(
+    policy: dict,
+    *,
+    health_path: str,
+    database_path: str,
+    max_heartbeat_age_seconds: float,
+) -> dict:
+    """Inspect Shadow liveness without starting, stopping, or mutating it."""
+    return inspect_shadow_status(
+        policy,
+        health_path=health_path,
+        database_path=database_path,
+        max_heartbeat_age_seconds=max_heartbeat_age_seconds,
+    )
+
+
 def market(symbol: str) -> dict:
     snap = PublicMarketAdapter().snapshot(symbol)
     return {
@@ -203,6 +220,7 @@ def main() -> None:
             "loop",
             "operate",
             "supervise",
+            "shadow-status",
             "shadow-evidence",
             "market",
             "review",
@@ -227,6 +245,7 @@ def main() -> None:
     parser.add_argument("--reason")
     parser.add_argument("--evidence-output")
     parser.add_argument("--implementation-sha")
+    parser.add_argument("--max-heartbeat-age-seconds", type=float)
     parser.add_argument("--port", type=int, default=28787)
     args = parser.parse_args()
     policy = load_policy(args.policy)
@@ -283,37 +302,52 @@ def main() -> None:
                 )
             ),
         )
-    elif args.command == "shadow-evidence":
+    elif args.command in {"shadow-status", "shadow-evidence"}:
         supervisor_policy = policy.get("shadow_supervisor", {})
         if not isinstance(supervisor_policy, dict):
             raise ValueError("shadow_supervisor policy must be an object")
-        if not args.evidence_output or not args.implementation_sha:
-            raise ValueError("--evidence-output and --implementation-sha are required")
-        output = shadow_evidence(
-            args.policy,
-            health_path=(
-                args.health_path
-                or str(
-                    supervisor_policy.get("health_path", "runtime/shadow_health.json")
-                )
-            ),
-            ledger_path=(
-                args.ledger_path
-                or str(
-                    supervisor_policy.get("ledger_path", "runtime/shadow_events.sqlite")
-                )
-            ),
-            database_path=(
-                args.database_path
-                or str(
-                    policy.get("persistence", {}).get(
-                        "database_path", "runtime/atos_runtime.sqlite"
-                    )
-                )
-            ),
-            output_path=args.evidence_output,
-            implementation_sha=args.implementation_sha,
+        health_path = args.health_path or str(
+            supervisor_policy.get("health_path", "runtime/shadow_health.json")
         )
+        database_path = args.database_path or str(
+            policy.get("persistence", {}).get(
+                "database_path", "runtime/atos_runtime.sqlite"
+            )
+        )
+        if args.command == "shadow-status":
+            evidence_policy = policy.get("shadow_evidence", {})
+            if not isinstance(evidence_policy, dict):
+                raise ValueError("shadow_evidence policy must be an object")
+            output = shadow_status(
+                policy,
+                health_path=health_path,
+                database_path=database_path,
+                max_heartbeat_age_seconds=(
+                    args.max_heartbeat_age_seconds
+                    if args.max_heartbeat_age_seconds is not None
+                    else float(evidence_policy.get("max_heartbeat_gap_seconds", 180.0))
+                ),
+            )
+        else:
+            if not args.evidence_output or not args.implementation_sha:
+                raise ValueError(
+                    "--evidence-output and --implementation-sha are required"
+                )
+            output = shadow_evidence(
+                args.policy,
+                health_path=health_path,
+                ledger_path=(
+                    args.ledger_path
+                    or str(
+                        supervisor_policy.get(
+                            "ledger_path", "runtime/shadow_events.sqlite"
+                        )
+                    )
+                ),
+                database_path=database_path,
+                output_path=args.evidence_output,
+                implementation_sha=args.implementation_sha,
+            )
     elif args.command == "market":
         output = market(args.symbol)
     elif args.command == "recover":
