@@ -24,6 +24,12 @@ python -m atos.cli supervise --symbols BTC-USDT,ETH-USDT \
 # Bounded operational smoke run; writes atomic health and durable audit state
 python -m atos.cli supervise --symbols BTC-USDT --interval-seconds 0 --max-loops 1
 
+# After a completed soak, build one immutable read-only evidence package.
+# The exact deployed commit is mandatory and the report can never enable Live.
+python -m atos.cli shadow-evidence \
+  --implementation-sha "$(git rev-parse HEAD)" \
+  --evidence-output runtime/evidence/shadow-soak-001
+
 # Inspect a durable recovery lock (read-only)
 python -m atos.cli recover --mode paper --database-path runtime/atos_runtime.sqlite
 
@@ -110,6 +116,7 @@ python -m atos.cli operate --mode shadow --symbols BTC-USDT --loops 1 # Public o
 python -m atos.cli review       # Strategy scoring
 python -m atos.cli market --symbol BTC-USDT  # OKX public data
 python -m atos.cli recover --mode paper       # Inspect durable recovery; no mutation by default
+python -m atos.cli shadow-evidence --help      # Completed Shadow soak assessment
 python -m atos.cli dashboard    # HTTP dashboard
 python -m atos.cli_ext state    # System state
 python -m atos.cli_ext evaluate # Evaluation metrics

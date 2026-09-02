@@ -386,9 +386,13 @@ class ShadowSupervisor:
                             "classification": classification,
                             "symbol": symbol,
                             "consecutive_failures": self.health.consecutive_failures,
+                            "mode": "shadow",
+                            "public_data_only": True,
                             "account_access": False,
                             "private_api": False,
                             "external_execution": False,
+                            "automatic_restart": False,
+                            "single_process_lock": True,
                             "live": LIVE,
                         },
                     )

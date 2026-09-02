@@ -31,5 +31,14 @@
     "interval_seconds": 60.0,
     "failure_threshold": 3,
     "automatic_restart": false
+  },
+  "shadow_evidence": {
+    "minimum_duration_seconds": 604800,
+    "minimum_cycles": 20160,
+    "minimum_simulated_fills": 30,
+    "max_failure_rate": 0.01,
+    "max_heartbeat_gap_seconds": 180.0,
+    "max_equity_drawdown_pct": 10.0,
+    "require_positive_net_pnl": true
   }
 }
