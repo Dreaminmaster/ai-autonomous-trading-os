@@ -238,6 +238,8 @@ class ShadowSupervisor:
             session_id=runtime.session_id,
             symbols=list(symbols),
             bar=bar,
+            started_at=runtime.session_started_at,
+            updated_at=runtime.session_started_at,
         )
         self._health_writer = AtomicHealthWriter(health_path)
         self._sleep = sleep_fn

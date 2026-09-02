@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Self
 
 import pytest
-
 from atos.durable_execution import DurableSimulatedExecutor
 from atos.ledger import Ledger
 from atos.market import PublicMarketAdapter
 from atos.runtime import AutonomousRuntime
+from atos.shadow_operator import inspect_shadow_status
 from atos.shadow_supervisor import (
     AtomicHealthWriter,
     ShadowSupervisor,
@@ -194,6 +194,27 @@ def test_bounded_shadow_supervision_persists_health_audit_and_stop(
     assert kinds.count("shadow_supervisor_started") == 1
     assert kinds.count("shadow_supervisor_heartbeat") == 4
     assert kinds.count("shadow_supervisor_stopped") == 1
+
+
+def test_bounded_supervisor_output_is_operator_status_compatible(
+    tmp_path: Path,
+) -> None:
+    supervisor = _supervisor(tmp_path, PublicFixtureOpener())
+    result = supervisor.run(max_loops=1)
+    assessed_at = datetime.fromisoformat(result["updated_at"])
+
+    report = inspect_shadow_status(
+        _policy(tmp_path),
+        health_path=tmp_path / "health.json",
+        database_path=tmp_path / "runtime.sqlite",
+        max_heartbeat_age_seconds=180,
+        now=assessed_at,
+    )
+
+    assert report["operational_state"] == "STOPPED", report
+    assert report["reason"] == "BOUNDED_COMPLETE"
+    assert report["errors"] == []
+    assert report["authorizes_live"] is False
 
 
 def test_public_data_failures_trip_circuit_breaker_without_orders(
