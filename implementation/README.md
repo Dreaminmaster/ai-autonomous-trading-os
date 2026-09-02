@@ -25,6 +25,18 @@ python -m atos.cli supervise --symbols BTC-USDT,ETH-USDT \
 # start/stop the process or authorize Live.
 python -m atos.cli shadow-status
 
+# Start one detached, non-restarting Shadow soak from an exact clean commit.
+# The command writes an exclusive receipt under ignored runtime/ state.
+python -m atos.cli shadow-start --implementation-sha "$(git rev-parse HEAD)"
+
+# Inspect that exact isolated run (not the default runtime paths).
+python -m atos.cli shadow-status \
+  --service-receipt runtime/shadow_service/<run-id>/launch_receipt.json
+
+# Request a graceful stop through the exclusive receipt (never signals a PID).
+python -m atos.cli shadow-stop \
+  --service-receipt runtime/shadow_service/<run-id>/launch_receipt.json
+
 # Bounded operational smoke run; writes atomic health and durable audit state
 python -m atos.cli supervise --symbols BTC-USDT --interval-seconds 0 --max-loops 1
 
@@ -122,6 +134,8 @@ python -m atos.cli market --symbol BTC-USDT  # OKX public data
 python -m atos.cli recover --mode paper       # Inspect durable recovery; no mutation by default
 python -m atos.cli shadow-evidence --help      # Completed Shadow soak assessment
 python -m atos.cli shadow-status               # Read-only supervisor liveness
+python -m atos.cli shadow-start --implementation-sha <sha> # Controlled background soak
+python -m atos.cli shadow-stop --service-receipt <path>    # Graceful file stop
 python -m atos.cli dashboard    # HTTP dashboard
 python -m atos.cli_ext state    # System state
 python -m atos.cli_ext evaluate # Evaluation metrics
