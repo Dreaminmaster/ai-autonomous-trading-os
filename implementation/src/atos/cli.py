@@ -14,6 +14,12 @@ from atos.risk import RiskEngine
 from atos.runtime import AutonomousRuntime
 from atos.scoring import ScoringEngine
 from atos.shadow_operator import inspect_shadow_status
+from atos.shadow_service import (
+    StopRequestWatcher,
+    request_shadow_service_stop,
+    shadow_service_status_context,
+    start_shadow_service,
+)
 from atos.shadow_soak_evidence import build_shadow_soak_evidence
 from atos.shadow_supervisor import build_shadow_supervisor
 
@@ -86,12 +92,23 @@ def supervise(
     failure_threshold: int,
     health_path: str,
     ledger_path: str,
+    service_run_id: str | None = None,
+    stop_request_path: str | None = None,
 ) -> dict:
     """Run the interruptible public-only Shadow supervisor."""
     if max_loops is not None and (type(max_loops) is not int or max_loops < 1):
         raise ValueError("max_loops must be positive or None")
     operating_policy = {**policy, "mode": "shadow"}
     stop_event = threading.Event()
+    if bool(service_run_id) != bool(stop_request_path):
+        raise ValueError(
+            "service_run_id and stop_request_path must be provided together"
+        )
+    stop_watcher = (
+        StopRequestWatcher(stop_request_path, service_run_id)
+        if service_run_id is not None and stop_request_path is not None
+        else None
+    )
     supervisor = build_shadow_supervisor(
         operating_policy,
         symbols=symbols,
@@ -112,7 +129,13 @@ def supervise(
         previous_handlers[signum] = signal.getsignal(signum)
         signal.signal(signum, request_stop)
     try:
-        return supervisor.run(max_loops=max_loops, stop_requested=stop_event.is_set)
+        return supervisor.run(
+            max_loops=max_loops,
+            stop_requested=lambda: (
+                stop_event.is_set()
+                or (stop_watcher is not None and stop_watcher.requested())
+            ),
+        )
     finally:
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
@@ -159,6 +182,33 @@ def shadow_status(
         health_path=health_path,
         database_path=database_path,
         max_heartbeat_age_seconds=max_heartbeat_age_seconds,
+    )
+
+
+def shadow_start(
+    policy: dict,
+    *,
+    policy_path: str,
+    repository_root: str,
+    implementation_sha: str,
+    service_root: str,
+    symbols: list[str],
+    bar: str,
+    limit: int,
+    interval_seconds: float,
+    failure_threshold: int,
+) -> dict:
+    return start_shadow_service(
+        policy,
+        policy_path=policy_path,
+        repository_root=repository_root,
+        implementation_sha=implementation_sha,
+        service_root=service_root,
+        symbols=symbols,
+        bar=bar,
+        limit=limit,
+        interval_seconds=interval_seconds,
+        failure_threshold=failure_threshold,
     )
 
 
@@ -220,6 +270,8 @@ def main() -> None:
             "loop",
             "operate",
             "supervise",
+            "shadow-start",
+            "shadow-stop",
             "shadow-status",
             "shadow-evidence",
             "market",
@@ -246,6 +298,11 @@ def main() -> None:
     parser.add_argument("--evidence-output")
     parser.add_argument("--implementation-sha")
     parser.add_argument("--max-heartbeat-age-seconds", type=float)
+    parser.add_argument("--repository-root")
+    parser.add_argument("--service-root", default="runtime/shadow_service")
+    parser.add_argument("--service-receipt")
+    parser.add_argument("--service-run-id")
+    parser.add_argument("--stop-request-path")
     parser.add_argument("--port", type=int, default=28787)
     args = parser.parse_args()
     policy = load_policy(args.policy)
@@ -301,8 +358,50 @@ def main() -> None:
                     supervisor_policy.get("ledger_path", "runtime/shadow_events.sqlite")
                 )
             ),
+            service_run_id=args.service_run_id,
+            stop_request_path=args.stop_request_path,
         )
+    elif args.command == "shadow-start":
+        if not args.implementation_sha:
+            raise ValueError("--implementation-sha is required")
+        supervisor_policy = policy.get("shadow_supervisor", {})
+        if not isinstance(supervisor_policy, dict):
+            raise ValueError("shadow_supervisor policy must be an object")
+        symbols = [value.strip() for value in args.symbols.split(",") if value.strip()]
+        repository_root = args.repository_root or str(
+            Path(__file__).resolve().parents[3]
+        )
+        output = shadow_start(
+            policy,
+            policy_path=args.policy,
+            repository_root=repository_root,
+            implementation_sha=args.implementation_sha,
+            service_root=args.service_root,
+            symbols=symbols,
+            bar=args.bar,
+            limit=args.limit,
+            interval_seconds=(
+                args.interval_seconds
+                if args.interval_seconds is not None
+                else float(supervisor_policy.get("interval_seconds", 60.0))
+            ),
+            failure_threshold=(
+                args.failure_threshold
+                if args.failure_threshold is not None
+                else int(supervisor_policy.get("failure_threshold", 3))
+            ),
+        )
+    elif args.command == "shadow-stop":
+        if not args.service_receipt:
+            raise ValueError("--service-receipt is required")
+        output = request_shadow_service_stop(args.service_receipt)
     elif args.command in {"shadow-status", "shadow-evidence"}:
+        service_context = None
+        if args.command == "shadow-status" and args.service_receipt:
+            service_context = shadow_service_status_context(args.service_receipt)
+            policy = service_context["policy"]
+            args.health_path = service_context["health_path"]
+            args.database_path = service_context["database_path"]
         supervisor_policy = policy.get("shadow_supervisor", {})
         if not isinstance(supervisor_policy, dict):
             raise ValueError("shadow_supervisor policy must be an object")
@@ -328,6 +427,9 @@ def main() -> None:
                     else float(evidence_policy.get("max_heartbeat_gap_seconds", 180.0))
                 ),
             )
+            if service_context is not None:
+                output["service_run_id"] = service_context["run_id"]
+                output["implementation_sha"] = service_context["implementation_sha"]
         else:
             if not args.evidence_output or not args.implementation_sha:
                 raise ValueError(
