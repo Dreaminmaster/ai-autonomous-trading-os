@@ -14,6 +14,7 @@ import json
 import math
 import os
 import re
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -117,6 +118,47 @@ def _write_exclusive(path: Path, payload: dict[str, Any]) -> None:
             temporary.unlink()
 
 
+def _copy_sqlite_seed(source: Path, destination: Path, label: str) -> str:
+    """Create a consistent, fsynced SQLite copy without modifying the source."""
+    if source.is_symlink():
+        raise ShadowServiceError(f"{label} seed must not be a symbolic link")
+    try:
+        resolved = source.resolve(strict=True)
+    except OSError as exc:
+        raise ShadowServiceError(f"{label} seed is unavailable") from exc
+    if not resolved.is_file() or destination.exists() or destination.is_symlink():
+        raise ShadowServiceError(f"{label} seed path is unsafe")
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    try:
+        encoded = resolved.as_uri() + "?mode=ro"
+        with sqlite3.connect(encoded, uri=True, timeout=5.0) as source_connection:
+            source_connection.execute("PRAGMA query_only = ON")
+            with sqlite3.connect(temporary, timeout=5.0) as destination_connection:
+                source_connection.backup(destination_connection)
+                destination_connection.commit()
+        descriptor = os.open(
+            temporary,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, destination)
+        directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return hashlib.sha256(destination.read_bytes()).hexdigest()
+    except (OSError, sqlite3.Error) as exc:
+        raise ShadowServiceError(f"{label} seed copy failed") from exc
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def _inside(path: Path, parent: Path, label: str) -> Path:
     resolved = path.resolve()
     if not resolved.is_relative_to(parent.resolve()):
@@ -208,6 +250,8 @@ def start_shadow_service(
     interval_seconds: float,
     failure_threshold: int,
     python_executable: str = sys.executable,
+    seed_database_path: str | Path | None = None,
+    seed_ledger_path: str | Path | None = None,
     run_id: str | None = None,
     git_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     popen_factory: Callable[..., subprocess.Popen[Any]] = subprocess.Popen,
@@ -237,6 +281,8 @@ def start_shadow_service(
         raise ShadowServiceError("failure_threshold must be positive")
     if not isinstance(python_executable, str) or not python_executable:
         raise ShadowServiceError("Python executable is invalid")
+    if bool(seed_database_path) != bool(seed_ledger_path):
+        raise ShadowServiceError("database and ledger seeds must be provided together")
 
     policy_candidate = Path(policy_path)
     if policy_candidate.is_symlink():
@@ -282,6 +328,19 @@ def start_shadow_service(
     database_path = run_root / "atos_runtime.sqlite"
     health_path = run_root / "shadow_health.json"
     ledger_path = run_root / "shadow_events.sqlite"
+    seed_database_sha256: str | None = None
+    seed_ledger_sha256: str | None = None
+    if seed_database_path is not None and seed_ledger_path is not None:
+        seed_database = _inside(
+            Path(seed_database_path), implementation_root / "runtime", "database seed"
+        )
+        seed_ledger = _inside(
+            Path(seed_ledger_path), implementation_root / "runtime", "ledger seed"
+        )
+        seed_database_sha256 = _copy_sqlite_seed(
+            seed_database, database_path, "database"
+        )
+        seed_ledger_sha256 = _copy_sqlite_seed(seed_ledger, ledger_path, "ledger")
     deployed_policy = json.loads(json.dumps(policy, allow_nan=False))
     deployed_policy["persistence"]["database_path"] = str(database_path)
     deployed_policy["shadow_supervisor"]["health_path"] = str(health_path)
@@ -371,6 +430,9 @@ def start_shadow_service(
         "health_path": str(health_path),
         "ledger_path": str(ledger_path),
         "database_path": str(database_path),
+        "seeded_from_previous_segment": seed_database_path is not None,
+        "seed_database_sha256": seed_database_sha256,
+        "seed_ledger_sha256": seed_ledger_sha256,
         "stop_request_path": str(stop_request_path),
         "log_path": str(log_path),
         "mode": "shadow",

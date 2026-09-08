@@ -37,6 +37,15 @@ python -m atos.cli shadow-status \
 python -m atos.cli shadow-stop \
   --service-receipt runtime/shadow_service/<run-id>/launch_receipt.json
 
+# Resumable local Campaign UI. It opens http://127.0.0.1:28788 automatically.
+# A Campaign may be safely paused, powered off, and resumed later. Its valid
+# time includes only durable complete cycles with official OKX public data and
+# a subsequent heartbeat. The strict continuous soak above remains unchanged.
+./start_shadow_campaign.command
+
+# Equivalent one-command terminal launch:
+python -m atos.cli campaign-ui --policy config/policy.json
+
 # Bounded operational smoke run; writes atomic health and durable audit state
 python -m atos.cli supervise --symbols BTC-USDT --interval-seconds 0 --max-loops 1
 
@@ -136,6 +145,7 @@ python -m atos.cli shadow-evidence --help      # Completed Shadow soak assessmen
 python -m atos.cli shadow-status               # Read-only supervisor liveness
 python -m atos.cli shadow-start --implementation-sha <sha> # Controlled background soak
 python -m atos.cli shadow-stop --service-receipt <path>    # Graceful file stop
+python -m atos.cli campaign-ui             # Resumable localhost Campaign UI
 python -m atos.cli dashboard    # HTTP dashboard
 python -m atos.cli_ext state    # System state
 python -m atos.cli_ext evaluate # Evaluation metrics
