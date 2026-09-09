@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
+
 from atos.cli import supervise
 from atos.shadow_service import (
     LAUNCH_SCHEMA_VERSION,
@@ -156,6 +158,48 @@ def test_start_seals_exact_provenance_and_safe_detached_command(
     assert receipt["external_execution"] is False
     assert receipt_path.stat().st_mode & 0o777 == 0o600
     assert Path(result["log_path"]).stat().st_mode & 0o777 == 0o600
+
+
+def test_start_can_seed_consistent_campaign_sqlite_state(tmp_path: Path) -> None:
+    repository, policy_path, policy = _repository(tmp_path)
+    seed_root = repository / "implementation" / "runtime" / "seeds"
+    seed_root.mkdir(parents=True)
+    database_seed = seed_root / "runtime.sqlite"
+    ledger_seed = seed_root / "ledger.sqlite"
+    for path, value in ((database_seed, "runtime"), (ledger_seed, "ledger")):
+        with sqlite3.connect(path) as connection:
+            connection.execute("CREATE TABLE proof(value TEXT NOT NULL)")
+            connection.execute("INSERT INTO proof(value) VALUES (?)", (value,))
+            connection.commit()
+    popen = PopenRecorder()
+
+    result = start_shadow_service(
+        policy,
+        policy_path=policy_path,
+        repository_root=repository,
+        implementation_sha=SHA,
+        service_root="runtime/shadow_service",
+        symbols=["BTC-USDT"],
+        bar="1m",
+        limit=100,
+        interval_seconds=60.0,
+        failure_threshold=3,
+        python_executable="/safe/python3.11",
+        run_id=RUN_ID,
+        seed_database_path=database_seed,
+        seed_ledger_path=ledger_seed,
+        git_runner=GitRunner(),
+        popen_factory=popen,
+    )
+
+    receipt = json.loads(Path(result["receipt_path"]).read_text(encoding="utf-8"))
+    assert receipt["seeded_from_previous_segment"] is True
+    assert len(receipt["seed_database_sha256"]) == 64
+    assert len(receipt["seed_ledger_sha256"]) == 64
+    with sqlite3.connect(receipt["database_path"]) as connection:
+        assert connection.execute("SELECT value FROM proof").fetchone()[0] == "runtime"
+    with sqlite3.connect(receipt["ledger_path"]) as connection:
+        assert connection.execute("SELECT value FROM proof").fetchone()[0] == "ledger"
 
 
 def test_dirty_or_wrong_checkout_rejected_before_process_or_runtime_files(

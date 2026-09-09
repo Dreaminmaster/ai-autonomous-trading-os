@@ -13,6 +13,8 @@ from atos.market import PublicMarketAdapter
 from atos.risk import RiskEngine
 from atos.runtime import AutonomousRuntime
 from atos.scoring import ScoringEngine
+from atos.shadow_campaign import ShadowCampaignManager
+from atos.shadow_campaign_server import run_campaign_server
 from atos.shadow_operator import inspect_shadow_status
 from atos.shadow_service import (
     StopRequestWatcher,
@@ -48,6 +50,7 @@ def status(policy: dict) -> dict:
             "scoring",
             "runtime",
             "dashboard",
+            "campaign-ui",
         ],
     }
 
@@ -278,6 +281,7 @@ def main() -> None:
             "review",
             "recover",
             "dashboard",
+            "campaign-ui",
         ],
     )
     parser.add_argument("--policy", default="config/policy.json")
@@ -304,8 +308,18 @@ def main() -> None:
     parser.add_argument("--service-run-id")
     parser.add_argument("--stop-request-path")
     parser.add_argument("--port", type=int, default=28787)
+    parser.add_argument("--no-open", action="store_true")
     args = parser.parse_args()
     policy = load_policy(args.policy)
+    if args.command == "campaign-ui":
+        repository_root = args.repository_root or str(Path(__file__).resolve().parents[3])
+        manager = ShadowCampaignManager(repository_root, policy_path=args.policy)
+        run_campaign_server(
+            manager,
+            port=args.port if args.port != 28787 else 28788,
+            open_browser=not args.no_open,
+        )
+        return
     if args.command == "dashboard":
         run_dashboard(port=args.port)
         return
