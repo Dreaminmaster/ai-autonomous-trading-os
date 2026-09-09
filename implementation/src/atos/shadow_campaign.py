@@ -559,6 +559,7 @@ class ShadowCampaignManager:
                 "simulated_fills": 0,
                 "last_valid_heartbeat": None,
                 "latest_public_market_at": None,
+                "last_failure": None,
                 "events": [],
                 "safety_errors": [],
             }
@@ -597,6 +598,8 @@ class ShadowCampaignManager:
         completed_events: set[str] = set()
         executions: dict[str, dict[str, Any]] = {}
         failures = 0
+        pending_failure_reason: str | None = None
+        last_failure: dict[str, str] | None = None
         safety_errors: list[str] = (
             ["ledger contains invalid JSON"] if ledger_parse_error else []
         )
@@ -621,6 +624,22 @@ class ShadowCampaignManager:
                 executions[cycle_id] = payload
             elif row["kind"] == "shadow_supervisor_failure":
                 failures += 1
+                classification = payload.get("classification")
+                symbol = payload.get("symbol")
+                last_failure = {
+                    "classification": (
+                        classification
+                        if isinstance(classification, str) and classification
+                        else "UNKNOWN_FAILURE"
+                    ),
+                    "symbol": symbol if isinstance(symbol, str) else "",
+                    "reason": pending_failure_reason or "failure reason unavailable",
+                }
+                pending_failure_reason = None
+            elif row["kind"] == "runtime_failure_hold":
+                reason = payload.get("reason")
+                if isinstance(reason, str) and reason:
+                    pending_failure_reason = reason
             if row["kind"].startswith("shadow_supervisor_") and (
                 payload.get("mode") != "shadow"
                 or payload.get("public_data_only") is not True
@@ -676,6 +695,7 @@ class ShadowCampaignManager:
             "simulated_fills": fill_count,
             "last_valid_heartbeat": valid_points[-1][1].isoformat() if valid_points else None,
             "latest_public_market_at": latest_market_at,
+            "last_failure": last_failure,
             "events": event_subset,
             "safety_errors": sorted(set(safety_errors)),
             "receipt_path": str(receipt_path),
@@ -889,6 +909,20 @@ class ShadowCampaignManager:
                 segment["valid_cycles"] = assessment["valid_cycles"]
                 segment["failures"] = assessment["failures"]
                 segment["simulated_fills"] = assessment["simulated_fills"]
+        segment_views = [
+            {**segment, "last_failure": assessment["last_failure"]}
+            for segment, assessment in zip(
+                campaign["segments"], assessments, strict=True
+            )
+        ]
+        latest_failure = next(
+            (
+                item["last_failure"]
+                for item in reversed(segment_views)
+                if item["last_failure"] is not None
+            ),
+            None,
+        )
         latest_market = metrics["latest_public_market_at"]
         market_age = None
         if latest_market:
@@ -923,7 +957,8 @@ class ShadowCampaignManager:
             "strategy_version": campaign["strategy_version"],
             "targets": campaign["targets"],
             "metrics": {**metrics, "okx_connection_status": okx_status, "okx_market_age_seconds": market_age},
-            "segments": campaign["segments"],
+            "segments": segment_views,
+            "last_failure": latest_failure,
             "validation_conditions": conditions,
             "all_conditions_passed": all(item["passed"] for item in conditions),
             "message": "继续上次 Campaign" if campaign["state"] == "PAUSED" else "",

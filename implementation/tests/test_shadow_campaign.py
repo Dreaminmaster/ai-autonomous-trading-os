@@ -125,7 +125,20 @@ def _service_segment(campaign_path: Path) -> dict:
             ((base + timedelta(minutes=2)).isoformat(), "execution", {**safety, "cycle_id": "cycle-3", "symbol": "BTC-USDT", "status": "NOOP_HOLD", "action": "HOLD"}),
             ((base + timedelta(minutes=2)).isoformat(), "runtime_cycle_completed", {**safety, "cycle_id": "cycle-3"}),
             ((base + timedelta(minutes=2)).isoformat(), "shadow_supervisor_heartbeat", {**safety, "updated_at": (base + timedelta(minutes=2)).isoformat(), "heartbeat_sequence": 3}),
-            ((base + timedelta(minutes=2)).isoformat(), "shadow_supervisor_failure", safety),
+            (
+                (base + timedelta(minutes=2)).isoformat(),
+                "runtime_failure_hold",
+                {
+                    **safety,
+                    "cycle_id": "cycle-3",
+                    "reason": "public market acquisition failed: PublicMarketDataError: public OKX request failed: URLError",
+                },
+            ),
+            (
+                (base + timedelta(minutes=2)).isoformat(),
+                "shadow_supervisor_failure",
+                {**safety, "classification": "DATA_FAILURE", "symbol": "BTC-USDT"},
+            ),
         ]
     )
     with sqlite3.connect(ledger) as connection:
@@ -205,6 +218,12 @@ def test_campaign_accumulates_only_durable_public_cycles_with_heartbeats(tmp_pat
     assert status["metrics"]["failures"] == 1
     assert status["metrics"]["failure_rate"] == 1 / 3
     assert status["metrics"]["latest_public_market_at"] is not None
+    assert status["last_failure"] == {
+        "classification": "DATA_FAILURE",
+        "symbol": "BTC-USDT",
+        "reason": "public market acquisition failed: PublicMarketDataError: public OKX request failed: URLError",
+    }
+    assert status["segments"][0]["last_failure"] == status["last_failure"]
     assert status["safe_to_power_off"] is True
     assert status["live"] == "FORBIDDEN"
 
