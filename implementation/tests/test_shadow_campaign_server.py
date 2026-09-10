@@ -67,6 +67,8 @@ def test_local_ui_and_all_control_buttons_require_ephemeral_token() -> None:
         assert "继续运行" in html
         assert "暂停" in html
         assert "结束并冻结 Campaign" in html
+        assert "最近一次断路原因" in html
+        assert "触发原因" in html
         assert server.control_token in html
         status, _ = _request(base + "/api/pause", method="POST")
         assert status == 403
