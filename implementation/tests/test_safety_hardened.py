@@ -145,6 +145,43 @@ def test_risk_drawdown_guard():
     assert result.decision == "PAUSED"
 
 
+def test_deterministic_protective_exit_can_reduce_risk_but_cannot_be_spoofed():
+    policy = {
+        **POLICY,
+        "position_limits": {"max_position_pct_per_trade": 1.0},
+        "trade_limits": {"max_trades_per_day": 0, "cooldown_seconds": 99999},
+    }
+    intent = {
+        "action": "SELL",
+        "symbol": "BTC/USDT",
+        "market_type": "paper_spot",
+        "confidence": 1.0,
+        "thesis": "Deterministic take profit closes simulated exposure",
+        "evidence": ["durable position trigger"],
+        "selected_strategy_ids": ["deterministic_protective_exit_v1"],
+        "position_size_pct": 5.0,
+        "stop_loss_pct": 1.0,
+        "take_profit_pct": 2.0,
+        "invalidation_conditions": ["position already closed"],
+        "metadata": {"risk_reducing_exit": True},
+    }
+    state = {
+        "protective_exit_authorized": True,
+        "gross_exposure_pct": 5.0,
+        "symbol_exposure_pct": 5.0,
+        "symbol_long_exposure_pct": 5.0,
+        "current_drawdown_pct": 25.0,
+    }
+
+    approved = RiskEngine(policy).evaluate(intent, state)
+    assert approved.decision == "APPROVED"
+    assert approved.checks["risk_reducing_exit"] is True
+
+    spoofed = RiskEngine(policy).evaluate(intent, {**state, "protective_exit_authorized": False})
+    assert spoofed.decision == "PAUSED"
+    assert spoofed.checks["risk_reducing_exit"] is False
+
+
 # ── Test 4: Dry-run default ────────────────────────────────────────
 
 def test_dryrun_default():

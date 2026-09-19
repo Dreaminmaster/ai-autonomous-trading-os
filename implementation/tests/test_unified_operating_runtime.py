@@ -76,6 +76,25 @@ class BuyStrategy:
         )
 
 
+class SellStrategy:
+    strategy_id = "sell_plugin_v1"
+
+    def generate(self, symbol: str, candles: list[Candle]) -> StrategyCandidate:
+        return StrategyCandidate(
+            self.strategy_id,
+            symbol,
+            "SELL",
+            0.8,
+            0.8,
+            "validated directional exit signal",
+            1.0,
+            2.0,
+            60,
+            ["test"],
+            "test-only deterministic sell signal",
+        )
+
+
 class BrokenStrategy:
     strategy_id = "broken_plugin_v1"
 
@@ -393,6 +412,133 @@ def test_durable_paper_cycle_persists_idempotent_fill_and_position(
         )
     }
     assert counts == {table: 1 for table in counts}
+    stored_holding = executor.database.connection.execute(
+        "SELECT max_holding_minutes FROM execution_protection_plans"
+    ).fetchone()[0]
+    assert stored_holding == "60"
+
+
+def test_spot_sell_without_long_inventory_is_rejected(tmp_path: Path) -> None:
+    policy = _policy("shadow")
+    policy["persistence"] = {
+        "enabled": True,
+        "database_path": str(tmp_path / "runtime.sqlite"),
+    }
+    runtime = AutonomousRuntime(
+        policy,
+        Ledger(":memory:"),
+        registry=_registry(SellStrategy()),
+    )
+
+    result = runtime.run_once("BTC-USDT", _candles(), mark_price=130.0)
+
+    assert result["intent"]["action"] == "SELL"
+    assert result["risk"]["decision"] == "REJECTED"
+    assert result["execution"]["status"] == "BLOCKED_BY_RISK"
+    assert any(
+        "naked_spot_sell_forbidden" in reason
+        for reason in result["risk"]["reasons"]
+    )
+    assert (
+        runtime.executor.database.connection.execute(
+            "SELECT COUNT(*) FROM fill_states"
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_durable_take_profit_closes_position_through_risk_pipeline(
+    tmp_path: Path,
+) -> None:
+    policy = _policy("shadow")
+    policy["persistence"] = {
+        "enabled": True,
+        "database_path": str(tmp_path / "runtime.sqlite"),
+    }
+    runtime = AutonomousRuntime(
+        policy,
+        Ledger(":memory:"),
+        registry=_registry(BuyStrategy()),
+    )
+    opened = runtime.run_once("BTC-USDT", _candles(), mark_price=130.0)
+    assert opened["execution"]["status"] == "SHADOW_SIMULATED"
+
+    closed = runtime.run_once("BTC-USDT", _candles(), mark_price=134.0)
+
+    assert closed["provider_result"]["provider"] == (
+        "deterministic_position_lifecycle"
+    )
+    assert closed["intent"]["action"] == "SELL"
+    assert closed["intent"]["metadata"]["trigger"] == "TAKE_PROFIT"
+    assert closed["risk"]["decision"] == "APPROVED"
+    assert closed["risk"]["checks"]["risk_reducing_exit"] is True
+    assert closed["execution"]["status"] == "SHADOW_SIMULATED"
+    database = runtime.executor.database.connection
+    assert database.execute("SELECT COUNT(*) FROM fill_states").fetchone()[0] == 2
+    position = database.execute(
+        "SELECT status,quantity,realized_pnl FROM position_states"
+    ).fetchone()
+    assert position["status"] == "CLOSED"
+    assert position["quantity"] == "0"
+    assert float(position["realized_pnl"]) > 0
+
+
+def test_durable_max_holding_time_builds_exact_risk_reducing_exit(
+    tmp_path: Path,
+) -> None:
+    executor = DurableSimulatedExecutor(
+        mode="shadow",
+        database_path=tmp_path / "runtime.sqlite",
+    )
+    opened_at = datetime(2026, 1, 1, tzinfo=UTC)
+    intent = {
+        "schema_version": "trade_intent.v1",
+        "action": "BUY",
+        "symbol": "BTC-USDT",
+        "market_type": "paper_spot",
+        "confidence": 0.8,
+        "thesis": "Open deterministic timed test position",
+        "evidence": ["test entry evidence"],
+        "selected_strategy_ids": ["test_entry_v1"],
+        "position_size_pct": 5.0,
+        "stop_loss_pct": 1.0,
+        "take_profit_pct": 2.0,
+        "max_holding_minutes": 60,
+        "invalidation_conditions": ["maximum holding time reached"],
+        "risk_notes": "test-only simulated entry",
+        "metadata": {},
+    }
+    approved = {
+        "decision": "APPROVED",
+        "reasons": ["all_checks_passed"],
+        "risk_score": 0.1,
+        "checks": {},
+    }
+    executor.execute(
+        intent,
+        approved,
+        mark_price=100.0,
+        equity_usdt=1000.0,
+        execution_context={
+            "session_id": "session-timed-exit",
+            "session_started_at": opened_at.isoformat(),
+            "cycle_id": "cycle-timed-entry",
+            "mode": "shadow",
+            "observed_at": opened_at.isoformat(),
+        },
+    )
+
+    exit_intent = executor.protective_exit_intent(
+        symbol="BTC-USDT",
+        mark_price=100.0,
+        equity_usdt=1000.0,
+        observed_at=(opened_at + timedelta(minutes=61)).isoformat(),
+    )
+
+    assert exit_intent is not None
+    assert exit_intent["action"] == "SELL"
+    assert exit_intent["metadata"]["trigger"] == "MAX_HOLDING_TIME"
+    assert exit_intent["position_size_pct"] == pytest.approx(5.0)
 
 
 def test_durable_hold_has_no_execution_side_effects(tmp_path: Path) -> None:

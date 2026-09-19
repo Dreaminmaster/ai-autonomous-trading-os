@@ -1,12 +1,12 @@
 """Fail-closed migration engine — no partial state, no drift, no gaps."""
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Sequence
 
 from atos.runtime_db import RuntimeDatabase, RuntimePersistenceError
-import sqlite3
 
 
 class MigrationDefinitionError(RuntimePersistenceError):
@@ -479,12 +479,45 @@ WHEN NEW.attempt_id IS NOT OLD.attempt_id
 BEGIN SELECT RAISE(ABORT,'dispatch attempt identity is immutable'); END;
 """
 
+_MIGRATION_0006_SQL = """
+CREATE TABLE execution_protection_plans (
+    execution_intent_id   TEXT PRIMARY KEY REFERENCES execution_intents(execution_intent_id)
+                          ON DELETE RESTRICT,
+    stop_loss_pct         TEXT NOT NULL,
+    take_profit_pct       TEXT NOT NULL,
+    max_holding_minutes   TEXT NOT NULL,
+    created_at            TEXT NOT NULL
+);
+INSERT INTO execution_protection_plans (
+    execution_intent_id,
+    stop_loss_pct,
+    take_profit_pct,
+    max_holding_minutes,
+    created_at
+)
+SELECT
+    ei.execution_intent_id,
+    ti.stop_loss_pct,
+    ti.take_profit_pct,
+    '0',
+    ei.created_at
+FROM execution_intents AS ei
+JOIN trade_intents AS ti ON ti.trade_intent_id=ei.trade_intent_id;
+CREATE TRIGGER trg_execution_protection_plans_no_update
+BEFORE UPDATE ON execution_protection_plans
+BEGIN SELECT RAISE(ABORT,'execution protection plans are immutable'); END;
+CREATE TRIGGER trg_execution_protection_plans_no_delete
+BEFORE DELETE ON execution_protection_plans
+BEGIN SELECT RAISE(ABORT,'execution protection plans are immutable'); END;
+"""
+
 MIGRATION_PLAN: tuple[Migration, ...] = (
     Migration(version=1, name="runtime_session_cycle_recovery", sql=_MIGRATION_0001_SQL),
     Migration(version=2, name="cycle_journal", sql=_MIGRATION_0002_SQL),
     Migration(version=3, name="execution_transaction_persistence", sql=_MIGRATION_0003_SQL),
     Migration(version=4, name="order_fill_position_persistence", sql=_MIGRATION_0004_SQL),
     Migration(version=5, name="execution_idempotency_claims", sql=_MIGRATION_0005_SQL),
+    Migration(version=6, name="execution_protection_plans", sql=_MIGRATION_0006_SQL),
 )
 
 

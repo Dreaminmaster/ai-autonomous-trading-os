@@ -292,7 +292,7 @@ def fk_groups(db: RuntimeDatabase, table: str) -> set[tuple]:
 
 def test_plan_fresh_schema_and_legacy_checksums() -> None:
     db = make_db()
-    assert [m.version for m in MIGRATION_PLAN] == [1, 2, 3, 4, 5]
+    assert [m.version for m in MIGRATION_PLAN] == [1, 2, 3, 4, 5, 6]
     assert tuple(m.checksum for m in MIGRATION_PLAN[:3]) == LEGACY_CHECKSUMS
     assert db.connection.execute(
         "SELECT MAX(version) FROM schema_migrations"
