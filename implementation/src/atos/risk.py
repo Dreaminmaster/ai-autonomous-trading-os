@@ -56,6 +56,28 @@ class RiskEngine:
         confidence = float(intent.get("confidence", 0.0) or 0.0)
         position_size_pct = float(intent.get("position_size_pct", 0.0) or 0.0)
         selected_strategies = intent.get("selected_strategy_ids", [])
+        market_type = str(intent.get("market_type", "paper_spot"))
+        gross_exposure = float(state.get("gross_exposure_pct", 0.0))
+        symbol_exposure = float(state.get("symbol_exposure_pct", 0.0))
+        opposing_exposure = float(
+            state.get(
+                "symbol_short_exposure_pct"
+                if action == Action.BUY.value
+                else "symbol_long_exposure_pct",
+                0.0,
+            )
+        )
+        metadata = intent.get("metadata")
+        risk_reducing_exit = bool(
+            state.get("protective_exit_authorized") is True
+            and isinstance(metadata, dict)
+            and metadata.get("risk_reducing_exit") is True
+            and selected_strategies == ["deterministic_protective_exit_v1"]
+            and action in {Action.BUY.value, Action.SELL.value}
+            and position_size_pct > 0
+            and position_size_pct <= opposing_exposure + 1e-9
+        )
+        checks["risk_reducing_exit"] = risk_reducing_exit
 
         # ── Resolve time context ONCE per evaluation ─────────────
         decision_ts = resolve_decision_ts(state)
@@ -114,8 +136,10 @@ class RiskEngine:
                 "max_position_pct_per_trade", 10.0
             )
         )
-        checks["position_size_ok"] = position_size_pct <= max_pos
-        if position_size_pct > max_pos:
+        checks["position_size_ok"] = (
+            risk_reducing_exit or position_size_pct <= max_pos
+        )
+        if position_size_pct > max_pos and not risk_reducing_exit:
             reasons.append(
                 f"position_size_exceeds_limit: {position_size_pct} > {max_pos}"
             )
@@ -125,8 +149,12 @@ class RiskEngine:
             self.policy.get("trade_limits", {}).get("max_trades_per_day", 20)
         )
         current_count = self._daily_trades.get(decision_day, 0)
-        checks["daily_limit_ok"] = current_count < max_daily
-        if action != Action.HOLD.value and current_count >= max_daily:
+        checks["daily_limit_ok"] = risk_reducing_exit or current_count < max_daily
+        if (
+            action != Action.HOLD.value
+            and current_count >= max_daily
+            and not risk_reducing_exit
+        ):
             reasons.append(
                 f"daily_trade_limit_reached: {current_count}/{max_daily} on {decision_day}"
             )
@@ -140,21 +168,22 @@ class RiskEngine:
             s for s in self._recent_signals if decision_ts - s["timestamp"] < 3600
         ]
 
-        for sig in self._recent_signals:
-            if (
-                sig["symbol"] == symbol
-                and set(sig.get("strategy_ids", [])) & set(selected_strategies)
-                and decision_ts - sig.get("timestamp", 0) < cooldown_sec
-            ):
-                reasons.append(f"duplicate_signal_cooldown: {symbol}")
-                break
+        if not risk_reducing_exit:
+            for sig in self._recent_signals:
+                if (
+                    sig["symbol"] == symbol
+                    and set(sig.get("strategy_ids", [])) & set(selected_strategies)
+                    and decision_ts - sig.get("timestamp", 0) < cooldown_sec
+                ):
+                    reasons.append(f"duplicate_signal_cooldown: {symbol}")
+                    break
         checks["duplicate_guard_ok"] = not any("duplicate" in r for r in reasons)
 
         # ── Gate 9: Max drawdown guard ──────────────────────────
         max_dd = float(self.policy.get("risk_limits", {}).get("max_drawdown_pct", 20.0))
         current_dd = float(state.get("current_drawdown_pct", 0.0))
-        checks["drawdown_ok"] = current_dd < max_dd
-        if current_dd >= max_dd:
+        checks["drawdown_ok"] = risk_reducing_exit or current_dd < max_dd
+        if current_dd >= max_dd and not risk_reducing_exit:
             return RiskDecision(
                 "risk_decision.v1",
                 "PAUSED",
@@ -164,16 +193,6 @@ class RiskEngine:
             )
 
         # ── Gate 10: Durable portfolio exposure ─────────────────
-        gross_exposure = float(state.get("gross_exposure_pct", 0.0))
-        symbol_exposure = float(state.get("symbol_exposure_pct", 0.0))
-        opposing_exposure = float(
-            state.get(
-                "symbol_short_exposure_pct"
-                if action == Action.BUY.value
-                else "symbol_long_exposure_pct",
-                0.0,
-            )
-        )
         offset = (
             min(position_size_pct, opposing_exposure)
             if action != Action.HOLD.value
@@ -210,6 +229,21 @@ class RiskEngine:
         if action != Action.HOLD.value and prospective_symbol > max_symbol:
             reasons.append(
                 f"symbol_exposure_exceeds_limit: {prospective_symbol:.4f} > {max_symbol}"
+            )
+
+        # Spot SELL intents may only reduce known simulated long inventory.
+        # If portfolio state is missing or insufficient, fail closed instead
+        # of silently opening a short position in a spot runtime.
+        spot_inventory_ok = not (
+            market_type in {"spot", "paper_spot"}
+            and action == Action.SELL.value
+            and position_size_pct > opposing_exposure + 1e-9
+        )
+        checks["spot_inventory_ok"] = spot_inventory_ok
+        if not spot_inventory_ok:
+            reasons.append(
+                "naked_spot_sell_forbidden: "
+                f"{position_size_pct:.8f} > long inventory {opposing_exposure:.8f}"
             )
 
         # ── Gate 11: Required fields for trading actions ────────

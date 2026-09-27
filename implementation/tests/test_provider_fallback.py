@@ -59,6 +59,31 @@ def test_mock_provider_returns_buy():
     assert result.provider_name == "mock"
     assert result.error is None
 
+
+def test_mock_provider_selects_strongest_directional_candidate():
+    provider = MockProvider()
+    request = _request()
+    request.candidates.append(
+        {
+            "strategy_id": "volatility_breakout_v1",
+            "symbol": "BTC/USDT",
+            "side": "SELL",
+            "signal_strength": 0.8,
+            "confidence": 0.81,
+            "entry_reason": "downside breakout with confirmed public volume",
+            "suggested_stop_loss_pct": 1.0,
+            "suggested_take_profit_pct": 2.0,
+            "max_holding_minutes": 60,
+            "regime_tags": ["breakout_down"],
+            "risk_notes": "spot inventory gate remains authoritative",
+        }
+    )
+
+    result = provider.decide(request)
+
+    assert result.intent.action == "SELL"
+    assert result.intent.selected_strategy_ids == ["volatility_breakout_v1"]
+
 def test_mock_provider_holds_when_no_candidate():
     provider = MockProvider(min_confidence=0.9)
     request = _request()

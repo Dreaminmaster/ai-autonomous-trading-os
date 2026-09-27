@@ -288,44 +288,90 @@ class AutonomousRuntime:
                 ),
             },
         )
-        candidates, diagnostics = self.registry.generate_with_diagnostics(
-            symbol, candles
-        )
-        candidate_payloads = [candidate.to_dict() for candidate in candidates]
+        observed_at = utc_now()
+        protective_intent: dict | None = None
+        protection_reader = getattr(self.executor, "protective_exit_intent", None)
+        if callable(protection_reader):
+            try:
+                protective_intent = protection_reader(
+                    symbol=symbol,
+                    mark_price=mark_price,
+                    equity_usdt=float(
+                        self.policy.get("paper", {}).get("equity_usdt", 1000.0)
+                    ),
+                    observed_at=observed_at,
+                )
+            except Exception as exc:  # noqa: BLE001 - lifecycle boundary fails closed
+                return self._fail_closed_cycle(
+                    cycle_id,
+                    symbol,
+                    f"protective exit evaluation failed: {type(exc).__name__}: {exc}",
+                    mark_price=mark_price,
+                )
+
+        if protective_intent is not None:
+            candidate_payloads = []
+            diagnostics = [
+                {
+                    "strategy_id": "deterministic_protective_exit_v1",
+                    "status": "OK",
+                    "detail": str(
+                        protective_intent.get("metadata", {}).get(
+                            "trigger", "PROTECTIVE_EXIT"
+                        )
+                    ),
+                }
+            ]
+            provider_result_payload = {
+                "action": protective_intent["action"],
+                "confidence": protective_intent["confidence"],
+                "provider": "deterministic_position_lifecycle",
+                "latency_ms": 0.0,
+                "error": None,
+                "tokens_used": 0,
+            }
+            proposed_payload = protective_intent
+            validation_max_position = 100.0
+        else:
+            candidates, diagnostics = self.registry.generate_with_diagnostics(
+                symbol, candles
+            )
+            candidate_payloads = [candidate.to_dict() for candidate in candidates]
+            request = ProviderRequest(
+                symbol=symbol,
+                candidates=candidate_payloads,
+                market_state={"mark_price": mark_price, **(market_state or {})},
+                risk_state={
+                    "mode": self.mode,
+                    "external_execution_enabled": False,
+                    "live": "FORBIDDEN",
+                    "max_position_pct_per_trade": float(
+                        self.policy.get("position_limits", {}).get(
+                            "max_position_pct_per_trade", 0.0
+                        )
+                    ),
+                },
+            )
+            provider_result = self.providers.decide(request)
+            provider_result_payload = provider_result.to_dict()
+            proposed_payload = provider_result.intent.to_dict()
+            validation_max_position = float(
+                self.policy.get("position_limits", {}).get(
+                    "max_position_pct_per_trade", 0.0
+                )
+            )
         self._record(
             cycle_id,
             "strategy_candidates",
             {"items": candidate_payloads, "diagnostics": diagnostics},
         )
-
-        request = ProviderRequest(
-            symbol=symbol,
-            candidates=candidate_payloads,
-            market_state={"mark_price": mark_price, **(market_state or {})},
-            risk_state={
-                "mode": self.mode,
-                "external_execution_enabled": False,
-                "live": "FORBIDDEN",
-                "max_position_pct_per_trade": float(
-                    self.policy.get("position_limits", {}).get(
-                        "max_position_pct_per_trade", 0.0
-                    )
-                ),
-            },
-        )
-        provider_result = self.providers.decide(request)
-        self._record(cycle_id, "provider_result", provider_result.to_dict())
+        self._record(cycle_id, "provider_result", provider_result_payload)
 
         try:
-            proposed = ValidatedTradeIntent.from_dict(provider_result.intent.to_dict())
-            max_position = float(
-                self.policy.get("position_limits", {}).get(
-                    "max_position_pct_per_trade", 0.0
-                )
-            )
+            proposed = ValidatedTradeIntent.from_dict(proposed_payload)
             validation = proposed.validate(
                 allowed_symbols=set(self.policy.get("allowed_symbols", [])),
-                max_position_pct=max_position,
+                max_position_pct=validation_max_position,
             )
             validated_intent = validation.corrected_intent
         except Exception as exc:  # noqa: BLE001 - untrusted provider boundary
@@ -339,12 +385,15 @@ class AutonomousRuntime:
         intent_payload = validated_intent.to_dict()
         self._record(cycle_id, "trade_intent", intent_payload)
 
+        risk_state = self._portfolio_risk_state(symbol, mark_price)
+        if protective_intent is not None:
+            risk_state["protective_exit_authorized"] = True
         risk_decision = self.risk.evaluate(
             intent_payload,
             {
                 "mode": self.mode,
                 "external_execution_enabled": False,
-                **self._portfolio_risk_state(symbol, mark_price),
+                **risk_state,
             },
         )
         self._record(cycle_id, "risk_decision", risk_decision.to_dict())
@@ -361,7 +410,7 @@ class AutonomousRuntime:
                     "session_started_at": self.session_started_at,
                     "cycle_id": cycle_id,
                     "mode": self.mode,
-                    "observed_at": utc_now(),
+                    "observed_at": observed_at,
                 },
             )
         except Exception as exc:  # noqa: BLE001 - executor boundary must HOLD
@@ -386,7 +435,7 @@ class AutonomousRuntime:
             "mode": self.mode,
             "candidates": candidate_payloads,
             "strategy_diagnostics": diagnostics,
-            "provider_result": provider_result.to_dict(),
+            "provider_result": provider_result_payload,
             "intent_validation": validation.to_dict(),
             "intent": intent_payload,
             "risk": risk_decision.to_dict(),

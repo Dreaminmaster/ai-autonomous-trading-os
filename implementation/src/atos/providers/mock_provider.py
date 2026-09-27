@@ -2,9 +2,9 @@
 Mock Provider — deterministic test provider that routes StrategyCandidates to TradeIntents.
 
 The mock provider:
-  1. Picks the first BUY candidate with confidence >= threshold
+  1. Picks the strongest BUY or SELL candidate with confidence >= threshold
   2. Converts it into a TradeIntent
-  3. If no BUY candidate, outputs HOLD
+  3. If no directional candidate, outputs HOLD
   4. Always succeeds (never throws, never times out)
   5. Uses zero tokens
 
@@ -20,7 +20,7 @@ from atos.providers.base import BaseProvider, ProviderRequest, ProviderResult
 class MockProvider(BaseProvider):
     """Deterministic mock for testing and fallback.
 
-    Produces BUY signals when a candidate has confidence >= min_confidence.
+    Produces directional signals when a candidate has confidence >= min_confidence.
     Otherwise HOLD.
     """
 
@@ -30,13 +30,15 @@ class MockProvider(BaseProvider):
 
     def decide(self, request: ProviderRequest) -> ProviderResult:
         try:
-            # Find the best BUY candidate
+            # Find the best directional candidate. SELL still passes through
+            # deterministic spot-inventory checks and therefore cannot create
+            # naked simulated shorts.
             best = None
             for candidate in request.candidates:
                 side = candidate.get("side", "HOLD")
                 confidence = float(candidate.get("confidence", 0.0))
                 if (
-                    side == "BUY"
+                    side in {"BUY", "SELL"}
                     and confidence >= self.min_confidence
                     and (
                         best is None or confidence > float(best.get("confidence", 0.0))
@@ -58,7 +60,7 @@ class MockProvider(BaseProvider):
                     )
                 intent = TradeIntent(
                     schema_version="trade_intent.v1",
-                    action="BUY",
+                    action=str(best.get("side")),
                     symbol=request.symbol,
                     market_type="paper_spot",
                     confidence=float(best.get("confidence", 0.60)),
@@ -80,7 +82,7 @@ class MockProvider(BaseProvider):
                     intent=intent, provider_name=self.name, tokens_used=0
                 )
 
-            # No BUY candidate → HOLD
+            # No directional candidate → HOLD
             return ProviderResult(
                 intent=make_hold("no valid candidate", symbol=request.symbol),
                 provider_name=self.name,

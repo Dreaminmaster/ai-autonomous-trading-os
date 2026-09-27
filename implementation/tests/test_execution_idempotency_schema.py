@@ -218,14 +218,15 @@ def fk_groups(db: RuntimeDatabase, table: str) -> set[tuple]:
     }
 
 
-def test_plan_appends_v5_without_legacy_checksum_drift():
-    assert [migration.version for migration in MIGRATION_PLAN] == [1, 2, 3, 4, 5]
+def test_plan_appends_v5_v6_without_legacy_checksum_drift():
+    assert [migration.version for migration in MIGRATION_PLAN] == [1, 2, 3, 4, 5, 6]
     assert [migration.name for migration in MIGRATION_PLAN] == [
         "runtime_session_cycle_recovery",
         "cycle_journal",
         "execution_transaction_persistence",
         "order_fill_position_persistence",
         "execution_idempotency_claims",
+        "execution_protection_plans",
     ]
     assert tuple(migration.checksum for migration in MIGRATION_PLAN[:4]) == (
         FROZEN_V1_V4_CHECKSUMS
@@ -519,6 +520,13 @@ def test_real_v4_to_v5_preserves_every_legacy_row_and_creates_no_fake_claim():
         "SELECT COUNT(*) FROM execution_idempotency_claims"
     ).fetchone()[0] == 0
     assert upgraded.connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert MigrationManager(upgraded, MIGRATION_PLAN).migrate() == 1
+    assert upgraded.connection.execute(
+        "SELECT COUNT(*) FROM execution_protection_plans"
+    ).fetchone()[0] == 1
+    assert upgraded.connection.execute(
+        "SELECT max_holding_minutes FROM execution_protection_plans"
+    ).fetchone()[0] == "0"
     assert MigrationManager(upgraded, MIGRATION_PLAN).migrate() == 0
 
 

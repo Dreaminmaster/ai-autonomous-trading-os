@@ -300,6 +300,127 @@ class DurableSimulatedExecutor(PaperExecutor):
             "current_drawdown_pct": float(drawdown),
         }
 
+    def protective_exit_intent(
+        self,
+        *,
+        symbol: str,
+        mark_price: float,
+        equity_usdt: float,
+        observed_at: str,
+    ) -> dict[str, Any] | None:
+        """Build a deterministic risk-reducing exit for one open position.
+
+        The active protection plan comes from the most recent filled entry
+        intent for the current position side.  This method only reads durable
+        simulation state and returns structured intent data; it cannot execute
+        or bypass the normal risk and execution pipeline.
+        """
+        if not isinstance(symbol, str) or not symbol:
+            raise DurableExecutionError("protective exit symbol is required")
+        mark = _decimal(mark_price, "mark_price", positive=True)
+        equity = _decimal(equity_usdt, "equity_usdt", positive=True)
+        observed = _utc_datetime(observed_at, "observed_at")
+        positions = self._db.connection.execute(
+            "SELECT position_id,side,quantity,avg_entry_price,opened_at "
+            "FROM position_states WHERE venue=? AND account_scope=? "
+            "AND symbol=? AND status='OPEN' ORDER BY position_id",
+            (self.venue, self.account_scope, symbol),
+        ).fetchall()
+        if not positions:
+            return None
+        if len(positions) != 1:
+            raise DurableExecutionError(
+                "protective exit requires exactly one net open position"
+            )
+        position = positions[0]
+        side = str(position["side"])
+        if side not in {"LONG", "SHORT"}:
+            raise DurableExecutionError("protective exit position side is invalid")
+        entry_action = "BUY" if side == "LONG" else "SELL"
+        plan = self._db.connection.execute(
+            "SELECT ti.trade_intent_id,pp.stop_loss_pct,pp.take_profit_pct,"
+            "pp.max_holding_minutes FROM execution_intents AS ei "
+            "JOIN trade_intents AS ti ON ti.trade_intent_id=ei.trade_intent_id "
+            "JOIN execution_protection_plans AS pp "
+            "ON pp.execution_intent_id=ei.execution_intent_id "
+            "JOIN execution_states AS es "
+            "ON es.execution_intent_id=ei.execution_intent_id "
+            "WHERE ei.symbol=? AND ei.action=? AND es.status='FILLED' "
+            "ORDER BY ti.created_at DESC,ti.trade_intent_id DESC LIMIT 1",
+            (symbol, entry_action),
+        ).fetchone()
+        if plan is None:
+            raise DurableExecutionError(
+                "open simulated position lacks a filled protection source"
+            )
+
+        quantity = _decimal(position["quantity"], "position.quantity", positive=True)
+        entry = _decimal(
+            position["avg_entry_price"], "position.avg_entry_price", positive=True
+        )
+        stop_loss = _decimal(plan["stop_loss_pct"], "stop_loss_pct")
+        take_profit = _decimal(plan["take_profit_pct"], "take_profit_pct")
+        max_holding = _decimal(plan["max_holding_minutes"], "max_holding_minutes")
+        if stop_loss <= 0 or take_profit <= 0 or max_holding < 0:
+            raise DurableExecutionError("filled entry protection plan is invalid")
+
+        if side == "LONG":
+            adverse_pct = (entry - mark) / entry * Decimal(100)
+            favorable_pct = (mark - entry) / entry * Decimal(100)
+            exit_action = "SELL"
+        else:
+            adverse_pct = (mark - entry) / entry * Decimal(100)
+            favorable_pct = (entry - mark) / entry * Decimal(100)
+            exit_action = "BUY"
+        opened_at = _utc_datetime(position["opened_at"], "position.opened_at")
+        held_minutes = Decimal(str((observed - opened_at).total_seconds())) / Decimal(60)
+        if held_minutes < 0:
+            raise DurableExecutionError(
+                "protective exit observation predates the open position"
+            )
+
+        trigger: str | None = None
+        if adverse_pct >= stop_loss:
+            trigger = "STOP_LOSS"
+        elif favorable_pct >= take_profit:
+            trigger = "TAKE_PROFIT"
+        elif max_holding > 0 and held_minutes >= max_holding:
+            trigger = "MAX_HOLDING_TIME"
+        if trigger is None:
+            return None
+
+        position_pct = quantity * mark / equity * Decimal(100)
+        if position_pct <= 0 or position_pct > 100:
+            raise DurableExecutionError(
+                "protective exit position size is outside valid bounds"
+            )
+        source_id = str(plan["trade_intent_id"])
+        return {
+            "schema_version": "trade_intent.v1",
+            "action": exit_action,
+            "symbol": symbol,
+            "market_type": "paper_spot",
+            "confidence": 1.0,
+            "thesis": f"Deterministic {trigger.lower()} closes simulated exposure",
+            "evidence": [
+                f"{trigger} triggered from durable position and public mark"
+            ],
+            "selected_strategy_ids": ["deterministic_protective_exit_v1"],
+            "position_size_pct": float(position_pct),
+            "stop_loss_pct": float(stop_loss),
+            "take_profit_pct": float(take_profit),
+            "max_holding_minutes": int(max_holding),
+            "invalidation_conditions": ["open simulated position no longer exists"],
+            "risk_notes": "risk-reducing simulated exit; normal risk checks still apply",
+            "metadata": {
+                "risk_reducing_exit": True,
+                "trigger": trigger,
+                "position_id": str(position["position_id"]),
+                "source_trade_intent_id": source_id,
+                "held_minutes": float(held_minutes),
+            },
+        }
+
     @staticmethod
     def _identity(prefix: str, session_id: str, cycle_id: str) -> str:
         return deterministic_id(prefix, (_GRAPH_VERSION, session_id, cycle_id, prefix))
@@ -531,6 +652,49 @@ class DurableSimulatedExecutor(PaperExecutor):
                     key_value=execution_intent_id,
                     columns=execution_columns,
                     values=execution_values,
+                )
+                protection_columns = (
+                    "execution_intent_id",
+                    "stop_loss_pct",
+                    "take_profit_pct",
+                    "max_holding_minutes",
+                    "created_at",
+                )
+                protection_stop = _decimal(
+                    trade_intent.get("stop_loss_pct", 0), "stop_loss_pct"
+                )
+                protection_take = _decimal(
+                    trade_intent.get("take_profit_pct", 0), "take_profit_pct"
+                )
+                protection_holding = _decimal(
+                    trade_intent.get("max_holding_minutes", 0),
+                    "max_holding_minutes",
+                )
+                if protection_stop <= 0 or protection_take <= 0:
+                    raise DurableExecutionError(
+                        "approved simulated execution requires positive protection"
+                    )
+                if (
+                    protection_holding < 0
+                    or protection_holding != protection_holding.to_integral_value()
+                ):
+                    raise DurableExecutionError(
+                        "max_holding_minutes must be a non-negative integer"
+                    )
+                protection_values = (
+                    execution_intent_id,
+                    decimal_text(protection_stop),
+                    decimal_text(protection_take),
+                    decimal_text(protection_holding),
+                    created_text,
+                )
+                self._insert_or_verify(
+                    connection,
+                    table="execution_protection_plans",
+                    key_column="execution_intent_id",
+                    key_value=execution_intent_id,
+                    columns=protection_columns,
+                    values=protection_values,
                 )
 
         return {

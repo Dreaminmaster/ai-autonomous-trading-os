@@ -45,6 +45,37 @@ def test_migrate_twice_is_noop():
     db.close()
 
 
+def test_latest_migration_adds_immutable_execution_protection_plans():
+    db = _make_db()
+    MigrationManager(db, MIGRATION_PLAN).migrate()
+    tables = {
+        row["name"]
+        for row in db.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    assert "execution_protection_plans" in tables
+    triggers = {
+        row["name"]
+        for row in db.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' "
+            "AND tbl_name='execution_protection_plans'"
+        )
+    }
+    assert triggers == {
+        "trg_execution_protection_plans_no_update",
+        "trg_execution_protection_plans_no_delete",
+    }
+    columns = {
+        row["name"]: row
+        for row in db.connection.execute(
+            "PRAGMA table_info(execution_protection_plans)"
+        )
+    }
+    assert columns["max_holding_minutes"]["notnull"] == 1
+    db.close()
+
+
 def test_cycle_rejects_missing_session_fk():
     db = _make_db()
     mm = MigrationManager(db, MIGRATION_PLAN)
