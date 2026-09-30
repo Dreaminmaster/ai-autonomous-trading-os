@@ -483,6 +483,70 @@ def test_durable_take_profit_closes_position_through_risk_pipeline(
     assert float(position["realized_pnl"]) > 0
 
 
+def test_durable_partial_sell_accepts_high_precision_weighted_position(
+    tmp_path: Path,
+) -> None:
+    """Exercise the production executor path that previously latched recovery."""
+    executor = DurableSimulatedExecutor(
+        mode="shadow",
+        database_path=tmp_path / "runtime.sqlite",
+    )
+    session_started_at = "2026-01-01T00:00:00+00:00"
+    approved = {
+        "decision": "APPROVED",
+        "reasons": ["all_checks_passed"],
+        "risk_score": 0.1,
+        "checks": {"external_execution": False},
+    }
+
+    def execute(action: str, cycle: int, mark_price: float, position_pct: float):
+        intent = {
+            "schema_version": "trade_intent.v1",
+            "action": action,
+            "symbol": "BTC-USDT",
+            "market_type": "paper_spot",
+            "confidence": 0.8,
+            "thesis": "high precision lifecycle regression",
+            "evidence": ["deterministic simulated execution"],
+            "selected_strategy_ids": ["precision_regression_v1"],
+            "position_size_pct": position_pct,
+            "stop_loss_pct": 1.0,
+            "take_profit_pct": 2.0,
+            "max_holding_minutes": 60,
+            "invalidation_conditions": ["test completed"],
+            "risk_notes": "test-only simulated execution",
+            "metadata": {},
+        }
+        return executor.execute(
+            intent,
+            approved,
+            mark_price=mark_price,
+            equity_usdt=1000.0,
+            execution_context={
+                "session_id": "session-precision-reduction",
+                "session_started_at": session_started_at,
+                "cycle_id": f"cycle-precision-{cycle}",
+                "mode": "shadow",
+                "observed_at": f"2026-01-01T00:0{cycle}:00+00:00",
+            },
+        )
+
+    execute("BUY", 1, 2650.0, 5.0)
+    execute("BUY", 2, 2660.0, 5.0)
+    reduced = execute("SELL", 3, 2643.89739, 1.0)
+
+    position = executor.database.connection.execute(
+        "SELECT status,quantity,realized_pnl FROM position_states "
+        "WHERE symbol='BTC-USDT' AND status='OPEN'"
+    ).fetchone()
+    assert reduced.durable_outcome == "FILLED"
+    assert executor.recovery_report()["classification"] == "CLEAR"
+    assert position is not None
+    assert position["status"] == "OPEN"
+    assert float(position["quantity"]) > 0
+    assert float(position["realized_pnl"]) < 0
+
+
 def test_durable_max_holding_time_builds_exact_risk_reducing_exit(
     tmp_path: Path,
 ) -> None:

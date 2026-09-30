@@ -541,6 +541,61 @@ def test_alternate_policy_position_identity_is_not_hardcoded_in_adapter(tmp_path
     assert scalar(db, "SELECT position_id FROM position_states") == result.position_ids[0]
 
 
+def test_reduce_validation_uses_frozen_decimal_precision(tmp_path):
+    """A valid high-precision partial close must not latch recovery.
+
+    The accounting policy freezes Decimal precision at 34.  Validation must
+    use the same context rather than the process-global default (normally 28),
+    otherwise adding a non-zero realized PnL can round and reject its own
+    deterministic REDUCE mutation.
+    """
+    db = make_db(tmp_path / "runtime.db")
+    buy = seed_execution_graph(db, "precision-buy")
+    adapter = make_adapter(db)
+    buy_quantity = Decimal("0.01886983")
+    buy_price = Decimal("2651.056381775906301222639525634307")
+    adapter.register_order_acknowledgement(
+        order_command(buy, quantity=buy_quantity, price=buy_price)
+    )
+    adapter.apply_fill(
+        fill_command(
+            buy,
+            "precision-buy-fill",
+            quantity=buy_quantity,
+            price=buy_price,
+            fee=Decimal("0.0500188699083"),
+            order_status_after=OrderStatus.FILLED,
+        )
+    )
+
+    sell = seed_execution_graph(db, "precision-sell", action="SELL")
+    sell_quantity = Decimal("0.0037804")
+    sell_price = Decimal("2643.89739")
+    adapter.register_order_acknowledgement(
+        order_command(sell, quantity=sell_quantity, price=sell_price)
+    )
+    result = adapter.apply_fill(
+        fill_command(
+            sell,
+            "precision-sell-fill",
+            quantity=sell_quantity,
+            price=sell_price,
+            fee=Decimal("0.00999474849356"),
+            order_status_after=OrderStatus.FILLED,
+        )
+    )
+
+    position = db.connection.execute(
+        "SELECT quantity,realized_pnl,status FROM position_states "
+        "WHERE symbol='BTC/USDT' AND status='OPEN'"
+    ).fetchone()
+    assert result.outcome is PersistenceOutcome.APPLIED
+    assert position is not None
+    assert position["quantity"] == "0.01508943"
+    assert position["realized_pnl"] == "-0.02706385250963618114206646270793418"
+    assert position["status"] == "OPEN"
+
+
 @pytest.mark.parametrize("policy", [BadScopePolicy(), BadEventIdPolicy()])
 def test_invalid_injected_policy_is_rejected_before_first_mutation(tmp_path, policy):
     db = make_db(tmp_path / f"{type(policy).__name__}.db")

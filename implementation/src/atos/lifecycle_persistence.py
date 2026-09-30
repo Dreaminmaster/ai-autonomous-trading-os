@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation, localcontext
 from typing import Any, Sequence
 
 from atos.lifecycle_types import (
@@ -47,6 +47,23 @@ from atos.lifecycle_types import (
 from atos.runtime_db import RuntimeDatabase
 
 _ZERO = Decimal("0")
+_DECIMAL_PRECISION = 34
+
+
+def _decimal_add(left: Decimal, right: Decimal) -> Decimal:
+    """Recompute policy arithmetic with the policy's frozen decimal context."""
+    with localcontext() as context:
+        context.prec = _DECIMAL_PRECISION
+        context.rounding = ROUND_HALF_EVEN
+        return +(left + right)
+
+
+def _decimal_subtract(left: Decimal, right: Decimal) -> Decimal:
+    """Recompute policy arithmetic with the policy's frozen decimal context."""
+    with localcontext() as context:
+        context.prec = _DECIMAL_PRECISION
+        context.rounding = ROUND_HALF_EVEN
+        return +(left - right)
 
 
 @dataclass(slots=True)
@@ -257,8 +274,8 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                 raise LifecycleInvariantError("policy event price must equal fill price")
             if event.delta_qty * expected_sign <= 0:
                 raise LifecycleInvariantError("policy event delta direction contradicts order side")
-            total_abs_delta += abs(event.delta_qty)
-            total_fee += event.fee
+            total_abs_delta = _decimal_add(total_abs_delta, abs(event.delta_qty))
+            total_fee = _decimal_add(total_fee, event.fee)
 
             expected_fee = command.fee if event.event_no == 1 else _ZERO
             if event.fee != expected_fee:
@@ -326,7 +343,7 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                         mutation.side is not target_side
                         or mutation.status is not PositionStatus.OPEN
                         or mutation.closed_at is not None
-                        or mutation.quantity - previous.quantity
+                        or _decimal_subtract(mutation.quantity, previous.quantity)
                         != abs(event.delta_qty)
                         or mutation.realized_pnl != previous.realized_pnl
                     ):
@@ -336,11 +353,11 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                         mutation.side is not opposite_side
                         or mutation.status is not PositionStatus.OPEN
                         or mutation.closed_at is not None
-                        or previous.quantity - mutation.quantity
+                        or _decimal_subtract(previous.quantity, mutation.quantity)
                         != abs(event.delta_qty)
                         or mutation.avg_entry_price != previous.avg_entry_price
                         or mutation.realized_pnl
-                        != previous.realized_pnl + event.realized_pnl
+                        != _decimal_add(previous.realized_pnl, event.realized_pnl)
                     ):
                         raise LifecycleInvariantError("invalid REDUCE position mutation")
                 elif event.event_type is AccountingEventType.CLOSE:
@@ -352,7 +369,7 @@ class SqliteLifecyclePersistence(OrderAcknowledgementWriter, FillSequenceWriter)
                         or previous.quantity != abs(event.delta_qty)
                         or mutation.avg_entry_price != previous.avg_entry_price
                         or mutation.realized_pnl
-                        != previous.realized_pnl + event.realized_pnl
+                        != _decimal_add(previous.realized_pnl, event.realized_pnl)
                     ):
                         raise LifecycleInvariantError("invalid CLOSE position mutation")
                 else:
